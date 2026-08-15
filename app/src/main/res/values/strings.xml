@@ -135,7 +135,6 @@
     <string name="zp_compatibility_catalog_check_failed">Compatibility check could not be scheduled.</string>
     <string name="zp_compatibility_catalog_profiles">Bundled fallback maps</string>
     <string name="zp_compatibility_catalog_version">Zalo %1$d</string>
-    <string name="zp_compatibility_catalog_profile_summary">Schema revision %1$d · %2$s · %3$d symbol entries</string>
 
     <string name="zp_about_version">Zalo Patch %1$s</string>
     <string name="zp_about_meta">Build %1$d · symbol schema v%2$d.%3$d · %4$s</string>

@@ -96,6 +96,40 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("260602901, 260701901, 260801903", active.supportedVersionCodes);
     }
 
+    public void testRemoteProfileSelectedWhenBundledExactProfileMissing() throws Exception {
+        JSONObject bundle = new JSONObject(bundleJson);
+        JSONArray profiles = bundle.getJSONArray("profiles");
+        JSONObject remoteProfile = null;
+        JSONArray remaining = new JSONArray();
+        for (int index = 0; index < profiles.length(); index++) {
+            JSONObject profile = profiles.getJSONObject(index);
+            long versionCode = profile.getJSONObject("zalo_version").getLong("min_code");
+            if (versionCode == 260801903L) {
+                remoteProfile = profile;
+            } else {
+                remaining.put(profile);
+            }
+        }
+        assertNotNull(remoteProfile);
+        bundle.put("profiles", remaining);
+
+        SymbolSchema.Active bundled = SymbolSchema.select(
+                bundle.toString(), "Bundled test", 260801903L);
+        assertFalse(bundled.valid);
+
+        SymbolCatalogContract.Entry entry = new SymbolCatalogContract.Entry(
+                14, "test-digest", remoteProfile.toString(), new byte[0]);
+        SymbolSchema.Active remote = SymbolSchema.selectRemoteEntry(entry, 260801903L);
+        assertNotNull(remote);
+        assertTrue(remote.valid);
+        assertEquals("Remote catalog 14", remote.source);
+        assertEquals(14, remote.schemaRevision);
+        assertEquals("of1.h1", remote.string("symbols.inbox.message_adapter_class", ""));
+
+        SymbolSchema.Active selected = bundled.valid ? bundled : remote;
+        assertEquals("Remote catalog 14", selected.source);
+    }
+
     public void testProfileWithoutArtifactMetadataIsInvalid() throws Exception {
         JSONObject bundle = new JSONObject(bundleJson);
         bundle.getJSONArray("profiles").getJSONObject(1).remove("artifact");

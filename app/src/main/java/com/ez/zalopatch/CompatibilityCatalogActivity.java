@@ -53,9 +53,7 @@ public final class CompatibilityCatalogActivity {
             for (SymbolSchema.ProfileInfo profile : catalog) {
                 String title = getString(R.string.zp_compatibility_catalog_version,
                         profile.versionCode);
-                String summary = getString(R.string.zp_compatibility_catalog_profile_summary,
-                        profile.schemaRevision, profile.verification, profile.symbolPaths.size());
-                ZpRowPreference row = PreferenceUi.action(context, title, summary);
+                ZpRowPreference row = PreferenceUi.action(context, title);
                 if (profile.versionCode == installed) {
                     row.dot(R.color.zp_status_active);
                 }
