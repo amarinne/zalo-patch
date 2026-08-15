@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Partial translation by design. This module is private and single-maintainer, so Vietnamese
+      covers the Zalo-native surfaces and the copy that reads as ordinary app text. Everything else
+      stays English on purpose: diagnostics, self-check and runtime status, the compatibility
+      catalogue, developer tools, and the settings rows that describe hook behaviour rather than a
+      user-visible effect. Roughly half the string table is untranslated and that is the intended
+      state, not a backlog. Do not treat a missing key here as an omission to fill in; add one only
+      when the English string is genuinely ordinary user-facing copy.
+    -->
+    <string name="zp_restart_title">Khởi động lại Zalo</string>
+    <string name="zp_restart_sent">Đã gửi lệnh khởi động lại</string>
+    <string name="zp_restart_root_denied">Quyền root bị từ chối</string>
+    <string name="zp_restart_failed">Không thể khởi động lại</string>
+    <string name="zp_section_status">Trạng thái</string>
+    <string name="zp_section_interface">Giao diện Zalo</string>
+    <string name="zp_section_ads_notifications">Quảng cáo và thông báo</string>
+    <string name="zp_section_privacy">Quyền riêng tư</string>
+    <string name="zp_section_module">Zalo Patch</string>
+    <plurals name="zp_pending_changes">
+        <item quantity="one">Đang chờ áp dụng %1$d thay đổi</item>
+        <item quantity="other">Đang chờ áp dụng %1$d thay đổi</item>
+    </plurals>
+
+    <string name="zp_notification_filter_title">Bộ lọc thông báo</string>
+    <string name="zp_notification_history_title">Lịch sử thông báo</string>
+    <string name="zp_custom_rules_count">%1$d quy tắc tùy chỉnh</string>
+    <string name="zp_custom_rule_count_one">1 quy tắc tùy chỉnh</string>
+    <string name="zp_stored_count">Đã lưu %1$d</string>
+
+    <string name="zp_tabs_title">Tab và khởi động</string>
+    <string name="zp_inbox_title">Giao diện Tin nhắn</string>
+    <string name="zp_chats_title">Trò chuyện</string>
+    <string name="zp_me_title">Cá nhân</string>
+    <string name="zp_ads_title">Quảng cáo và khuyến mãi</string>
+    <string name="zp_calls_title">Cuộc gọi</string>
+    <string name="zp_language_title">Ngôn ngữ</string>
+    <string name="zp_language_english">English</string>
+    <string name="zp_language_vietnamese">Tiếng Việt</string>
+    <string name="zp_unavailable">Không khả dụng.</string>
+    <string name="zp_unavailable_with_summary">Không khả dụng. %1$s</string>
+
+    <string name="zp_tweak_hide_discovery">Ẩn tab Khám phá</string>
+    <string name="zp_tweak_hide_discovery_summary">Ẩn tab Khám phá khỏi thanh điều hướng dưới.</string>
+    <string name="zp_tweak_hide_timeline">Ẩn tab Nhật ký</string>
+    <string name="zp_tweak_hide_timeline_summary">Ẩn tab Nhật ký khỏi thanh điều hướng dưới.</string>
+    <string name="zp_tweak_keep_group">Giữ tab Nhóm</string>
+    <string name="zp_tweak_keep_group_summary">Chỉ áp dụng khi Zalo hiển thị tab này.</string>
+    <string name="zp_tweak_force_messages_home">Dùng Tin nhắn làm trang chính</string>
+    <string name="zp_tweak_force_messages_home_summary">Mở Tin nhắn sau khi chuyển tab.</string>
+    <string name="zp_tweak_hide_qr_wallet">Ẩn Ví QR</string>
+    <string name="zp_tweak_hide_qr_wallet_summary">Ẩn Ví QR trong Cá nhân.</string>
+    <string name="zp_tweak_hide_zcloud">Ẩn zCloud</string>
+    <string name="zp_tweak_hide_zcloud_summary">Ẩn zCloud trong Cá nhân.</string>
+    <string name="zp_tweak_hide_zstyle">Ẩn zStyle</string>
+    <string name="zp_tweak_hide_zstyle_summary">Ẩn zStyle trong Cá nhân.</string>
+    <string name="zp_tweak_hide_zbusiness">Ẩn zBusiness</string>
+    <string name="zp_tweak_hide_zbusiness_summary">Chỉ áp dụng khi Zalo hiển thị mục này.</string>
+    <string name="zp_tweak_hide_media_box">Ẩn Media Box</string>
+    <string name="zp_tweak_hide_media_box_summary">Ẩn Media Box khỏi trang Tin nhắn.</string>
+    <string name="zp_tweak_hide_zcloud_banner">Ẩn banner zCloud</string>
+    <string name="zp_tweak_hide_zcloud_banner_summary">Ẩn banner zCloud phía trên Tin nhắn.</string>
+    <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
+    <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
+    <string name="zp_tweak_auto_record_calls">Tự động ghi âm cuộc gọi</string>
+    <string name="zp_tweak_auto_record_calls_summary">Lưu bản ghi âm của cuộc gọi Zalo đã kết thúc thành file M4A.</string>
+    <string name="zp_tweak_recording_notifications">Thông báo ghi âm</string>
+    <string name="zp_tweak_recording_notifications_summary">Hiển thị trạng thái ghi và lưu âm thanh.</string>
+    <string name="zp_tweak_hide_message_ads">Ẩn quảng cáo trong Tin nhắn</string>
+    <string name="zp_tweak_hide_message_ads_summary">Ẩn quảng cáo Zinstant trong Tin nhắn.</string>
+    <string name="zp_tweak_hide_feed_ads">Ẩn quảng cáo trong Nhật ký</string>
+    <string name="zp_tweak_hide_feed_ads_summary">Ẩn quảng cáo Zinstant trong Nhật ký.</string>
+    <string name="zp_tweak_hide_promo_services">Thử nghiệm: chặn dịch vụ Zinstant</string>
+    <string name="zp_tweak_hide_promo_services_summary">Chặn diện rộng. Có thể làm hỏng mini-app, thanh toán, đám mây, tìm kiếm và khám phá.</string>
+    <string name="zp_tweak_hide_promo_notifications">Ẩn thông báo khuyến mãi</string>
+    <string name="zp_tweak_hide_promo_notifications_summary">Chặn các mẫu thông báo khuyến mãi đã được kiểm tra. Quy tắc tùy chỉnh cũng có thể khớp với thông báo tin nhắn.</string>
+    <string name="zp_tweak_record_notification_history">Ghi lịch sử thông báo</string>
+    <string name="zp_tweak_record_notification_history_summary">Lưu nội dung thông báo trong bộ nhớ riêng trên thiết bị này.</string>
+
+    <string name="zp_group_bottom_tabs">Các tab</string>
+    <string name="zp_group_startup">Khởi động</string>
+    <string name="zp_group_inbox_sections">Các mục Tin nhắn</string>
+    <string name="zp_group_category_controls">Bộ lọc</string>
+    <string name="zp_default_inbox_filter">Bộ lọc Tin nhắn mặc định</string>
+    <string name="zp_group_in_app_ads">Quảng cáo trong ứng dụng</string>
+    <string name="zp_group_me_services">Cá nhân</string>
+    <string name="zp_group_call_recording">Ghi âm cuộc gọi</string>
+    <string name="zp_backup_title">Sao lưu cài đặt</string>
+
+    <string name="zp_filter_scope_notice">Chỉ lọc thông báo Android, không ẩn hoặc xóa tin nhắn trong Zalo.</string>
+    <string name="zp_filter_controls">Lọc và lịch sử</string>
+    <string name="zp_filter_master_title">Ẩn thông báo khuyến mãi</string>
+    <string name="zp_filter_master_summary">Chặn các mẫu thông báo khuyến mãi đã được kiểm tra. Quy tắc tùy chỉnh cũng có thể khớp với thông báo tin nhắn.</string>
+    <string name="zp_history_record_title">Ghi lịch sử thông báo</string>
+    <string name="zp_history_record_summary">Lưu nội dung thông báo trong bộ nhớ riêng trên thiết bị này.</string>
+    <string name="zp_filter_custom_lists">Danh sách tùy chỉnh</string>
+    <string name="zp_filter_review">Xem lại</string>
+    <string name="zp_filter_suppressed_title">Thông báo đã chặn</string>
+    <string name="zp_filter_footer">Danh sách tùy chỉnh áp dụng sau khi khởi động lại Zalo.</string>
+    <string name="zp_filter_item_count">%1$d mục</string>
+    <string name="zp_filter_item_count_one">1 mục</string>
+
+    <string name="zp_loading">Đang tải…</string>
+    <string name="zp_operation_failed">Thao tác thất bại: %1$s</string>
+    <string name="zp_backup_exported">Đã xuất cài đặt</string>
+    <string name="zp_backup_imported">Đã nhập %1$d cài đặt và mục quy tắc. Khởi động lại Zalo để áp dụng.</string>
+    <string name="zp_history_exported">Đã xuất lịch sử thông báo</string>
+    <string name="zp_history_privacy_notice">Lịch sử có thể chứa tiêu đề thông báo, tên người gửi và nội dung tin nhắn. Dữ liệu nằm trong bộ nhớ riêng của ứng dụng cho đến khi bạn xuất hoặc xóa.</string>
+    <string name="zp_clear_history">Xóa lịch sử</string>
+    <string name="zp_history_all">Tất cả</string>
+    <string name="zp_history_messages">Tin nhắn</string>
+    <string name="zp_history_suppressed">Đã chặn</string>
+    <string name="zp_history_allowed">Đã cho phép</string>
+    <string name="zp_history_filter">Bộ lọc</string>
+    <string name="zp_history_filter_value">Bộ lọc: %1$s</string>
+    <string name="zp_history_empty_all">Chưa có thông báo đã lưu. Bật ghi lịch sử rồi chờ thông báo Zalo.</string>
+    <string name="zp_history_empty_filtered">Không có thông báo đã lưu nào khớp bộ lọc này.</string>
+    <string name="zp_history_clear_title">Xóa lịch sử thông báo?</string>
+    <string name="zp_history_clear_message">Xóa tiêu đề và nội dung thông báo Zalo đã lưu khỏi thiết bị này?</string>
+    <string name="zp_history_notification">Thông báo Zalo</string>
+    <string name="zp_history_missing">Thông báo không còn khả dụng</string>
+    <string name="zp_history_suppressed_label"> · đã chặn</string>
+    <string name="zp_history_promo_label"> · khuyến mãi</string>
+    <string name="zp_history_allowed_label">Đã cho phép</string>
+    <string name="zp_detail_time">Thời gian</string>
+    <string name="zp_detail_message">Tin nhắn</string>
+    <string name="zp_detail_result">Kết quả lọc</string>
+    <string name="zp_detail_channel">Kênh</string>
+    <string name="zp_detail_template">Mẫu</string>
+    <string name="zp_clear">Xóa</string>
+    <string name="zp_close">Đóng</string>
+
+    <string name="zp_backup_actions">Thao tác sao lưu</string>
+    <string name="zp_backup_export">Xuất cài đặt</string>
+    <string name="zp_backup_import">Nhập cài đặt</string>
+    <string name="zp_backup_footer">Khởi động lại Zalo sau khi nhập.</string>
+    <string name="zp_backup_import_dialog_title">Nhập cài đặt Zalo Patch</string>
+    <string name="zp_backup_import_dialog_message">Giá trị đã nhập thay thế cài đặt tương ứng. Khởi động lại Zalo sau đó.</string>
+    <string name="zp_choose_file">Chọn file</string>
+
+    <string name="zp_rule_blocked_keywords">Từ khóa bị chặn</string>
+    <string name="zp_rule_allowed_keywords">Từ khóa được phép</string>
+    <string name="zp_rule_blocked_accounts">Tài khoản bị chặn</string>
+    <string name="zp_rule_allowed_accounts">Tài khoản được phép</string>
+    <string name="zp_rule_account_notice">Tên tài khoản chỉ được so khớp với tiêu đề thông báo, không phân biệt chữ hoa, chữ thường, có dấu hay không dấu. Thao tác này không chặn tài khoản trong Zalo.</string>
+    <string name="zp_rule_keyword_notice">Từ khóa được so khớp với nội dung thông báo, không phân biệt chữ hoa, chữ thường, có dấu hay không dấu.</string>
+    <plurals name="zp_rule_items_count">
+        <item quantity="one">%1$d mục</item>
+        <item quantity="other">%1$d mục</item>
+    </plurals>
+    <string name="zp_rule_no_items">Không có mục</string>
+    <string name="zp_rule_no_items_summary">Chọn Thêm mục để tạo quy tắc.</string>
+    <string name="zp_rule_add_item">Thêm mục</string>
+    <string name="zp_rule_add_summary">Ngăn cách bằng dấu phẩy hoặc xuống dòng.</string>
+    <string name="zp_rule_add_to">Thêm vào %1$s</string>
+    <string name="zp_rule_edit_item">Sửa mục</string>
+    <string name="zp_rule_save_failed">Không thể lưu quy tắc</string>
+    <string name="zp_add">Thêm</string>
+    <string name="zp_save">Lưu</string>
+
+    <string name="zp_call_recordings_title">Bản ghi âm cuộc gọi</string>
+    <string name="zp_call_recordings_empty_summary">Cuộc gọi đã kết thúc sẽ xuất hiện ở đây sau khi bật ghi âm.</string>
+    <string name="zp_call_recordings_storage">%1$d bản ghi âm · %2$s</string>
+    <string name="zp_call_recording_open_failed">Không tìm thấy ứng dụng phát âm thanh</string>
+    <string name="zp_call_recording_delete_title">Xóa bản ghi âm?</string>
+    <string name="zp_call_recording_delete_message">Thao tác này xóa file M4A khỏi bộ nhớ dùng chung.</string>
+    <string name="zp_call_recording_delete_failed">Không thể xóa bản ghi âm</string>
+    <string name="zp_call_recording_notification_status_channel">Trạng thái ghi âm cuộc gọi</string>
+    <string name="zp_call_recording_notification_status_channel_summary">Hiển thị khi Zalo đang ghi âm cuộc gọi.</string>
+    <string name="zp_call_recording_notification_result_channel">Kết quả ghi âm cuộc gọi</string>
+    <string name="zp_call_recording_notification_result_channel_summary">Hiển thị khi bản ghi âm cuộc gọi Zalo được lưu hoặc gặp lỗi.</string>
+    <string name="zp_call_recording_notification_running">Đang ghi âm cuộc gọi Zalo</string>
+    <string name="zp_call_recording_notification_running_text">Đang ghi âm.</string>
+    <string name="zp_call_recording_notification_saving">Đang lưu bản ghi âm cuộc gọi Zalo</string>
+    <string name="zp_call_recording_notification_saving_text">Đang chuyển âm thanh sang M4A.</string>
+    <string name="zp_call_recording_notification_saved">Đã lưu bản ghi âm cuộc gọi Zalo</string>
+    <string name="zp_call_recording_notification_saved_text">Đã lưu vào Recordings/Zalo Call Recordings.</string>
+    <string name="zp_call_recording_notification_failed">Không thể ghi âm cuộc gọi Zalo</string>
+    <string name="zp_call_recording_notification_failed_text">Mở Zalo Patch để xem trạng thái.</string>
+    <string name="zp_cancel">Hủy</string>
+    <string name="zp_delete">Xóa</string>
+    <string name="zp_export">Xuất</string>
+</resources>

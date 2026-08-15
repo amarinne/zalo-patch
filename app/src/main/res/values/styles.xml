@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ZaloPatch" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/zp_primary</item>
+        <item name="colorSecondary">@color/zp_secondary</item>
+        <item name="colorSurface">@color/zp_surface</item>
+        <item name="colorSurfaceVariant">@color/zp_surface_variant</item>
+        <item name="android:colorAccent">@color/zp_primary</item>
+        <item name="android:navigationBarColor">?attr/colorSurface</item>
+        <item name="android:statusBarColor">@color/zp_row_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/zp_page_background</item>
+        <!-- AndroidX Preference builds its list/dialog with AppCompat AlertDialog, which
+             resolves alertDialogTheme. Without this the selector is stock Android. -->
+        <item name="alertDialogTheme">@style/ThemeOverlay.Material3.MaterialAlertDialog</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Material3.MaterialAlertDialog</item>
+    </style>
+
+    <style name="TextAppearance.ZaloPatch.Footer"
+        parent="TextAppearance.Material3.BodySmall" />
+
+</resources>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/zp_page_padding"
+    android:paddingTop="8dp"
+    android:paddingEnd="@dimen/zp_page_padding">
+
+    <TextView
+        android:id="@+id/zp_recordings_storage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="4dp"
+        android:paddingBottom="8dp"
+        android:text="@string/zp_loading"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textColor="@color/zp_text_secondary" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/zp_recordings_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/zp_recordings_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="@string/zp_call_recordings_empty_summary"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="@color/zp_text_secondary" />
+    </FrameLayout>
+</LinearLayout>

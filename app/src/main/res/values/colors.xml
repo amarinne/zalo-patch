@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="zp_primary">#245DB7</color>
+    <color name="zp_secondary">#147A57</color>
+    <color name="zp_surface">#FFFDFB</color>
+    <color name="zp_surface_variant">#F1F3F6</color>
+    <color name="zp_on_surface">#1A1C1E</color>
+
+    <!-- Settings surface system. Use explicit colors here. Drawables must not depend on theme
+         attributes, because an unresolved attribute crashed row inflation in an earlier build. -->
+    <color name="zp_page_background">#F3F4F7</color>
+    <color name="zp_row_surface">#FFFFFF</color>
+    <color name="zp_row_ripple">#1A245DB7</color>
+    <color name="zp_row_divider">#E4E6EA</color>
+    <color name="zp_text_secondary">#5B6068</color>
+    <color name="zp_chip_surface">#EDEFF3</color>
+    <color name="zp_main_switch_surface">#D7E3FF</color>
+    <color name="zp_main_switch_text">#001B3F</color>
+    <color name="zp_main_switch_text_secondary">#344766</color>
+    <color name="zp_main_switch_ripple">#1A245DB7</color>
+
+    <color name="zp_status_active">#147A57</color>
+    <color name="zp_status_warn">#8A5A00</color>
+    <color name="zp_status_error">#B3261E</color>
+    <color name="zp_status_neutral">#5B6068</color>
+</resources>

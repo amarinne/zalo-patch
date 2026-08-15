@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="zp_primary">#A8C7FA</color>
+    <color name="zp_secondary">#75DBB5</color>
+    <color name="zp_surface">#17191C</color>
+    <color name="zp_surface_variant">#24272C</color>
+    <color name="zp_on_surface">#E4E2E0</color>
+
+    <color name="zp_page_background">#0F1114</color>
+    <color name="zp_row_surface">#1B1E22</color>
+    <color name="zp_row_ripple">#33A8C7FA</color>
+    <color name="zp_row_divider">#2A2E34</color>
+    <color name="zp_text_secondary">#A6ABB3</color>
+    <color name="zp_chip_surface">#262A30</color>
+    <color name="zp_main_switch_surface">#214878</color>
+    <color name="zp_main_switch_text">#D7E3FF</color>
+    <color name="zp_main_switch_text_secondary">#AFC6E9</color>
+    <color name="zp_main_switch_ripple">#33A8C7FA</color>
+
+    <color name="zp_status_active">#75DBB5</color>
+    <color name="zp_status_warn">#F4C35A</color>
+    <color name="zp_status_error">#FFB4AB</color>
+    <color name="zp_status_neutral">#A6ABB3</color>
+</resources>

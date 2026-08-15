@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="xposed_scope">
+        <item>com.zing.zalo</item>
+    </string-array>
+    <string-array name="zp_history_retention_entries">
+        <item>100 notifications</item>
+        <item>250 notifications</item>
+        <item>500 notifications</item>
+        <item>1000 notifications</item>
+        <item>5000 notifications</item>
+        <item>No limit</item>
+    </string-array>
+    <string-array name="zp_history_retention_values">
+        <item>100</item>
+        <item>250</item>
+        <item>500</item>
+        <item>1000</item>
+        <item>5000</item>
+        <item>0</item>
+    </string-array>
+    <string-array name="zp_inbox_filter_entries">
+        <item>All</item>
+        <item>Chats</item>
+        <item>Groups</item>
+        <item>OA</item>
+        <item>Strangers</item>
+    </string-array>
+    <string-array name="zp_inbox_filter_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+    </string-array>
+    <string-array name="zp_language_entries">
+        <item>@string/zp_language_vietnamese</item>
+        <item>@string/zp_language_english</item>
+    </string-array>
+    <string-array name="zp_language_values">
+        <item>vi</item>
+        <item>en</item>
+    </string-array>
+</resources>

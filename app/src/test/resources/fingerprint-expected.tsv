@@ -1,0 +1,11 @@
+# versionCode	anchor	expectedSymbol
+260602901	inbox.adapter	je1.c1
+260602901	inbox.normal_row	d00.c
+260602901	me.adapter	ge1.k
+260602901	bottom.state	de1.y
+260602901	deleted_group.repository	x80.c
+260701901	inbox.adapter	se1.g1
+260701901	inbox.normal_row	h00.c
+260701901	me.adapter	pe1.k
+260701901	bottom.state	me1.w
+260701901	deleted_group.repository	b90.c

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep zp_row_container inside the item root. AndroidX replaces the item background. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:descendantFocusability="afterDescendants"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/zp_row_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/zp_row_single"
+        android:duplicateParentState="true"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="168dp"
+            android:background="@drawable/zp_diagnostic_input_background">
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/zp_diagnostic_description_input"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:gravity="top|start"
+                android:hint="@string/zp_diagnostic_description_hint"
+                android:inputType="textCapSentences|textMultiLine"
+                android:clickable="true"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:maxLines="10"
+                android:minLines="4"
+                android:paddingStart="14dp"
+                android:paddingTop="12dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="12dp"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="@color/zp_on_surface"
+                android:textColorHint="@color/zp_text_secondary" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <View
+        android:id="@+id/zp_row_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="@dimen/zp_row_padding_horizontal"
+        android:layout_marginEnd="@dimen/zp_row_padding_horizontal"
+        android:background="@color/zp_row_divider"
+        android:visibility="gone" />
+</LinearLayout>

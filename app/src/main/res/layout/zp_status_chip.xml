@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="@dimen/zp_chip_height"
+    android:background="@drawable/zp_chip_background"
+    android:gravity="center"
+    android:minHeight="@dimen/zp_chip_height"
+    android:paddingStart="9dp"
+    android:paddingEnd="9dp"
+    android:singleLine="true"
+    android:textAppearance="?attr/textAppearanceLabelSmall" />

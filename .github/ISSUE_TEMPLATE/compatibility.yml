@@ -1,0 +1,48 @@
+name: Compatibility report
+description: Report an unsupported or changed Zalo version.
+title: "[Compatibility] "
+labels:
+  - compatibility
+body:
+  - type: markdown
+    attributes:
+      value: Use the exact numeric Zalo version code shown by Android package information.
+  - type: input
+    id: zalo_version
+    attributes:
+      label: Zalo version code
+      placeholder: Exact numeric versionCode
+    validations:
+      required: true
+  - type: input
+    id: module_version
+    attributes:
+      label: Zalo Patch version
+      placeholder: versionCode and versionName
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: Self-check result
+      options:
+        - stale
+        - failed
+        - installed_no_hits
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected behavior
+      description: Name the feature and visible result. Do not include private message/account data.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I removed personal information from the report.
+          required: true

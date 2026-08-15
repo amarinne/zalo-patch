@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Self-check runtime counts. Wrapping chips, not a metric card grid. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/zp_row_single"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/zp_row_padding_horizontal"
+    android:paddingTop="14dp"
+    android:paddingEnd="@dimen/zp_row_padding_horizontal"
+    android:paddingBottom="14dp">
+
+    <TextView
+        android:id="@android:id/title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+    <TextView
+        android:id="@android:id/summary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textColor="@color/zp_text_secondary" />
+
+    <com.ez.zalopatch.ZpFlowLayout
+        android:id="@+id/zp_row_chips"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" />
+</LinearLayout>

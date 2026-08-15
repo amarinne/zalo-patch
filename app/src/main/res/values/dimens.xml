@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="zp_page_padding">16dp</dimen>
+    <dimen name="zp_group_radius">16dp</dimen>
+    <dimen name="zp_row_min_height">56dp</dimen>
+    <dimen name="zp_row_padding_horizontal">16dp</dimen>
+    <dimen name="zp_row_padding_vertical">12dp</dimen>
+    <dimen name="zp_section_spacing">24dp</dimen>
+    <dimen name="zp_status_dot_size">10dp</dimen>
+    <dimen name="zp_row_chevron_size">18dp</dimen>
+    <dimen name="zp_chip_height">26dp</dimen>
+    <dimen name="zp_chip_radius">8dp</dimen>
+    <dimen name="zp_chip_gap">6dp</dimen>
+</resources>

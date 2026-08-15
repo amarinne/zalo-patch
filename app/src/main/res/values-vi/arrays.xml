@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="zp_history_retention_entries">
+        <item>100 thông báo</item>
+        <item>250 thông báo</item>
+        <item>500 thông báo</item>
+        <item>1000 thông báo</item>
+        <item>5000 thông báo</item>
+        <item>Không giới hạn</item>
+    </string-array>
+</resources>
