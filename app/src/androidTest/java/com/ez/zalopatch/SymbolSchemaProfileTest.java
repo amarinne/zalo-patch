@@ -229,7 +229,8 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
 
             ContentValues valid = selfCheckValues();
             addEvidence(valid, context);
-            valid.put("run_id", java.util.UUID.randomUUID().toString());
+            valid.put("run_id", previousRunId == null || previousRunId.isEmpty()
+                    ? java.util.UUID.randomUUID().toString() : previousRunId);
             assertEquals(1, updateSelfCheck(context, feature, valid));
             assertEquals("installed_no_hits", preferences.getString(prefix + "status", ""));
 
