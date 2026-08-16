@@ -156,6 +156,9 @@ final class DiagnosticReportFactory {
             item.put("status", bounded(row.status, 32));
             item.put("installCount", Math.max(0, row.installCount));
             item.put("hitCount", Math.max(0, row.hitCount));
+            // Detail and error-message fields stay out of the report by contract; detail carries
+            // free text such as notification channel ids and conversation counts. Evidence a
+            // reviewer needs belongs in target, which is a bounded feature descriptor.
             item.put("target", bounded(row.target, 512));
             item.put("updatedAt", Math.max(0L, row.updatedAt));
             selfCheck.put(item);
@@ -182,6 +185,22 @@ final class DiagnosticReportFactory {
         setup.put("staleCount", counts.stale);
         product.put("setupChecks", setup);
         return product;
+    }
+
+    /**
+     * Reconciliation stores either one of its own fixed explanations or "Type: message" built from
+     * a throwable. Raw exception messages are excluded from reports, so keep only the type half.
+     */
+    private static String sanitizedErrorType(String error) {
+        if (error == null || error.isEmpty()) {
+            return "";
+        }
+        int separator = error.indexOf(": ");
+        if (separator <= 0) {
+            return error;
+        }
+        String type = error.substring(0, separator);
+        return type.matches("[A-Za-z0-9_.$]+") ? type : "";
     }
 
     private static JSONObject remapEvidence(
@@ -217,6 +236,20 @@ final class DiagnosticReportFactory {
         } catch (Exception exception) {
             artifact.put("error", exception.getClass().getSimpleName());
         }
+        android.content.SharedPreferences preferences = TweakStore.preferences(context);
+        artifact.put("status", bounded(
+                preferences.getString(ZaloArtifactState.KEY_STATUS, "pending"), 32));
+        artifact.put("matchEvidence", bounded(preferences.getString(
+                ZaloArtifactState.KEY_EVIDENCE, ZaloArtifactState.EVIDENCE_UNKNOWN), 32));
+        artifact.put("reconciledBaseApkSha256", bounded(
+                preferences.getString(ZaloArtifactState.KEY_BASE_SHA256, ""), 64));
+        artifact.put("profileRevision",
+                preferences.getInt(ZaloArtifactState.KEY_PROFILE_REVISION, 0));
+        artifact.put("statusErrorType", bounded(sanitizedErrorType(
+                preferences.getString(ZaloArtifactState.KEY_ERROR, "")), 128));
+        artifact.put("catalogStatus", bounded(
+                preferences.getString(ZaloArtifactState.KEY_CATALOG_STATUS, "missing"), 32));
+        artifact.put("reconcileSuppressed", ZaloArtifactState.reconcileSuppressed(context));
         evidence.put("artifact", artifact);
 
         RemapEvidenceStore.Snapshot stored = RemapEvidenceStore.load(context);

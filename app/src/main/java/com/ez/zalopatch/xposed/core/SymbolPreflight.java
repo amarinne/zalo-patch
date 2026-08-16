@@ -238,5 +238,38 @@ final class SymbolPreflight {
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
         }
+
+        /** Number of anchor families whose structure resolved, out of {@link #total()}. */
+        int resolved() {
+            int count = 0;
+            if (inboxMedia) count++;
+            if (inboxCategories) count++;
+            if (me) count++;
+            if (bottomTabs) count++;
+            if (zinstantMessage) count++;
+            if (zinstantFeed) count++;
+            return count;
+        }
+
+        int total() {
+            return 6;
+        }
+
+        /** Per-family outcome, for a probe row that has to be read without the source at hand. */
+        String breakdown() {
+            StringBuilder value = new StringBuilder();
+            append(value, "inbox_media", inboxMedia);
+            append(value, "inbox_categories", inboxCategories);
+            append(value, "me", me);
+            append(value, "bottom_tabs", bottomTabs);
+            append(value, "zinstant_message", zinstantMessage);
+            append(value, "zinstant_feed", zinstantFeed);
+            return value.toString();
+        }
+
+        private static void append(StringBuilder value, String name, boolean resolved) {
+            if (value.length() > 0) value.append(' ');
+            value.append(name).append('=').append(resolved ? "ok" : "no");
+        }
     }
 }

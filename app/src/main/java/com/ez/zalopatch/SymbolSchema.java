@@ -150,6 +150,44 @@ public final class SymbolSchema {
         return bundledForVersion(hookContext(context), installedVersionCode);
     }
 
+    /**
+     * Newest bundled profile, regardless of the installed Zalo version. This exists only so an
+     * unmapped version can be probed: running the structural checks says which anchor families
+     * would have resolved, which is the evidence an exact-profile gate otherwise suppresses. It
+     * must never back a hook. Obfuscated names shuffle between Zalo releases, so a name that
+     * resolves here may belong to an unrelated class.
+     */
+    public static Active probeProfileForHooks(Context context) {
+        context = hookContext(context);
+        try {
+            String bundleJson = readBundledJson(context);
+            JSONArray profiles = new JSONObject(bundleJson).optJSONArray("profiles");
+            if (profiles == null || profiles.length() == 0) {
+                return null;
+            }
+            long newestCode = -1L;
+            int newestRevision = Integer.MIN_VALUE;
+            for (int index = 0; index < profiles.length(); index++) {
+                JSONObject profile = profiles.optJSONObject(index);
+                if (profile == null) continue;
+                int revision = profile.optInt("schema_revision", Integer.MIN_VALUE);
+                JSONObject range = profile.optJSONObject("zalo_version");
+                long code = range == null ? -1L : range.optLong("min_code", -1L);
+                if (revision > newestRevision && code > 0L) {
+                    newestRevision = revision;
+                    newestCode = code;
+                }
+            }
+            if (newestCode <= 0L) {
+                return null;
+            }
+            Active probe = select(bundleJson, "Probe", newestCode);
+            return probe.valid ? probe : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public static void setModuleApkPath(String path) {
         if (path != null && !path.isEmpty() && !path.equals(moduleApkPath)) {
             moduleApkPath = path;
@@ -271,7 +309,11 @@ public final class SymbolSchema {
         return new Health(installedVersionCode, active, "ok",
                 "Exact symbol profile selected from " + active.source + " for Zalo "
                         + installedVersionCode
-                        + " (schema v" + active.schemaVersion + "." + active.schemaRevision + ").");
+                        + " (schema v" + active.schemaVersion + "." + active.schemaRevision + ")."
+                        + (artifact.containerUnverified()
+                                ? " Matched on versionCode and signer; base APK container differs"
+                                        + " from the mapped one."
+                                : ""));
     }
 
     public static String string(Context context, String path, String fallback) {

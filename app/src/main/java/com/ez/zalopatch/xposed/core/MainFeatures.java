@@ -25,6 +25,7 @@ import de.robv.android.xposed.XposedBridge;
 
 public final class MainFeatures {
     private static final String FEATURE_RUNTIME_DISCOVERY = "runtime_discovery";
+    private static final String FEATURE_SYMBOL_PROBE = "symbol_probe";
 
     private MainFeatures() {
     }
@@ -40,6 +41,7 @@ public final class MainFeatures {
         features.add(new TelemetryFeature(classLoader, artifact.compatible));
         features.add(new InteractionTraceFeature(classLoader));
         if (artifact.compatible) {
+            markArtifactReady(artifact);
             SymbolPreflight.Result preflight = SymbolPreflight.inspect(
                     SymbolSchema.activeForHooks(HookConfig.resolveFallbackContextForHooks()),
                     classLoader);
@@ -68,12 +70,57 @@ public final class MainFeatures {
                     "failed".equals(artifact.status) ? "failed" : "stale",
                     "exact artifact profile",
                     artifact.reason, "");
+            probeSymbols(classLoader);
         }
         maybeAddRuntimeDiscovery(features, classLoader);
 
         for (Feature feature : features) {
             runFeature(feature);
         }
+    }
+
+    /**
+     * Records which anchor families would have resolved when no profile covers the installed Zalo
+     * version. Nothing is hooked from a probe. Without it an unmapped version reports only that it
+     * is unmapped, so the gate suppresses the evidence needed to decide whether it could be armed.
+     */
+    private static void probeSymbols(ClassLoader classLoader) {
+        try {
+            SymbolSchema.Active probe = SymbolSchema.probeProfileForHooks(
+                    HookConfig.resolveFallbackContextForHooks());
+            if (probe == null) {
+                SelfCheckRegistry.markStatus(FEATURE_SYMBOL_PROBE, "ok",
+                        "no probe profile available", "", "");
+                return;
+            }
+            SymbolPreflight.Result result = SymbolPreflight.inspect(probe, classLoader);
+            // The probe exists to be read in a report, and reports carry target but not detail, so
+            // the resolved counts live in target. Both fields are module-generated descriptors.
+            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_PROBE, "ok",
+                    probe.source + " " + probe.minCode + ": "
+                            + result.resolved() + "/" + result.total() + " resolved "
+                            + result.breakdown(),
+                    "probe only, nothing hooked", "");
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_PROBE, "ok", "probe unavailable", "",
+                    throwable.getClass().getSimpleName());
+        }
+    }
+
+    private static void markArtifactReady(ZaloArtifactState.Compatibility artifact) {
+        if (artifact.containerUnverified()) {
+            SelfCheckRegistry.markStatus("zalo_artifact", "ok", "versionCode and signer profile",
+                    "Base APK container differs from the mapped one; anchors gated by preflight",
+                    "");
+            return;
+        }
+        if (ZaloArtifactState.EVIDENCE_UNKNOWN.equals(artifact.evidence)) {
+            SelfCheckRegistry.markStatus("zalo_artifact", "ok", "versionCode and signer profile",
+                    "Match tier not recorded yet; re-check requested", "");
+            return;
+        }
+        SelfCheckRegistry.markStatus("zalo_artifact", "ok", "exact artifact profile",
+                "Base APK hash and signer matched the mapped artifact", "");
     }
 
     private static void addInbox(List<Feature> features, ClassLoader classLoader,

@@ -130,6 +130,28 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("Remote catalog 14", selected.source);
     }
 
+    public void testProbeProfileSelectsTheNewestRevisionForAnUnmappedVersion() throws Exception {
+        SymbolSchema.Active probe = SymbolSchema.probeProfileForHooks(getContext());
+
+        assertNotNull(probe);
+        assertTrue(probe.valid);
+        JSONArray profiles = new JSONObject(bundleJson).getJSONArray("profiles");
+        int newestRevision = Integer.MIN_VALUE;
+        int newestCode = -1;
+        for (int index = 0; index < profiles.length(); index++) {
+            JSONObject profile = profiles.getJSONObject(index);
+            int revision = profile.getInt("schema_revision");
+            if (revision > newestRevision) {
+                newestRevision = revision;
+                newestCode = profile.getJSONObject("zalo_version").getInt("min_code");
+            }
+        }
+        assertEquals(newestRevision, probe.schemaRevision);
+        assertEquals(newestCode, probe.minCode);
+        assertTrue("probe source must be distinguishable from an armed profile",
+                probe.source.startsWith("Probe"));
+    }
+
     public void testProfileWithoutArtifactMetadataIsInvalid() throws Exception {
         JSONObject bundle = new JSONObject(bundleJson);
         bundle.getJSONArray("profiles").getJSONObject(1).remove("artifact");
