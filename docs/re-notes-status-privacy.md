@@ -118,6 +118,30 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   If a future "block X" hook based on an entry-type filter doesn't work, suspect this
   same pattern first: check whether anything runs immediately before the hooked method
   and mutates the objects being passed in.
+- **Second bug, also only found live:** the fix above blocked seen status for
+  conversations opened fresh (e.g. from a notification), but messages read while
+  *staying* in an already-open conversation still reached the other side as seen.
+  There is a **second, independent path to the same socket send**:
+  `Ll00/r;->Q(Ljava/util/List;ZZZ)V`, called directly from `ChatView`'s live-message
+  handling via `Lje0/k0;->a(Ljava/lang/String;)V` (found by grepping every caller of
+  `Ls00/x;->e(...)`, the actual socket send — there were two, not one: `Lje0/k0` and
+  `Ll00/r`). `Q()` picks between two packet-cmd families (`0xca`/`0x66` vs
+  `0x27e5`/`0x2781`) based on its third boolean parameter, but that parameter's exact
+  semantics were never nailed down with confidence — reading a handful of call sites
+  wasn't conclusive, and guessing wrong risks blocking an unrelated ack (reaction,
+  recall, who knows) that happens to share this call.
+- Fix: don't gate on `Q()`'s parameters at all. Filter its `List` argument by entry
+  type exactly like the flush above (extracted into a shared `filterToDeliveredOnly`
+  helper) — defensively: any entry that doesn't expose the type field at all is left
+  in the batch untouched rather than dropped, since at that point this module can't
+  tell what kind of ack it actually is.
+- **Re-find next time:** don't assume `Lje0/k0`'s flush is the only sender. Grep every
+  caller of the actual socket-send method (`Ls00/x;->e(...)` this release, found via
+  `grep -rl` for its full signature across the whole tree, not just within the classes
+  already suspected) whenever a "block X network thing" hook seems to work sometimes
+  and not others — that pattern (works from a fresh entry point, not from continued
+  live use, or vice versa) is a strong signal there's more than one call site feeding
+  the same wire protocol, not that the one hook found is broken.
 
 ### Typing indicator — `messages.block_typing_status`
 
