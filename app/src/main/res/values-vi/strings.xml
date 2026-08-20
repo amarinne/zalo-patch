@@ -64,8 +64,8 @@
     <string name="zp_tweak_hide_zcloud_banner_summary">Ẩn banner zCloud phía trên Tin nhắn.</string>
     <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
     <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
-    <string name="zp_tweak_block_seen_status">Chặn trạng thái đã xem</string>
-    <string name="zp_tweak_block_seen_status_summary">Chỉ ngừng gửi xác nhận đã xem; trạng thái đã nhận vẫn được gửi bình thường. Tin nhắn vẫn hiển thị đã đọc trên máy bạn.</string>
+    <string name="zp_tweak_block_seen_status">Chặn trạng thái đã xem và đã nhận</string>
+    <string name="zp_tweak_block_seen_status_summary">Ngừng gửi xác nhận đã xem. Với tin nhắn đọc từ thông báo hoặc khi mới mở đoạn chat, trạng thái đã nhận vẫn gửi bình thường; với tin nhắn đọc trực tiếp khi bạn đang ở trong đoạn chat, trạng thái đã nhận cũng bị chặn cùng với đã xem. Tin nhắn vẫn hiển thị đã đọc trên máy bạn trong mọi trường hợp.</string>
     <string name="zp_tweak_block_typing_status">Chặn trạng thái đang nhập</string>
     <string name="zp_tweak_block_typing_status_summary">Ngừng gửi biểu tượng \"đang nhập…\" khi bạn gõ tin nhắn.</string>
     <string name="zp_tweak_hide_online_status">Ẩn trạng thái truy cập</string>

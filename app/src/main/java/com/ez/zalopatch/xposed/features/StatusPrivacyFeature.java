@@ -82,19 +82,23 @@ public final class StatusPrivacyFeature extends Feature {
 
     /**
      * {@code Lje0/k0} (hooked above) is the batched/debounced ack path, reached when a message
-     * becomes visible via the message list's draw pass. {@code Ll00/r;->Q(List, boolean, boolean,
-     * boolean)V} is a second, independent path to the exact same socket call
-     * ({@code Ls00/x;->e(...)}), used while a conversation is actively open and a new message
-     * arrives live — confirmed by field testing: seen status kept reaching the other side for
-     * messages read while staying in an already-open conversation, even with the flush above
-     * correctly blocking everything for the "open from a notification" case.
+     * becomes visible via the message list's draw pass — its entries carry a reliable delivered
+     * (2) vs seen type, so that hook cleanly keeps delivered acks flowing while dropping seen ones.
+     * {@code Ll00/r;->Q(List, boolean, boolean, boolean)V} is a second, independent path to the
+     * exact same socket call ({@code Ls00/x;->e(...)}), used while a conversation is actively open
+     * and a new message arrives live — confirmed by field testing: seen status kept reaching the
+     * other side for messages read while staying in an already-open conversation, even with the
+     * flush above correctly blocking everything for the "open from a notification" case.
      *
-     * <p>Rather than reverse-engineer which of {@code Q()}'s three booleans selects its "seen"
-     * packet variant (real risk of misreading the wrong one and blocking something unrelated, like
-     * a reaction or recall ack that happens to share this call), this filters {@code Q()}'s list
-     * argument the same way as the flush above, by entry type. If none of the list's entries expose
-     * that field (a different ack kind, not the {@code Ln00/b} shape this and the flush both use),
-     * the call is left untouched rather than guessed at.
+     * <p>This filters {@code Q()}'s list the same way, by entry type, but per live testing
+     * {@code Q()}'s entries don't reliably carry that same delivered-vs-seen distinction — the
+     * filter also started dropping delivered acks sent through this path. Reverse-engineering
+     * which of {@code Q()}'s three booleans actually selects a "seen" vs "delivered" packet would
+     * fix that, but risks misreading the wrong one and silently blocking something unrelated (a
+     * reaction or recall ack sharing this call) instead. Given that tradeoff, this deliberately
+     * blocks both delivered and seen for messages read live while already in a conversation — see
+     * the {@code messages.block_seen_status} setting description, which says so explicitly — while
+     * keeping the flush above precise for every other case.
      */
     private void installSeenAckShortcutBlock() {
         if (!HookConfig.isEnabled(Tweaks.KEY_BLOCK_SEEN_STATUS)) {
