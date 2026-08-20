@@ -38,12 +38,18 @@ public final class StatusPrivacyFeature extends Feature {
     }
 
     /**
-     * The queue this flushes over the socket carries both delivered acks (entry type 2) and seen
-     * acks (entry type 3) together in one batch. Blocking the whole flush — the first cut of this
-     * feature — hid delivered too, so the other side couldn't even tell the message had arrived.
-     * Instead, filter seen-typed entries out of the batch and let the delivered ones send exactly
-     * as Zalo intended; the local "message read" UI update already happened before this call runs,
-     * so removing an entry here only stops the network side from finding out.
+     * The queue this flushes over the socket carries both delivered and seen acks in one batch.
+     * Blocking the whole flush — the first cut of this feature — hid delivered too, so the other
+     * side couldn't even tell the message had arrived.
+     *
+     * <p>The second cut filtered on "entry type == 3" (the value {@code h()}'s enqueue hardcodes
+     * for a seen entry) and, per live testing, still let everything through: {@code Lje0/k0;->j
+     * (ArrayList)V} runs immediately before this method on the very same list and rewrites every
+     * type-3 entry to type 1 as a side effect, so by the time this hook inspects the batch, no
+     * entry is ever still type 3. Rather than chase what a "seen" entry is currently labeled after
+     * that mutation, this keeps only {@code type == 2} (delivered, which {@code j()} never
+     * touches) and drops everything else — unambiguous regardless of what value {@code j()} leaves
+     * on the ones that started as seen.
      */
     private void installSeenBlock() {
         if (!HookConfig.isEnabled(Tweaks.KEY_BLOCK_SEEN_STATUS)) {
@@ -56,34 +62,34 @@ public final class StatusPrivacyFeature extends Feature {
                 "symbols.chat.send_seen_flush_method", "i");
         String typeField = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
                 "symbols.chat.seen_entry_type_field", "a");
-        int seenTypeValue = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.seen_entry_type_value", 3);
+        int deliveredTypeValue = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.delivered_entry_type_value", 2);
         runGuarded("seen-status block", FEATURE_SEEN, className + "#" + methodName, () ->
                 XposedHelpers.findAndHookMethod(className, classLoader, methodName,
                         ArrayList.class, boolean.class, new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) {
                                 List<?> batch = (List<?>) param.args[0];
-                                log("seen flush called: batch=" + batch.size()
-                                        + " isGroup=" + param.args[1]);
-                                ArrayList<Object> withoutSeen = new ArrayList<>(batch.size());
+                                ArrayList<Object> deliveredOnly = new ArrayList<>(batch.size());
                                 for (Object entry : batch) {
-                                    if (XposedHelpers.getIntField(entry, typeField) != seenTypeValue) {
-                                        withoutSeen.add(entry);
+                                    int type = XposedHelpers.getIntField(entry, typeField);
+                                    if (type == deliveredTypeValue) {
+                                        deliveredOnly.add(entry);
                                     }
+                                    log("seen flush entry: type=" + type);
                                 }
-                                if (withoutSeen.size() == batch.size()) {
+                                if (deliveredOnly.size() == batch.size()) {
                                     return;
                                 }
                                 SelfCheckRegistry.incrementHit(FEATURE_SEEN, className + "#" + methodName,
-                                        "dropped " + (batch.size() - withoutSeen.size())
-                                                + " seen ack(s), kept " + withoutSeen.size()
+                                        "dropped " + (batch.size() - deliveredOnly.size())
+                                                + " seen ack(s), kept " + deliveredOnly.size()
                                                 + " delivered ack(s)");
-                                if (withoutSeen.isEmpty()) {
+                                if (deliveredOnly.isEmpty()) {
                                     param.setResult(null);
                                     return;
                                 }
-                                param.args[0] = withoutSeen;
+                                param.args[0] = deliveredOnly;
                             }
                         }));
         installSeenEnqueueDiagnostic();

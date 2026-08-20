@@ -976,7 +976,7 @@
           "send_seen_manager_class": "je0.k0",
           "send_seen_flush_method": "i",
           "seen_entry_type_field": "a",
-          "seen_entry_type_value": 3,
+          "delivered_entry_type_value": 2,
           "seen_enqueue_method": "h",
           "seen_message_class": "o00.q",
           "send_typing_class": "l00.r",
