@@ -978,10 +978,7 @@
           "seen_entry_type_field": "a",
           "seen_entry_type_value": 3,
           "send_typing_class": "l00.r",
-          "send_typing_method": "S",
-          "online_status_save_class": "pn.h0",
-          "online_status_save_method": "q3",
-          "online_status_setting_id": 27
+          "send_typing_method": "S"
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",

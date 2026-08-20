@@ -121,7 +121,21 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   find the `Ls00/x`-equivalent socket class from the seen-status trace (same class,
   reused), and look for a `(String, int, boolean, boolean)` method on it.
 
-### Online-status visibility (submit, don't bypass) — `messages.hide_online_status`
+### Online-status visibility — removed, trail kept for reference
+
+**Not shipped.** This was implemented and then pulled at the user's request: even with
+the submit-the-real-request approach below (rather than the earlier, worse getter-bypass
+attempt), there was an unresolved risk that once your own account's now-hidden
+`online_status` preference synced back down from the server on a later
+login/reconnect, Zalo's own client would start enforcing its usual symmetric
+restriction locally (the same `Lyz/j;->j2()Z` flag gates both "do I show mine" and "can
+I see others'"), silently blinding you to everyone else's status too. Fixing that
+cleanly needed a second, narrower hook that was never field-verified, and the user
+decided it wasn't worth shipping half-verified. The trace below is kept because the
+generic "save a privacy setting over the socket" mechanism it found
+(`Lpn/h0;->q3(settingId, value, extra)`, socket cmd `0x111`, shared by ~200 different
+save calls in that one class) is reusable for other privacy-setting features later,
+even though this particular feature isn't built on it anymore.
 
 Online-status visibility is a **stored server-side privacy preference**, not a live
 per-connection broadcast — there is no outbound "I'm online" packet to block. The
