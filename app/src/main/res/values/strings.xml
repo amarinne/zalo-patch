@@ -92,11 +92,11 @@
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
     <string name="zp_tweak_block_seen_status">Block seen status</string>
-    <string name="zp_tweak_block_seen_status_summary">Stops sending read/delivered receipts. Messages still show as read locally.</string>
+    <string name="zp_tweak_block_seen_status_summary">Stops sending the read receipt only; delivered status still goes through as normal. Messages still show as read locally.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
     <string name="zp_tweak_block_typing_status_summary">Stops sending the \"is typing…\" indicator while you type.</string>
-    <string name="zp_tweak_always_see_online_status">Always see online status</string>
-    <string name="zp_tweak_always_see_online_status_summary">Lets you keep seeing friends\' online status even after you turn off \"Hiện trạng thái truy cập\" in Zalo\'s own Privacy settings, which normally also hides theirs from you.</string>
+    <string name="zp_tweak_hide_online_status">Hide online status</string>
+    <string name="zp_tweak_hide_online_status_summary">Submits Zalo\'s own \"hide my online status\" privacy setting on your behalf, for accounts where the toggle in Zalo\'s own Privacy settings isn\'t reachable. You still see everyone else\'s online status as normal.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>

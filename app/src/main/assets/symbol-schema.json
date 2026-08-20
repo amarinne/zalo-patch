@@ -975,10 +975,13 @@
           ],
           "send_seen_manager_class": "je0.k0",
           "send_seen_flush_method": "i",
+          "seen_entry_type_field": "a",
+          "seen_entry_type_value": 3,
           "send_typing_class": "l00.r",
           "send_typing_method": "S",
-          "online_status_flag_class": "yz.j",
-          "online_status_flag_method": "j2"
+          "online_status_save_class": "pn.h0",
+          "online_status_save_method": "q3",
+          "online_status_setting_id": 27
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",
