@@ -89,17 +89,35 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   flush, confirms the scheme: it skips entries where `a == 2` (`goto` past them
   untouched) and only rewrites `a == 3` entries to `1` (a "sent" sentinel) after they
   go out.
-- Fix: hook `i(ArrayList, boolean)`, filter the batch to drop only entries where
-  `getIntField(entry, "a") == 3`, and forward the rest (or skip the call entirely if
-  nothing delivered-typed remains). Delivered acks for entries that were never
-  seen-marked are never touched at all, since they're not even in that same call's
-  batch unless a seen event queued them together.
+- **Bug (found only by live field testing, not by re-reading the smali harder):** the
+  first fix filtered the batch for `a == 3`, matching the value `h()`'s enqueue
+  hardcodes for a seen entry. It never dropped anything — confirmed live: the flush
+  fired with a real one-entry batch and the "dropped" self-check hit never appeared.
+  Cause: `Lje0/k0;->j(ArrayList)V` **always runs immediately before `i()` on the exact
+  same list** (same caller, same object references, `j(list)` then `i(list, isGroup)`
+  back to back) and, as a side effect, rewrites every `a == 3` entry to `a = 1` *in
+  place* before `i()` — and this hook on `i()` — ever inspects the batch. By the time
+  the filter runs, no entry is ever still `3`.
+- Fix: don't chase what value a seen entry ends up labeled after `j()`'s mutation.
+  Instead keep only `a == 2` (delivered, the one value `j()` never touches) and drop
+  everything else. Unambiguous regardless of whether a seen entry is currently `1`
+  (the normal, already-relabeled case going through `j()`) or still `3` (would only
+  happen if some other path fed `i()` directly, bypassing `j()` — not observed, but
+  the delivered-allowlist approach is safe against it either way).
 - **Re-find next time:** grep for `"SendSeenManager"` or `"sendSeenToServer"` to
   relocate the manager class, then grep that class for the two enqueue methods (one
   called from a message-arrival class, one from a conversation-open/mark-read call
-  site) and read the `iput ... ->a:I` int literal each one uses — whichever of `2`/`3`
-  they use may have swapped, so verify against the `j(ArrayList)` skip-vs-rewrite logic
-  rather than assuming the same numbers.
+  site) and read the `iput ... ->a:I` int literal each one uses for "delivered" —
+  that's the value to allowlist. Don't trust which value means "seen" without
+  re-reading whatever runs immediately before the flush method (`j()` this release)
+  for a same-list mutation like this one; **the only way this bug surfaced was
+  instrumenting the actual hook with unconditional logging and testing on a real
+  device with a real conversation** — reading the decompiled logic correctly still
+  missed it, because the flush method's *own* code was faithfully reproduced, just the
+  runtime state arriving at it (already mutated by its caller) wasn't accounted for.
+  If a future "block X" hook based on an entry-type filter doesn't work, suspect this
+  same pattern first: check whether anything runs immediately before the hooked method
+  and mutates the objects being passed in.
 
 ### Typing indicator — `messages.block_typing_status`
 
@@ -190,6 +208,38 @@ Full trace, UI down to the wire request:
   release) and its `q3`-equivalent method are reused for saving *every* privacy
   setting, not just this one, so once relocated it's worth grepping its other ~200
   overloads for other privacy toggles this module might want later.
+
+## Known separate bug: self-check reporting is unreliable
+
+Independent of whether the hooks themselves work, live testing found
+`SelfCheckRegistry`'s reports frequently never become queryable via
+`content://com.ez.zalopatch.config/self_check` — `ConfigProvider.recordSelfCheck`
+logged `SelfCheck provider rejected update code=-2` (an artifact-generation/profile
+hash mismatch) for some features immediately after a module reinstall, and after that
+the whole self-check table can read back empty even though `logcat` clearly shows
+`[SelfCheck] ... installed`/`active hits=N` lines being generated locally. **Don't
+trust an empty or stale self-check table as evidence a hook failed to install** — the
+authoritative signal is the `[SelfCheck]`/feature debug log lines in `logcat` (enable
+with `adb shell setprop debug.zalopatch 1`, relaunch Zalo), which log unconditionally
+on the debug flag regardless of whether the ConfigProvider round trip succeeds. This
+reporting bug hasn't been root-caused yet — likely `ZaloArtifactState` needing a fresh
+reconcile after a same-versionCode module reinstall, since dev builds here didn't bump
+`versionCode` between rebuilds.
+
+## Group chats use the same funnel as 1-on-1 (confirmed live)
+
+`Lje0/k0;->i()` takes an `isGroup` boolean and the same instance handles both; nothing
+group-specific needs to be added for `messages.block_seen_status`. Live testing (with
+the diagnostic logging added in the fix above) confirmed a real flush firing for a
+1-on-1 conversation; group should reach the same method through the same enqueue path
+(`TouchListView`'s `dispatchDraw` → `Lje0/k0;->h()`, gated by conversation uid already
+being a key in `Lje0/k0;->c` — that SortedMap's population source wasn't traced; this
+only matters if group conversations turn out to differ from 1-on-1 in whether/when
+they get added to it, which hasn't been observed but also hasn't been ruled out).
+
+`messages.block_typing_status` hooks `Ll00/r;->S(String, int, boolean, boolean)`
+unconditionally, ignoring the `isGroup` third parameter entirely — it was already
+group-agnostic by construction, no fix needed.
 
 ## If a hook stops firing after a Zalo update
 
