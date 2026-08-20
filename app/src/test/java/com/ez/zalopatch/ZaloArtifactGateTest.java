@@ -24,7 +24,7 @@ public final class ZaloArtifactGateTest {
     @Test
     public void mappedContainerReportsExactApkEvidence() {
         ZaloArtifactState.Decision decision = ZaloArtifactState.decide(
-                true, "", "cached", SIGNER, MAPPED_APK, SIGNER, MAPPED_APK);
+                true, "", "cached", SIGNER, MAPPED_APK, SIGNER, MAPPED_APK, false);
 
         assertEquals("ready", decision.status);
         assertEquals(ZaloArtifactState.EVIDENCE_EXACT_APK, decision.evidence);
@@ -34,7 +34,7 @@ public final class ZaloArtifactGateTest {
     @Test
     public void otherContainerOfSameReleaseStaysReadyAsUnverifiedMatch() {
         ZaloArtifactState.Decision decision = ZaloArtifactState.decide(
-                true, "", "cached", SIGNER, MAPPED_APK, SIGNER, VARIANT_APK);
+                true, "", "cached", SIGNER, MAPPED_APK, SIGNER, VARIANT_APK, false);
 
         assertEquals("ready", decision.status);
         assertEquals(ZaloArtifactState.EVIDENCE_VERSION_SIGNER, decision.evidence);
@@ -44,10 +44,25 @@ public final class ZaloArtifactGateTest {
     @Test
     public void foreignSignerIsRejected() {
         ZaloArtifactState.Decision decision = ZaloArtifactState.decide(
-                true, "", "cached", SIGNER, MAPPED_APK, "00" + SIGNER.substring(2), MAPPED_APK);
+                true, "", "cached", SIGNER, MAPPED_APK, "00" + SIGNER.substring(2), MAPPED_APK,
+                false);
 
         assertEquals("mismatch", decision.status);
         assertEquals(ZaloArtifactState.EVIDENCE_NONE, decision.evidence);
+    }
+
+    @Test
+    public void lspatchResignedInstallStaysReadyAsLspatchResignedEvidence() {
+        // LSPatch always resigns the patched APK with its own key, so the observed signer never
+        // matches the original Zalo signer on a patched install. The loader-injected
+        // *.lspatch.documents provider is what actually distinguishes this from a foreign repack.
+        ZaloArtifactState.Decision decision = ZaloArtifactState.decide(
+                true, "", "cached", SIGNER, MAPPED_APK, "00" + SIGNER.substring(2), MAPPED_APK,
+                true);
+
+        assertEquals("ready", decision.status);
+        assertEquals(ZaloArtifactState.EVIDENCE_LSPATCH_RESIGNED, decision.evidence);
+        assertEquals("", decision.error);
     }
 
     @Test
@@ -79,7 +94,7 @@ public final class ZaloArtifactGateTest {
     public void versionWithoutProfileIsUnsupported() {
         ZaloArtifactState.Decision decision = ZaloArtifactState.decide(
                 false, "no exact profile for installed Zalo", "missing",
-                "", "", SIGNER, VARIANT_APK);
+                "", "", SIGNER, VARIANT_APK, false);
 
         assertEquals("unsupported", decision.status);
         assertEquals(ZaloArtifactState.EVIDENCE_NONE, decision.evidence);

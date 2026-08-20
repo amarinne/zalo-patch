@@ -39,6 +39,13 @@ public final class ZaloArtifactState {
      * Symbols are accepted; per-anchor structural preflight remains the load-bearing check.
      */
     public static final String EVIDENCE_VERSION_SIGNER = "version_signer";
+    /**
+     * The installed artifact carries the profile's exact versionCode, but the Zalo signing
+     * certificate was replaced because LSPatch resigns every APK it patches. Detected via the
+     * loader-injected {@code lspatch.documents} provider (see {@link ZaloArtifactIdentity}), not
+     * from the signer digest itself, so an unrelated repack still falls through to a mismatch.
+     */
+    public static final String EVIDENCE_LSPATCH_RESIGNED = "lspatch_resigned";
     public static final String EVIDENCE_NONE = "none";
     /**
      * Authorized, but the stored state predates the match tier or has not been reconciled since.
@@ -148,10 +155,17 @@ public final class ZaloArtifactState {
             String verification = profile.string("artifact.verification", "unverified");
             String profileHash = profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "";
             Decision decision = decide(profile.valid, profile.validation, catalogStatus,
-                    expectedSigner, expectedHash, identity.signerSha256, identity.baseApkSha256);
+                    expectedSigner, expectedHash, identity.signerSha256, identity.baseApkSha256,
+                    identity.lspatched);
             String status = decision.status;
             String error = decision.error;
             String evidence = decision.evidence;
+            // authorizes() re-checks profileSigner.equals(storedSigner) on every hook launch. A
+            // resigned LSPatch install can never match the real Zalo signer, so what gets stored
+            // here for that case is the profile's own expected signer, matching the recomputed
+            // profileSigner value at hook time and keeping that check meaningful for everyone else.
+            String signerToStore = EVIDENCE_LSPATCH_RESIGNED.equals(evidence)
+                    ? expectedSigner : identity.signerSha256;
             if (generationChanged) {
                 clearSelfCheck(preferences);
             }
@@ -161,7 +175,7 @@ public final class ZaloArtifactState {
                     .putString(KEY_GENERATION, identity.generation)
                     .putLong(KEY_VERSION_CODE, identity.versionCode)
                     .putString(KEY_BASE_SHA256, identity.baseApkSha256)
-                    .putString(KEY_SIGNER_SHA256, identity.signerSha256)
+                    .putString(KEY_SIGNER_SHA256, signerToStore)
                     .putInt(KEY_PROFILE_REVISION, profile.schemaRevision)
                     .putString(KEY_PROFILE_SHA256, profileHash)
                     .putString(KEY_PROFILE_SOURCE, profile.source)
@@ -211,12 +225,15 @@ public final class ZaloArtifactState {
      */
     static Decision decide(boolean profileValid, String profileValidation, String catalogStatus,
                            String expectedSigner, String expectedBaseHash,
-                           String actualSigner, String actualBaseHash) {
+                           String actualSigner, String actualBaseHash, boolean lspatched) {
         if (!profileValid) {
             return new Decision("unsupported", EVIDENCE_NONE,
                     profileValidation + "; catalog " + catalogStatus);
         }
         if (expectedSigner == null || !expectedSigner.equals(actualSigner)) {
+            if (lspatched) {
+                return new Decision("ready", EVIDENCE_LSPATCH_RESIGNED, "");
+            }
             return new Decision("mismatch", EVIDENCE_NONE,
                     "Zalo signing certificate does not match the selected profile");
         }
@@ -338,6 +355,10 @@ public final class ZaloArtifactState {
             summary.append("\nBase APK container differs from the mapped one; matched on exact "
                     + "versionCode and Zalo signing certificate.");
         }
+        if (EVIDENCE_LSPATCH_RESIGNED.equals(evidence)) {
+            summary.append("\nZalo signing certificate differs because LSPatch resigned the APK; "
+                    + "matched on exact versionCode and the LSPatch loader marker instead.");
+        }
         if (reconcileSuppressed(context)) {
             summary.append("\nRe-check suppressed while com.ez.zalopatch.test is installed; "
                     + "uninstall it to resume artifact reconciliation.");
@@ -430,7 +451,8 @@ public final class ZaloArtifactState {
 
         /** True when the profile was mapped from a different container of the same release. */
         public boolean containerUnverified() {
-            return compatible && EVIDENCE_VERSION_SIGNER.equals(evidence);
+            return compatible && (EVIDENCE_VERSION_SIGNER.equals(evidence)
+                    || EVIDENCE_LSPATCH_RESIGNED.equals(evidence));
         }
     }
 
