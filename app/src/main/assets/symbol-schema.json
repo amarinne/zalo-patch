@@ -980,6 +980,9 @@
           "seen_enqueue_method": "h",
           "seen_message_class": "o00.q",
           "seen_ack_shortcut_method": "Q",
+          "online_status_save_class": "pn.h0",
+          "online_status_save_method": "q3",
+          "online_status_setting_id": 27,
           "send_typing_class": "l00.r",
           "send_typing_method": "S"
         },

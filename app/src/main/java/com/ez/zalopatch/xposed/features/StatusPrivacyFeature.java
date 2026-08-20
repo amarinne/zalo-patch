@@ -13,14 +13,15 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Two independent status-privacy tweaks, each blocking exactly one outbound signal — nothing here
- * touches how the app renders or fetches <i>other people's</i> seen/typing status, only what this
- * account tells the server about itself.
+ * Status-privacy tweaks, each blocking (or, for online status, actually submitting) exactly one
+ * outbound signal — nothing here touches how the app renders or fetches <i>other people's</i>
+ * seen/typing/online status, only what this account tells the server about itself.
  */
 public final class StatusPrivacyFeature extends Feature {
     private static final String FEATURE_SEEN = "messages.block_seen_status";
     private static final String FEATURE_SEEN_ENQUEUE = "messages.block_seen_status.enqueue";
     private static final String FEATURE_TYPING = "messages.block_typing_status";
+    private static final String FEATURE_ONLINE_STATUS = "messages.hide_online_status";
 
     public StatusPrivacyFeature(ClassLoader classLoader) {
         super(classLoader);
@@ -36,6 +37,7 @@ public final class StatusPrivacyFeature extends Feature {
         installSeenBlock();
         installSeenAckShortcutBlock();
         installTypingBlock();
+        installOnlineStatusHide();
     }
 
     /**
@@ -205,5 +207,35 @@ public final class StatusPrivacyFeature extends Feature {
                                         "blocked typing indicator send");
                             }
                         }));
+    }
+
+    /**
+     * Online-status visibility is a stored server-side privacy preference, not a per-message
+     * packet like seen/typing — there's no batch to filter. Zalo's own native "Hiện trạng thái
+     * truy cập" toggle already submits this correctly; this hook exists because that native UI
+     * path isn't reachable on every account/build. It submits the exact same request Zalo's own
+     * "Online status" bottom sheet sends when tapped off: {@code Lpn/h0;->q3(settingId, value,
+     * extra)}, settingId 0x1b (27), value 0 (hidden), over socket cmd 0x111. It never touches the
+     * read side (nothing here reads or gates friends' online status), so seeing everyone else is
+     * unaffected by this account's own visibility setting — same as toggling it off natively.
+     */
+    private void installOnlineStatusHide() {
+        if (!HookConfig.isEnabled(Tweaks.KEY_HIDE_ONLINE_STATUS)) {
+            SelfCheckRegistry.markDisabled(FEATURE_ONLINE_STATUS, "online-status privacy save");
+            return;
+        }
+        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.online_status_save_class", "pn.h0");
+        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.online_status_save_method", "q3");
+        int settingId = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.online_status_setting_id", 27);
+        runGuarded("online-status hide", FEATURE_ONLINE_STATUS, className + "#" + methodName, () -> {
+            Class<?> requestClass = XposedHelpers.findClass(className, classLoader);
+            Object request = XposedHelpers.newInstance(requestClass);
+            XposedHelpers.callMethod(request, methodName, settingId, 0, "");
+            SelfCheckRegistry.incrementHit(FEATURE_ONLINE_STATUS, className + "#" + methodName,
+                    "submitted online-status hidden (settingId=" + settingId + ")");
+        });
     }
 }
