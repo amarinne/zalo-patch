@@ -11,6 +11,7 @@
     -->
     <string name="zp_restart_title">Khởi động lại Zalo</string>
     <string name="zp_restart_sent">Đã gửi lệnh khởi động lại</string>
+    <string name="zp_restart_sent_no_root">Đã mở lại Zalo (không root). Hãy đóng Zalo trong Recents nếu thay đổi chưa áp dụng</string>
     <string name="zp_restart_root_denied">Quyền root bị từ chối</string>
     <string name="zp_restart_failed">Không thể khởi động lại</string>
     <string name="zp_section_status">Trạng thái</string>

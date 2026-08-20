@@ -129,6 +129,8 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         onRestartStateChanged(false);
         int message = result == ZaloRestart.Result.SENT
                 ? R.string.zp_restart_sent
+                : result == ZaloRestart.Result.SENT_NO_ROOT
+                ? R.string.zp_restart_sent_no_root
                 : result == ZaloRestart.Result.ROOT_DENIED
                 ? R.string.zp_restart_root_denied
                 : R.string.zp_restart_failed;
