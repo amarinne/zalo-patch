@@ -979,6 +979,7 @@
           "delivered_entry_type_value": 2,
           "seen_enqueue_method": "h",
           "seen_message_class": "o00.q",
+          "seen_ack_shortcut_method": "Q",
           "send_typing_class": "l00.r",
           "send_typing_method": "S"
         },

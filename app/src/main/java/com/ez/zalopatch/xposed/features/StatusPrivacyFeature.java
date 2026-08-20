@@ -34,6 +34,7 @@ public final class StatusPrivacyFeature extends Feature {
     @Override
     public void doHook() {
         installSeenBlock();
+        installSeenAckShortcutBlock();
         installTypingBlock();
     }
 
@@ -69,30 +70,89 @@ public final class StatusPrivacyFeature extends Feature {
                         ArrayList.class, boolean.class, new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) {
-                                List<?> batch = (List<?>) param.args[0];
-                                ArrayList<Object> deliveredOnly = new ArrayList<>(batch.size());
-                                for (Object entry : batch) {
-                                    int type = XposedHelpers.getIntField(entry, typeField);
-                                    if (type == deliveredTypeValue) {
-                                        deliveredOnly.add(entry);
-                                    }
-                                    log("seen flush entry: type=" + type);
-                                }
-                                if (deliveredOnly.size() == batch.size()) {
-                                    return;
-                                }
-                                SelfCheckRegistry.incrementHit(FEATURE_SEEN, className + "#" + methodName,
-                                        "dropped " + (batch.size() - deliveredOnly.size())
-                                                + " seen ack(s), kept " + deliveredOnly.size()
-                                                + " delivered ack(s)");
-                                if (deliveredOnly.isEmpty()) {
-                                    param.setResult(null);
-                                    return;
-                                }
-                                param.args[0] = deliveredOnly;
+                                filterToDeliveredOnly(param, 0, FEATURE_SEEN,
+                                        className + "#" + methodName, typeField, deliveredTypeValue);
                             }
                         }));
         installSeenEnqueueDiagnostic();
+    }
+
+    /**
+     * {@code Lje0/k0} (hooked above) is the batched/debounced ack path, reached when a message
+     * becomes visible via the message list's draw pass. {@code Ll00/r;->Q(List, boolean, boolean,
+     * boolean)V} is a second, independent path to the exact same socket call
+     * ({@code Ls00/x;->e(...)}), used while a conversation is actively open and a new message
+     * arrives live — confirmed by field testing: seen status kept reaching the other side for
+     * messages read while staying in an already-open conversation, even with the flush above
+     * correctly blocking everything for the "open from a notification" case.
+     *
+     * <p>Rather than reverse-engineer which of {@code Q()}'s three booleans selects its "seen"
+     * packet variant (real risk of misreading the wrong one and blocking something unrelated, like
+     * a reaction or recall ack that happens to share this call), this filters {@code Q()}'s list
+     * argument the same way as the flush above, by entry type. If none of the list's entries expose
+     * that field (a different ack kind, not the {@code Ln00/b} shape this and the flush both use),
+     * the call is left untouched rather than guessed at.
+     */
+    private void installSeenAckShortcutBlock() {
+        if (!HookConfig.isEnabled(Tweaks.KEY_BLOCK_SEEN_STATUS)) {
+            return;
+        }
+        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.send_typing_class", "l00.r");
+        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.seen_ack_shortcut_method", "Q");
+        String typeField = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.seen_entry_type_field", "a");
+        int deliveredTypeValue = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.delivered_entry_type_value", 2);
+        runGuarded("seen-status shortcut block", FEATURE_SEEN, className + "#" + methodName, () ->
+                XposedHelpers.findAndHookMethod(className, classLoader, methodName,
+                        List.class, boolean.class, boolean.class, boolean.class,
+                        new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) {
+                                filterToDeliveredOnly(param, 0, FEATURE_SEEN,
+                                        className + "#" + methodName, typeField, deliveredTypeValue);
+                            }
+                        }));
+    }
+
+    /**
+     * Shared by both seen-ack hooks: keeps only entries whose {@code typeField} equals
+     * {@code deliveredTypeValue} (delivered) in the {@code List} at {@code param.args[listArgIndex]}
+     * and drops the rest, replacing the argument in place (or short-circuiting the call entirely if
+     * nothing delivered-typed remains). Entries that don't expose the field at all — a different ack
+     * shape than expected — are left in the batch untouched rather than dropped, since this module
+     * can't tell what they are.
+     */
+    private void filterToDeliveredOnly(XC_MethodHook.MethodHookParam param, int listArgIndex,
+                                       String feature, String target, String typeField,
+                                       int deliveredTypeValue) {
+        List<?> batch = (List<?>) param.args[listArgIndex];
+        ArrayList<Object> kept = new ArrayList<>(batch.size());
+        int dropped = 0;
+        for (Object entry : batch) {
+            try {
+                int type = XposedHelpers.getIntField(entry, typeField);
+                if (type == deliveredTypeValue) {
+                    kept.add(entry);
+                } else {
+                    dropped++;
+                }
+            } catch (Throwable unknownShape) {
+                kept.add(entry);
+            }
+        }
+        if (dropped == 0) {
+            return;
+        }
+        SelfCheckRegistry.incrementHit(feature, target,
+                "dropped " + dropped + " seen ack(s), kept " + kept.size() + " other ack(s)");
+        if (kept.isEmpty()) {
+            param.setResult(null);
+            return;
+        }
+        param.args[listArgIndex] = kept;
     }
 
     /**
