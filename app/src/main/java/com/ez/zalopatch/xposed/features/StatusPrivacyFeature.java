@@ -17,10 +17,19 @@ import de.robv.android.xposed.XposedHelpers;
  * blocked at the send call, after the local UI has already updated from the user's own action, so
  * the app still shows messages as read locally and the input box still works normally — only the
  * network packet that would tell the other side is dropped.
+ *
+ * <p>Online status is different: visibility is a stored server-side privacy preference set through
+ * Zalo's own native "Hiện trạng thái truy cập" toggle, not a packet this module can intercept. That
+ * native toggle already works correctly on its own. What it does <i>not</i> do is let you keep it
+ * off one-way: Zalo's client enforces it symmetrically, gating whether you can see friends' status
+ * on the same local flag that gates whether you show yours. {@link #installOnlineStatusBypass()}
+ * forces that one local read to always report "enabled," so friends' status stays visible locally
+ * regardless of what the user chose for their own visibility.
  */
 public final class StatusPrivacyFeature extends Feature {
     private static final String FEATURE_SEEN = "messages.block_seen_status";
     private static final String FEATURE_TYPING = "messages.block_typing_status";
+    private static final String FEATURE_ONLINE_STATUS = "messages.always_see_online_status";
 
     public StatusPrivacyFeature(ClassLoader classLoader) {
         super(classLoader);
@@ -35,6 +44,7 @@ public final class StatusPrivacyFeature extends Feature {
     public void doHook() {
         installSeenBlock();
         installTypingBlock();
+        installOnlineStatusBypass();
     }
 
     private void installSeenBlock() {
@@ -76,6 +86,28 @@ public final class StatusPrivacyFeature extends Feature {
                                 param.setResult(null);
                                 SelfCheckRegistry.incrementHit(FEATURE_TYPING, className + "#" + methodName,
                                         "blocked typing indicator send");
+                            }
+                        }));
+    }
+
+    private void installOnlineStatusBypass() {
+        if (!HookConfig.isEnabled(Tweaks.KEY_ALWAYS_SEE_ONLINE_STATUS)) {
+            SelfCheckRegistry.markDisabled(FEATURE_ONLINE_STATUS, "online-status visibility gate");
+            return;
+        }
+        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.online_status_flag_class", "yz.j");
+        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.online_status_flag_method", "j2");
+        runGuarded("online-status bypass", FEATURE_ONLINE_STATUS, className + "#" + methodName, () ->
+                XposedHelpers.findAndHookMethod(className, classLoader, methodName,
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                param.setResult(Boolean.TRUE);
+                                SelfCheckRegistry.incrementHit(FEATURE_ONLINE_STATUS,
+                                        className + "#" + methodName,
+                                        "forced online-status visibility gate on");
                             }
                         }));
     }

@@ -976,7 +976,9 @@
           "send_seen_manager_class": "je0.k0",
           "send_seen_flush_method": "i",
           "send_typing_class": "l00.r",
-          "send_typing_method": "S"
+          "send_typing_method": "S",
+          "online_status_flag_class": "yz.j",
+          "online_status_flag_method": "j2"
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",
