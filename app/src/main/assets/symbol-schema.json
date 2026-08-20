@@ -977,6 +977,8 @@
           "send_seen_flush_method": "i",
           "seen_entry_type_field": "a",
           "seen_entry_type_value": 3,
+          "seen_enqueue_method": "h",
+          "seen_message_class": "o00.q",
           "send_typing_class": "l00.r",
           "send_typing_method": "S"
         },

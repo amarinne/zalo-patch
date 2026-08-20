@@ -19,6 +19,7 @@ import de.robv.android.xposed.XposedHelpers;
  */
 public final class StatusPrivacyFeature extends Feature {
     private static final String FEATURE_SEEN = "messages.block_seen_status";
+    private static final String FEATURE_SEEN_ENQUEUE = "messages.block_seen_status.enqueue";
     private static final String FEATURE_TYPING = "messages.block_typing_status";
 
     public StatusPrivacyFeature(ClassLoader classLoader) {
@@ -63,6 +64,8 @@ public final class StatusPrivacyFeature extends Feature {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) {
                                 List<?> batch = (List<?>) param.args[0];
+                                log("seen flush called: batch=" + batch.size()
+                                        + " isGroup=" + param.args[1]);
                                 ArrayList<Object> withoutSeen = new ArrayList<>(batch.size());
                                 for (Object entry : batch) {
                                     if (XposedHelpers.getIntField(entry, typeField) != seenTypeValue) {
@@ -83,6 +86,36 @@ public final class StatusPrivacyFeature extends Feature {
                                 param.args[0] = withoutSeen;
                             }
                         }));
+        installSeenEnqueueDiagnostic();
+    }
+
+    /**
+     * Diagnostic-only, no-op hook. Logs unconditionally (not gated behind the self-check
+     * ConfigProvider round trip, which has an independent, unrelated reliability issue) every time
+     * something is queued for a seen/delivered ack, so a live test can tell whether the enqueue side
+     * (this method) or the flush side ({@code i()}, hooked above) is where a report of "nothing got
+     * blocked" actually breaks down.
+     */
+    private void installSeenEnqueueDiagnostic() {
+        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.send_seen_manager_class", "je0.k0");
+        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.seen_enqueue_method", "h");
+        String messageClass = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.seen_message_class", "o00.q");
+        runGuarded("seen-status enqueue diagnostic", FEATURE_SEEN_ENQUEUE,
+                className + "#" + methodName, () -> {
+                    Class<?> messageType = XposedHelpers.findClass(messageClass, classLoader);
+                    XposedHelpers.findAndHookMethod(className, classLoader, methodName,
+                            String.class, messageType, new XC_MethodHook() {
+                                @Override
+                                protected void afterHookedMethod(MethodHookParam param) {
+                                    log("seen enqueue called: uid=" + param.args[0]);
+                                    SelfCheckRegistry.incrementHit(FEATURE_SEEN_ENQUEUE,
+                                            className + "#" + methodName, "enqueue observed");
+                                }
+                            });
+                });
     }
 
     private void installTypingBlock() {
@@ -100,6 +133,7 @@ public final class StatusPrivacyFeature extends Feature {
                         new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) {
+                                log("typing send called: isGroup=" + param.args[2]);
                                 param.setResult(null);
                                 SelfCheckRegistry.incrementHit(FEATURE_TYPING, className + "#" + methodName,
                                         "blocked typing indicator send");
