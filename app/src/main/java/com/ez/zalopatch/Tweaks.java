@@ -44,6 +44,8 @@ public final class Tweaks {
     public static final String KEY_HIDE_ZCLOUD_BANNER = "inbox.hide_zcloud_banner";
     public static final String KEY_FILTER_POPOVER_CATEGORIES = "inbox.filter_popover";
     public static final String KEY_HIDE_REACTION_ROW = "messages.hide_reaction_row";
+    public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
+    public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
     public static final String KEY_KEEP_GROUP_TAB = "ui.keep_group_tab";
     public static final String KEY_FORCE_MESSAGES_AS_HOME = "ui.force_messages_as_home";
     public static final String KEY_HIDE_MESSAGE_ADS = "ads.hide_message_ads";
@@ -131,8 +133,10 @@ public final class Tweaks {
                     KEY_HIDE_QR_WALLET, KEY_HIDE_ZCLOUD, KEY_HIDE_ZSTYLE, KEY_HIDE_ZBUSINESS));
         }
         if (SECTION_CHAT.equals(section)) {
-            return Collections.singletonList(new Group(R.string.zp_group_message_rendering,
-                    KEY_HIDE_REACTION_ROW));
+            return Arrays.asList(
+                    new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW),
+                    new Group(R.string.zp_group_status_privacy,
+                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS));
         }
         if (SECTION_CALLS.equals(section)) {
             return Collections.singletonList(
@@ -237,6 +241,12 @@ public final class Tweaks {
 
             new Item(SECTION_CHAT, KEY_HIDE_REACTION_ROW,
                     R.string.zp_tweak_hide_reaction_row, R.string.zp_tweak_hide_reaction_row_summary,
+                    true, false),
+            new Item(SECTION_CHAT, KEY_BLOCK_SEEN_STATUS,
+                    R.string.zp_tweak_block_seen_status, R.string.zp_tweak_block_seen_status_summary,
+                    true, false),
+            new Item(SECTION_CHAT, KEY_BLOCK_TYPING_STATUS,
+                    R.string.zp_tweak_block_typing_status, R.string.zp_tweak_block_typing_status_summary,
                     true, false),
 
             new Item(SECTION_CALLS, KEY_AUTO_RECORD_CALLS,

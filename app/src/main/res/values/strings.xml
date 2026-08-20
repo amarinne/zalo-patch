@@ -91,6 +91,10 @@
     <string name="zp_tweak_oa_chip_summary">Shows Official Account conversations.</string>
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
+    <string name="zp_tweak_block_seen_status">Block seen status</string>
+    <string name="zp_tweak_block_seen_status_summary">Stops sending read/delivered receipts. Messages still show as read locally.</string>
+    <string name="zp_tweak_block_typing_status">Block typing status</string>
+    <string name="zp_tweak_block_typing_status_summary">Stops sending the \"is typing…\" indicator while you type.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>
@@ -119,6 +123,7 @@
     <string name="zp_group_in_app_ads">In-app ads</string>
     <string name="zp_group_me_services">Me screen services</string>
     <string name="zp_group_message_rendering">Message rendering</string>
+    <string name="zp_group_status_privacy">Status privacy</string>
     <string name="zp_group_call_recording">Call recording</string>
     <string name="zp_group_call_diagnostics">Call diagnostics</string>
     <string name="zp_group_developer_tools">Tools</string>

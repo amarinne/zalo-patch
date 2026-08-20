@@ -14,6 +14,7 @@ import com.ez.zalopatch.xposed.features.InteractionTraceFeature;
 import com.ez.zalopatch.xposed.features.MeCleanupFeature;
 import com.ez.zalopatch.xposed.features.NotificationFeature;
 import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
+import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
 import com.ez.zalopatch.xposed.features.SymbolSchemaHealthFeature;
 import com.ez.zalopatch.xposed.features.TelemetryFeature;
 import com.ez.zalopatch.xposed.features.ZinstantFeature;
@@ -63,6 +64,7 @@ public final class MainFeatures {
                     preflight.zinstantMessage, preflight.reason(preflight.zinstantMessageErrors),
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
+            features.add(new StatusPrivacyFeature(classLoader));
             features.add(new CallRecordingFeature(classLoader));
             features.add(new CallRecordingProbeFeature(classLoader));
         } else {

@@ -64,6 +64,10 @@
     <string name="zp_tweak_hide_zcloud_banner_summary">Ẩn banner zCloud phía trên Tin nhắn.</string>
     <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
     <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
+    <string name="zp_tweak_block_seen_status">Chặn trạng thái đã xem</string>
+    <string name="zp_tweak_block_seen_status_summary">Ngừng gửi xác nhận đã nhận/đã xem. Tin nhắn vẫn hiển thị đã đọc trên máy bạn.</string>
+    <string name="zp_tweak_block_typing_status">Chặn trạng thái đang nhập</string>
+    <string name="zp_tweak_block_typing_status_summary">Ngừng gửi biểu tượng \"đang nhập…\" khi bạn gõ tin nhắn.</string>
     <string name="zp_tweak_auto_record_calls">Tự động ghi âm cuộc gọi</string>
     <string name="zp_tweak_auto_record_calls_summary">Lưu bản ghi âm của cuộc gọi Zalo đã kết thúc thành file M4A.</string>
     <string name="zp_tweak_recording_notifications">Thông báo ghi âm</string>
