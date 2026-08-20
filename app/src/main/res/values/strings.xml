@@ -96,7 +96,7 @@
     <string name="zp_tweak_block_typing_status">Block typing status</string>
     <string name="zp_tweak_block_typing_status_summary">Stops sending the \"is typing…\" indicator while you type.</string>
     <string name="zp_tweak_hide_online_status">Hide online status</string>
-    <string name="zp_tweak_hide_online_status_summary">Submits Zalo\'s own \"hide my online status\" privacy setting on your behalf, for accounts where the toggle in Zalo\'s own Privacy settings isn\'t reachable. You still see everyone else\'s online status as normal.</string>
+    <string name="zp_tweak_hide_online_status_summary">Hides your online status from others (submits Zalo\'s own privacy setting for you) while keeping you able to see everyone else\'s online status, which Zalo normally hides from you too once you hide yours.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>

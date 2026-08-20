@@ -983,6 +983,8 @@
           "online_status_save_class": "pn.h0",
           "online_status_save_method": "q3",
           "online_status_setting_id": 27,
+          "online_status_query_gate_class": "yz.j",
+          "online_status_query_gate_method": "j2",
           "send_typing_class": "l00.r",
           "send_typing_method": "S"
         },

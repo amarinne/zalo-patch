@@ -69,7 +69,7 @@
     <string name="zp_tweak_block_typing_status">Chặn trạng thái đang nhập</string>
     <string name="zp_tweak_block_typing_status_summary">Ngừng gửi biểu tượng \"đang nhập…\" khi bạn gõ tin nhắn.</string>
     <string name="zp_tweak_hide_online_status">Ẩn trạng thái truy cập</string>
-    <string name="zp_tweak_hide_online_status_summary">Tự động gửi cài đặt \"ẩn trạng thái truy cập\" gốc của Zalo thay bạn, dành cho tài khoản không mở được mục này trong Cài đặt riêng tư của Zalo. Bạn vẫn xem được trạng thái truy cập của người khác như bình thường.</string>
+    <string name="zp_tweak_hide_online_status_summary">Ẩn trạng thái truy cập của bạn khỏi người khác (tự gửi cài đặt riêng tư gốc của Zalo thay bạn), đồng thời vẫn cho phép bạn xem trạng thái truy cập của người khác, vốn Zalo thường cũng ẩn luôn khỏi bạn khi bạn ẩn trạng thái của mình.</string>
     <string name="zp_tweak_auto_record_calls">Tự động ghi âm cuộc gọi</string>
     <string name="zp_tweak_auto_record_calls_summary">Lưu bản ghi âm của cuộc gọi Zalo đã kết thúc thành file M4A.</string>
     <string name="zp_tweak_recording_notifications">Thông báo ghi âm</string>
