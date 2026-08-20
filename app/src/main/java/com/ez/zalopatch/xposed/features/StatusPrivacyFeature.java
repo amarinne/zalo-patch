@@ -89,15 +89,12 @@ public final class StatusPrivacyFeature extends Feature {
      * messages read while staying in an already-open conversation, even with the flush above
      * correctly blocking everything for the "open from a notification" case.
      *
-     * <p>A first cut filtered {@code Q()}'s list argument the same way as the flush above, by
-     * entry type. Live testing showed that was wrong: it started blocking delivered status too,
-     * meaning {@code Q()}'s entries don't reliably carry the same {@code Ln00/b}-style type
-     * convention the flush's do (or {@code Q()} is used for more than just seen/delivered acks and
-     * this module doesn't yet know how to tell them apart). Rather than guess again and risk
-     * another regression, this is diagnostic-only for now: it logs each entry's type field
-     * (unconditional on the debug flag) and {@code Q()}'s own three boolean parameters, without
-     * touching the call, so the next live test can show what a genuine "seen, live, still in
-     * conversation" call actually looks like before writing a filter for it.
+     * <p>Rather than reverse-engineer which of {@code Q()}'s three booleans selects its "seen"
+     * packet variant (real risk of misreading the wrong one and blocking something unrelated, like
+     * a reaction or recall ack that happens to share this call), this filters {@code Q()}'s list
+     * argument the same way as the flush above, by entry type. If none of the list's entries expose
+     * that field (a different ack kind, not the {@code Ln00/b} shape this and the flush both use),
+     * the call is left untouched rather than guessed at.
      */
     private void installSeenAckShortcutBlock() {
         if (!HookConfig.isEnabled(Tweaks.KEY_BLOCK_SEEN_STATUS)) {
@@ -109,27 +106,16 @@ public final class StatusPrivacyFeature extends Feature {
                 "symbols.chat.seen_ack_shortcut_method", "Q");
         String typeField = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
                 "symbols.chat.seen_entry_type_field", "a");
-        runGuarded("seen-status shortcut diagnostic", FEATURE_SEEN, className + "#" + methodName, () ->
+        int deliveredTypeValue = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
+                "symbols.chat.delivered_entry_type_value", 2);
+        runGuarded("seen-status shortcut block", FEATURE_SEEN, className + "#" + methodName, () ->
                 XposedHelpers.findAndHookMethod(className, classLoader, methodName,
                         List.class, boolean.class, boolean.class, boolean.class,
                         new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) {
-                                List<?> batch = (List<?>) param.args[0];
-                                StringBuilder types = new StringBuilder();
-                                for (Object entry : batch) {
-                                    if (types.length() > 0) {
-                                        types.append(',');
-                                    }
-                                    try {
-                                        types.append(XposedHelpers.getIntField(entry, typeField));
-                                    } catch (Throwable unknownShape) {
-                                        types.append('?');
-                                    }
-                                }
-                                log("Q() called: batch=" + batch.size() + " types=[" + types
-                                        + "] p2=" + param.args[1] + " p3=" + param.args[2]
-                                        + " p4=" + param.args[3]);
+                                filterToDeliveredOnly(param, 0, FEATURE_SEEN,
+                                        className + "#" + methodName, typeField, deliveredTypeValue);
                             }
                         }));
     }
