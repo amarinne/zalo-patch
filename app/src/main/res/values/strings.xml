@@ -5,7 +5,7 @@
     <!-- Dashboard -->
     <string name="zp_restart_title">Restart Zalo</string>
     <string name="zp_restart_sent">Restart command sent</string>
-    <string name="zp_restart_sent_no_root">Zalo relaunched (no root). Close it from Recents if changes don\'t apply</string>
+    <string name="zp_restart_manual_force_stop_needed">No root: opening Zalo\'s app info. Tap Force stop, then reopen Zalo to apply changes</string>
     <string name="zp_restart_root_denied">Root access denied</string>
     <string name="zp_restart_failed">Restart command failed</string>
     <string name="zp_runtime_status_title">Runtime status</string>

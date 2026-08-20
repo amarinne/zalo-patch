@@ -1,10 +1,11 @@
 package com.ez.zalopatch;
 
-import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -19,7 +20,7 @@ final class ZaloRestart {
 
     enum Result {
         SENT,
-        SENT_NO_ROOT,
+        MANUAL_FORCE_STOP_NEEDED,
         ROOT_DENIED,
         FAILED
     }
@@ -45,7 +46,7 @@ final class ZaloRestart {
         if (rootResult != null) {
             return rootResult;
         }
-        return restartWithoutRoot(context, changeGeneration);
+        return restartWithoutRoot(context);
     }
 
     /** Returns null when no root is available, so the caller can fall back. */
@@ -84,28 +85,18 @@ final class ZaloRestart {
     }
 
     /**
-     * LSPatch commonly runs without root (that is its main appeal over LSPosed/Magisk), so a
-     * force-stop is not available. Kill whatever background copy exists and relaunch; a process
-     * that is not currently in the foreground is killable this way. If Zalo is in the foreground,
-     * the relaunch still brings it forward, but the running process keeps its already-hooked,
-     * already-cached settings until the user manually closes it from Recents.
+     * LSPatch commonly runs without root (that is its main appeal over LSPosed/Magisk), so this
+     * app cannot force-stop another app itself. Send the user to Zalo's App info screen instead,
+     * where a manual "Force stop" is one tap away; the toast (see the caller) tells them why.
+     * Pending changes are deliberately left marked, since nothing has actually been applied yet.
      */
-    private static Result restartWithoutRoot(Context context, long changeGeneration) {
+    private static Result restartWithoutRoot(Context context) {
         try {
-            Object systemService = context.getSystemService(Context.ACTIVITY_SERVICE);
-            if (systemService instanceof ActivityManager) {
-                ((ActivityManager) systemService).killBackgroundProcesses(TARGET_PACKAGE);
-            }
-            Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(TARGET_PACKAGE);
-            if (launchIntent == null) {
-                return Result.FAILED;
-            }
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-            context.startActivity(launchIntent);
-            SettingsChanges.clearIfGeneration(context, changeGeneration);
-            return Result.SENT_NO_ROOT;
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + TARGET_PACKAGE));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return Result.MANUAL_FORCE_STOP_NEEDED;
         } catch (Exception ignored) {
             return Result.FAILED;
         }
