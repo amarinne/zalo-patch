@@ -130,11 +130,34 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   semantics were never nailed down with confidence — reading a handful of call sites
   wasn't conclusive, and guessing wrong risks blocking an unrelated ack (reaction,
   recall, who knows) that happens to share this call.
-- Fix: don't gate on `Q()`'s parameters at all. Filter its `List` argument by entry
-  type exactly like the flush above (extracted into a shared `filterToDeliveredOnly`
-  helper) — defensively: any entry that doesn't expose the type field at all is left
-  in the batch untouched rather than dropped, since at that point this module can't
-  tell what kind of ack it actually is.
+- Fix, as currently shipped: don't gate on `Q()`'s parameters at all. Filter its
+  `List` argument by entry type exactly like the flush above (extracted into a shared
+  `filterToDeliveredOnly` helper) — defensively: any entry that doesn't expose the
+  type field at all is left in the batch untouched rather than dropped, since at that
+  point this module can't tell what kind of ack it actually is.
+- **This filter has a known, accepted false-positive rate — at the code level, not
+  the user-facing description.** Live testing after shipping it showed `Q()`'s
+  entries don't reliably carry the same delivered-vs-seen type convention the
+  flush's do — the filter also blocks some delivered acks sent through this specific
+  path (messages read live while already in an open conversation), where the flush
+  path (opened fresh, e.g. from a notification) keeps delivered flowing normally.
+  Tried reverting this one hook to logging-only (kept delivered working there, but
+  brought back the original leak — seen reached the other side again for that case);
+  the user explicitly chose to keep the filter active and accept the false-positive
+  rather than leave the leak open.
+- **User-facing wording was deliberately simplified past that nuance.** An earlier
+  version of the `zp_tweak_block_seen_status_summary` string spelled out the
+  per-path difference ("delivered still goes through for a fresh open, blocked too
+  for a live in-conversation read"). The user's own field testing experienced both
+  as blocked consistently everywhere and asked for the description to say that
+  plainly instead — the string now just says "stops sending both read receipts and
+  delivered status to the other side, everywhere." **This is a simplification of the
+  user-facing claim, not a correction of the code-level trace above** — the
+  `Q()`-vs-flush distinction is still real and still what the code does; don't let
+  the simpler string wording make a future reader think the two paths ended up
+  behaving identically at the code level, they didn't. If the difference ever
+  becomes user-visible again (e.g. a report that delivered gets through in some
+  case), re-derive from the code, not from this string.
 - **Re-find next time:** don't assume `Lje0/k0`'s flush is the only sender. Grep every
   caller of the actual socket-send method (`Ls00/x;->e(...)` this release, found via
   `grep -rl` for its full signature across the whole tree, not just within the classes
@@ -142,6 +165,8 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   and not others — that pattern (works from a fresh entry point, not from continued
   live use, or vice versa) is a strong signal there's more than one call site feeding
   the same wire protocol, not that the one hook found is broken.
+- **Status: shipped and confirmed working** by field test ("block seen and received
+  all work in all place").
 
 ### Typing indicator — `messages.block_typing_status`
 
@@ -163,35 +188,69 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   find the `Ls00/x`-equivalent socket class from the seen-status trace (same class,
   reused), and look for a `(String, int, boolean, boolean)` method on it.
 
-### Online-status visibility — `messages.hide_online_status`
+### Online-status visibility — removed, not shipped (current code has none of this)
+
+**Current implementation status: nothing.** `StatusPrivacyFeature` has no online-status
+code at all — no submit, no bypass, no `Tweaks` key. Everything below is the accumulated
+trace from three shipped-then-pulled attempts, kept so a future attempt starts from
+attempt 4 instead of attempt 1.
 
 Online-status visibility is a **stored server-side privacy preference**, not a live
-per-connection broadcast — there is no outbound "I'm online" packet to block. The fix
-submits the exact same privacy-save request Zalo's own UI sends when you flip its
-toggle, directly from the module, for accounts where that native UI isn't reachable.
+per-connection broadcast — there is no outbound "I'm online" packet to block. Every
+attempt below submitted the same privacy-save request Zalo's own UI sends when you flip
+its toggle, directly from the module.
 
-**This shipped, was pulled, and was re-shipped — twice-confirmed live, not assumed:**
+**Three attempts, each pulled for a different confirmed reason:**
 
-1. First attempt: forced `Lyz/j;->j2()Z` (the local "can I see others" read) to always
-   return `true`, *without* also submitting the real hide request. This broke the
+1. **Bypass only, no real submit.** Forced `Lyz/j;->j2()Z` (the local "can I see
+   others" read) to always return `true`, without submitting anything. Broke the
    native "am I hidden" toggle's own on-screen display, since that toggle reads the
-   same getter to show its state — the toggle looked permanently on regardless of what
-   was tapped. Pulled.
-2. Second attempt: submit-only, no bypass. Live testing confirmed the submit itself
-   works correctly (Zalo's own native toggle read back as off afterward), but also
-   confirmed the exact symmetric-enforcement risk predicted before shipping: once
-   hidden, this account could no longer see anyone else's online status either — Zalo
-   enforces "hide mine" and "see others'" through the same account state, checked via
-   `Lyz/j;->j2()Z` in both `Le70/p`'s friend-status query and `Loq1/w1`'s post-login
-   sync. Confirmed by field test: "turn on block online status in manager = turn off
-   show online status inside app = me and my friend both can't see each other."
-3. Current: submit for real (from attempt 2) **plus** the query-gate bypass (from
-   attempt 1), together. The combination resolves what broke each attempt
-   individually — the toggle-display breakage in attempt 1 no longer applies because
-   nothing here reads or relies on that native toggle's on-screen state anymore, since
-   the real submit means the account genuinely is hidden either way.
+   same getter to show its state — looked permanently on regardless of what was
+   tapped. Pulled.
+2. **Submit only, no bypass.** Live testing confirmed the submit itself works
+   correctly (Zalo's own native toggle read back as off afterward), but confirmed the
+   symmetric-enforcement risk predicted before shipping: once hidden, this account
+   could no longer see anyone else's online status either. Confirmed by field test:
+   "turn on block online status in manager = turn off show online status inside app =
+   me and my friend both can't see each other." Pulled.
+3. **Submit + bypass together**, meant to resolve both: the toggle-display breakage
+   from attempt 1 no longer applies once the account is genuinely hidden for real
+   (nothing reads that toggle's display anymore), and the bypass was meant to undo the
+   symmetric block from attempt 2. Two problems surfaced, fixed in sequence, before
+   this was pulled too:
+   - The only submit call ran from `doHook()`, which fires at `Application.attach()` —
+     well before login. `Lpn/h0;->q3()` internally no-ops (silently, no exception)
+     unless the socket session is already authenticated, so the submit was very likely
+     discarded most of the time. Fixed by *also* submitting from an
+     `Loq1/w1;->w()V` hook — confirmed live to actually be a **periodic ~5-second
+     heartbeat**, not a one-shot post-login event, so this resubmits repeatedly (self-check
+     hit count climbing steadily, confirmed harmless).
+   - Even with the submit confirmed landing for real, the bypass **still did not
+     restore the ability to see others' online status**. Root cause not found before
+     the feature was pulled a third time. Diagnostics were added but never acted on:
+     - `Loq1/w1;->w()` only calls into the friend-status fetch (`Le70/p;->U()`) if a
+       **second, separate** local preference —
+       `"SETTING_SHOW_ONLINE_FRIEND_WITH_STATUS"`, read via `Lu40/p0;->X(int, String,
+       boolean)I` — *also* equals `1`, in addition to `j2()`. This was never checked;
+       if hiding the account also resets that preference (plausible, everything else
+       in this feature is a synced setting), forcing `j2()` alone would never be
+       enough, since the fetch would never even be attempted.
+     - A logging-only hook on `Le70/p;->U()V` was added (never analyzed) to tell
+       "fetch never reached" apart from "fetch reached but still gated by something
+       else."
+     - A logging-only hook on `j2()` itself was added (never analyzed) to confirm the
+       override actually fires and see what the original, unforced value was.
 
-Full trace, UI down to the wire request:
+**If picking this up again:** start by rebuilding with attempt 3's diagnostics
+(recoverable from git history at commit `6f00eee` on the `feature/block-status-privacy`
+branch, before the squash-and-revert in `826bf57`), reproduce, and read the
+`Le70/p;->U()` / `j2()` log lines before writing any more code. The likely next fix, if
+`U()` is confirmed never reached, is hooking whatever getter backs
+`"SETTING_SHOW_ONLINE_FRIEND_WITH_STATUS"` the same way `j2()` is forced — but that's
+speculation until the diagnostic data says so.
+
+Full trace, UI down to the wire request (this part is solid, independent of the
+above — it's how the real submit call was found in the first place):
 
 1. `res/values/strings.xml`: `setting_privacy_online_status` = "Hiện trạng thái truy
    cập", `setting_sub_online_status` = the two-way description. This needed the

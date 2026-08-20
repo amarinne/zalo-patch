@@ -92,7 +92,7 @@
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
     <string name="zp_tweak_block_seen_status">Block seen and received status</string>
-    <string name="zp_tweak_block_seen_status_summary">Stops sending read receipts. For messages read from a notification or a fresh chat open, delivered status still goes through as normal; for messages read live while you stay in an already-open conversation, delivered status is blocked along with seen. Messages still show as read locally either way.</string>
+    <string name="zp_tweak_block_seen_status_summary">Stops sending both read receipts and delivered status to the other side, everywhere — messages still show as read locally.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
     <string name="zp_tweak_block_typing_status_summary">Stops sending the \"is typing…\" indicator while you type.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
