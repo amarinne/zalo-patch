@@ -163,27 +163,33 @@ Then it's just `grep -rn` over `smali-out/`. The three techniques that actually 
   find the `Ls00/x`-equivalent socket class from the seen-status trace (same class,
   reused), and look for a `(String, int, boolean, boolean)` method on it.
 
-### Online-status visibility — removed, trail kept for reference
-
-**Not shipped.** This was implemented and then pulled at the user's request: even with
-the submit-the-real-request approach below (rather than the earlier, worse getter-bypass
-attempt), there was an unresolved risk that once your own account's now-hidden
-`online_status` preference synced back down from the server on a later
-login/reconnect, Zalo's own client would start enforcing its usual symmetric
-restriction locally (the same `Lyz/j;->j2()Z` flag gates both "do I show mine" and "can
-I see others'"), silently blinding you to everyone else's status too. Fixing that
-cleanly needed a second, narrower hook that was never field-verified, and the user
-decided it wasn't worth shipping half-verified. The trace below is kept because the
-generic "save a privacy setting over the socket" mechanism it found
-(`Lpn/h0;->q3(settingId, value, extra)`, socket cmd `0x111`, shared by ~200 different
-save calls in that one class) is reusable for other privacy-setting features later,
-even though this particular feature isn't built on it anymore.
+### Online-status visibility — `messages.hide_online_status`
 
 Online-status visibility is a **stored server-side privacy preference**, not a live
-per-connection broadcast — there is no outbound "I'm online" packet to block. The
-fix submits the exact same privacy-save request Zalo's own UI sends when you flip its
+per-connection broadcast — there is no outbound "I'm online" packet to block. The fix
+submits the exact same privacy-save request Zalo's own UI sends when you flip its
 toggle, directly from the module, for accounts where that native UI isn't reachable.
-It never reads or touches the "can I see others" path, so that stays exactly as-is.
+
+**This shipped, was pulled, and was re-shipped — twice-confirmed live, not assumed:**
+
+1. First attempt: forced `Lyz/j;->j2()Z` (the local "can I see others" read) to always
+   return `true`, *without* also submitting the real hide request. This broke the
+   native "am I hidden" toggle's own on-screen display, since that toggle reads the
+   same getter to show its state — the toggle looked permanently on regardless of what
+   was tapped. Pulled.
+2. Second attempt: submit-only, no bypass. Live testing confirmed the submit itself
+   works correctly (Zalo's own native toggle read back as off afterward), but also
+   confirmed the exact symmetric-enforcement risk predicted before shipping: once
+   hidden, this account could no longer see anyone else's online status either — Zalo
+   enforces "hide mine" and "see others'" through the same account state, checked via
+   `Lyz/j;->j2()Z` in both `Le70/p`'s friend-status query and `Loq1/w1`'s post-login
+   sync. Confirmed by field test: "turn on block online status in manager = turn off
+   show online status inside app = me and my friend both can't see each other."
+3. Current: submit for real (from attempt 2) **plus** the query-gate bypass (from
+   attempt 1), together. The combination resolves what broke each attempt
+   individually — the toggle-display breakage in attempt 1 no longer applies because
+   nothing here reads or relies on that native toggle's on-screen state anymore, since
+   the real submit means the account genuinely is hidden either way.
 
 Full trace, UI down to the wire request:
 
