@@ -46,7 +46,6 @@ public final class Tweaks {
     public static final String KEY_HIDE_REACTION_ROW = "messages.hide_reaction_row";
     public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
     public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
-    public static final String KEY_HIDE_ONLINE_STATUS = "messages.hide_online_status";
     public static final String KEY_KEEP_GROUP_TAB = "ui.keep_group_tab";
     public static final String KEY_FORCE_MESSAGES_AS_HOME = "ui.force_messages_as_home";
     public static final String KEY_HIDE_MESSAGE_ADS = "ads.hide_message_ads";
@@ -137,8 +136,7 @@ public final class Tweaks {
             return Arrays.asList(
                     new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW),
                     new Group(R.string.zp_group_status_privacy,
-                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS,
-                            KEY_HIDE_ONLINE_STATUS));
+                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS));
         }
         if (SECTION_CALLS.equals(section)) {
             return Collections.singletonList(
@@ -249,9 +247,6 @@ public final class Tweaks {
                     true, false),
             new Item(SECTION_CHAT, KEY_BLOCK_TYPING_STATUS,
                     R.string.zp_tweak_block_typing_status, R.string.zp_tweak_block_typing_status_summary,
-                    true, false),
-            new Item(SECTION_CHAT, KEY_HIDE_ONLINE_STATUS,
-                    R.string.zp_tweak_hide_online_status, R.string.zp_tweak_hide_online_status_summary,
                     true, false),
 
             new Item(SECTION_CALLS, KEY_AUTO_RECORD_CALLS,

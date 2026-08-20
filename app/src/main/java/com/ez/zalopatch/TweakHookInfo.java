@@ -107,11 +107,6 @@ final class TweakHookInfo {
                         + schema.string("symbols.chat.send_typing_method", "S")
                         + "(String, int, boolean, boolean)";
                 break;
-            case Tweaks.KEY_HIDE_ONLINE_STATUS:
-                path = schema.string("symbols.chat.online_status_save_class", "pn.h0") + "#"
-                        + schema.string("symbols.chat.online_status_save_method", "q3")
-                        + "(int, int, String)";
-                break;
             case Tweaks.KEY_AUTO_RECORD_CALLS:
                 path = "PeerJNI#zrtc_peer_start_record_audio() + CallCallback callbacks";
                 break;
@@ -255,10 +250,6 @@ final class TweakHookInfo {
                 return Arrays.asList(
                         schema.string("symbols.chat.send_typing_class", "l00.r"),
                         "#" + schema.string("symbols.chat.send_typing_method", "S") + "()");
-            case Tweaks.KEY_HIDE_ONLINE_STATUS:
-                return Arrays.asList(
-                        schema.string("symbols.chat.online_status_save_class", "pn.h0"),
-                        "#" + schema.string("symbols.chat.online_status_save_method", "q3") + "()");
             default:
                 return Collections.emptyList();
         }

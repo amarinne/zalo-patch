@@ -13,15 +13,14 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Status-privacy tweaks, each blocking (or, for online status, actually submitting) exactly one
- * outbound signal — nothing here touches how the app renders or fetches <i>other people's</i>
- * seen/typing/online status, only what this account tells the server about itself.
+ * Status-privacy tweaks, each blocking exactly one outbound signal — nothing here touches how the
+ * app renders or fetches <i>other people's</i> seen/typing status, only what this account tells
+ * the server about itself.
  */
 public final class StatusPrivacyFeature extends Feature {
     private static final String FEATURE_SEEN = "messages.block_seen_status";
     private static final String FEATURE_SEEN_ENQUEUE = "messages.block_seen_status.enqueue";
     private static final String FEATURE_TYPING = "messages.block_typing_status";
-    private static final String FEATURE_ONLINE_STATUS = "messages.hide_online_status";
 
     public StatusPrivacyFeature(ClassLoader classLoader) {
         super(classLoader);
@@ -37,8 +36,6 @@ public final class StatusPrivacyFeature extends Feature {
         installSeenBlock();
         installSeenAckShortcutBlock();
         installTypingBlock();
-        installOnlineStatusHide();
-        installOnlineStatusQueryBypass();
     }
 
     /**
@@ -210,68 +207,6 @@ public final class StatusPrivacyFeature extends Feature {
                                 param.setResult(null);
                                 SelfCheckRegistry.incrementHit(FEATURE_TYPING, className + "#" + methodName,
                                         "blocked typing indicator send");
-                            }
-                        }));
-    }
-
-    /**
-     * Online-status visibility is a stored server-side privacy preference, not a per-message
-     * packet like seen/typing — there's no batch to filter. This submits the exact same request
-     * Zalo's own "Online status" bottom sheet sends when tapped off: {@code Lpn/h0;->q3(settingId,
-     * value, extra)}, settingId 0x1b (27), value 0 (hidden), over socket cmd 0x111 — confirmed by
-     * field testing to genuinely flip the account's real preference (Zalo's own native toggle
-     * read back as off afterward).
-     *
-     * <p>Confirmed by the same field testing: Zalo enforces this preference <b>symmetrically</b>,
-     * server-side — once hidden, this account also stopped being able to see anyone else's online
-     * status, same as toggling it off through Zalo's own UI would. {@link
-     * #installOnlineStatusQueryBypass()} exists specifically to undo that side effect locally.
-     */
-    private void installOnlineStatusHide() {
-        if (!HookConfig.isEnabled(Tweaks.KEY_HIDE_ONLINE_STATUS)) {
-            SelfCheckRegistry.markDisabled(FEATURE_ONLINE_STATUS, "online-status privacy save");
-            return;
-        }
-        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.online_status_save_class", "pn.h0");
-        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.online_status_save_method", "q3");
-        int settingId = SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.online_status_setting_id", 27);
-        runGuarded("online-status hide", FEATURE_ONLINE_STATUS, className + "#" + methodName, () -> {
-            Class<?> requestClass = XposedHelpers.findClass(className, classLoader);
-            Object request = XposedHelpers.newInstance(requestClass);
-            XposedHelpers.callMethod(request, methodName, settingId, 0, "");
-            SelfCheckRegistry.incrementHit(FEATURE_ONLINE_STATUS, className + "#" + methodName,
-                    "submitted online-status hidden (settingId=" + settingId + ")");
-        });
-    }
-
-    /**
-     * Undoes the symmetric side effect of {@link #installOnlineStatusHide()}: once this account is
-     * marked hidden server-side, Zalo's own client gates whether it can query/see friends' online
-     * status on the very same local flag ({@code Lyz/j;->j2()Z}) that reflects this account's own
-     * (now hidden) preference — confirmed live, not assumed. An earlier version of this hook forced
-     * that getter to always report visible without also submitting the real hide request, which
-     * left the native "am I hidden" toggle permanently lying about its own state. Now that hiding
-     * is done for real via {@link #installOnlineStatusHide()}, forcing this getter only affects
-     * whether *this* client still queries others, not whether this account looks hidden to anyone
-     * else, so it's safe to force unconditionally while the feature is on.
-     */
-    private void installOnlineStatusQueryBypass() {
-        if (!HookConfig.isEnabled(Tweaks.KEY_HIDE_ONLINE_STATUS)) {
-            return;
-        }
-        String className = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.online_status_query_gate_class", "yz.j");
-        String methodName = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.online_status_query_gate_method", "j2");
-        runGuarded("online-status query bypass", FEATURE_ONLINE_STATUS, className + "#" + methodName,
-                () -> XposedHelpers.findAndHookMethod(className, classLoader, methodName,
-                        new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                param.setResult(Boolean.TRUE);
                             }
                         }));
     }
