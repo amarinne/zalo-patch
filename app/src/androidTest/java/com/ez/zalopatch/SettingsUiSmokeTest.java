@@ -24,9 +24,18 @@ public final class SettingsUiSmokeTest
         open(activity, SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_CALLS));
         assertTrue(current(activity) instanceof SectionActivity.SettingsFragment);
 
+        SectionActivity.SettingsFragment backup =
+                SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_BACKUP);
+        open(activity, backup);
+        assertNotNull(backup.findPreference(Tweaks.KEY_BACKUP_FREQUENT_PUSH));
+        assertNotNull(backup.findPreference(Tweaks.KEY_BACKUP_PUSH_INTERVAL));
+
         SectionActivity.SettingsFragment developer =
                 SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_DEVELOPER);
         open(activity, developer);
+        assertNotNull(developer.findPreference(StatusActivity.INTERNAL_ROOT_ACCESS));
+        assertNotNull(developer.findPreference(
+                SectionActivity.SettingsFragment.DEVELOPER_RUNTIME_ENVIRONMENT));
         assertNotNull(developer.findPreference("internal.developer_runtime_status"));
         assertNotNull(developer.findPreference("internal.developer_compatibility_catalog"));
         assertNotNull(developer.findPreference(Tweaks.KEY_CALL_RECORDING_PROBE));
@@ -122,7 +131,7 @@ public final class SettingsUiSmokeTest
         assertFalse(row.isFocusable());
     }
 
-    public void testMainRestartRemainsVisibleWithPendingChanges() {
+    public void testMainRestartFallsBackToAppInfoWithoutRoot() {
         StatusActivity activity = getActivity();
         SharedPreferences ui = SettingsChanges.preferences(activity);
         Map<String, ?> originalUi = new HashMap<>(ui.getAll());
@@ -136,22 +145,20 @@ public final class SettingsUiSmokeTest
                     new StatusActivity.DashboardFragment();
             open(activity, fragment);
             Preference restart = fragment.findPreference(StatusActivity.INTERNAL_RESTART);
-            Preference appInfo = fragment.findPreference(StatusActivity.INTERNAL_ZALO_APP_INFO);
             Preference root = fragment.findPreference(StatusActivity.INTERNAL_ROOT_ACCESS);
 
             assertNotNull(restart);
             assertTrue(restart.isVisible());
-            assertFalse(restart.isEnabled());
-            assertEquals("Root required; force stop Zalo to apply.",
+            assertTrue(restart.isEnabled());
+            assertEquals("Without root, opens Zalo app info for manual force stop.",
                     String.valueOf(restart.getSummary()));
-            assertNotNull(appInfo);
-            assertNotNull(root);
+            assertNull(root);
             assertEquals(android.view.View.VISIBLE,
                     activity.findViewById(R.id.zp_apply_bar).getVisibility());
-            assertEquals("Root required; force stop Zalo to apply.",
+            assertEquals("1 change pending",
                     String.valueOf(((android.widget.TextView) activity.findViewById(
                             R.id.zp_apply_message)).getText()));
-            assertFalse(activity.findViewById(R.id.zp_apply_button).isEnabled());
+            assertTrue(activity.findViewById(R.id.zp_apply_button).isEnabled());
         } finally {
             RootAccess.restoreForTest(activity, originalRoot);
             restorePreferences(ui, originalUi);

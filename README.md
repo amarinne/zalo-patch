@@ -13,6 +13,7 @@
 - Block analytics and advertising services.
 - Local notification history.
 - Call audio recording.
+- More frequent scheduled message backups while preserving Zalo's native backup guards.
 
 ## Requirements
 

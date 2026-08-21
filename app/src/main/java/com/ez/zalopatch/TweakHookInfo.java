@@ -119,6 +119,11 @@ final class TweakHookInfo {
             case Tweaks.KEY_CALL_RECORDING_PROBE:
                 path = "PeerJNI/CallCallback callbacks + ZmInCallActivity lifecycle";
                 break;
+            case Tweaks.KEY_BACKUP_FREQUENT_PUSH:
+                path = method(schema, "symbols.backup.interval_reader_class",
+                        "<Zalo preference helper>",
+                        "symbols.backup.interval_reader_method", "<long read>");
+                break;
             case Tweaks.KEY_HIDE_MESSAGE_ADS:
                 path = method(schema, "symbols.zinstant.ad_item_view_class",
                         "com.zing.zalo.ui.widget.ZinstantAdItemView",
@@ -256,6 +261,12 @@ final class TweakHookInfo {
                 return Arrays.asList(
                         schema.string("symbols.chat.message_repository_class", "<message repository>"),
                         "#" + schema.string("symbols.chat.send_typing_method", "<send typing>") + "()");
+            case Tweaks.KEY_BACKUP_FREQUENT_PUSH:
+                return Arrays.asList(
+                        schema.string("symbols.backup.interval_reader_class",
+                                "<Zalo preference helper>"),
+                        "#" + schema.string("symbols.backup.interval_reader_method",
+                                "<long read>") + "()");
             default:
                 return Collections.emptyList();
         }

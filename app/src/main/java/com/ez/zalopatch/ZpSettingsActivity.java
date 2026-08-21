@@ -38,7 +38,7 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         applyBar = findViewById(R.id.zp_apply_bar);
         applyMessage = findViewById(R.id.zp_apply_message);
         applyButton = findViewById(R.id.zp_apply_button);
-        applyButton.setOnClickListener(view -> restartZalo());
+        applyButton.setOnClickListener(view -> restartOrOpenZaloAppInfo());
         settingsContent = findViewById(R.id.zp_settings_content);
         FrameLayout settingsStack = findViewById(R.id.zp_settings_stack);
         restartBlocker = new View(this);
@@ -87,11 +87,9 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
             return;
         }
         int count = SettingsChanges.pendingCount(this);
-        boolean rootGranted = RootAccess.cached(this) == RootAccess.State.GRANTED;
-        applyMessage.setText(rootGranted
-                ? getResources().getQuantityString(R.plurals.zp_pending_changes, count, count)
-                : getString(R.string.zp_restart_root_required_summary));
-        applyButton.setEnabled(rootGranted && !restartInFlight);
+        applyMessage.setText(getResources().getQuantityString(
+                R.plurals.zp_pending_changes, count, count));
+        applyButton.setEnabled(!restartInFlight);
         boolean show = count > 0;
         if (show == (applyBar.getVisibility() == View.VISIBLE)) {
             return;
@@ -129,6 +127,14 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
             ZaloRestart.run(this, this::finishRestart);
         } catch (RuntimeException exception) {
             finishRestart(ZaloRestart.Result.FAILED);
+        }
+    }
+
+    protected final void restartOrOpenZaloAppInfo() {
+        if (RootAccess.cached(this) == RootAccess.State.GRANTED) {
+            restartZalo();
+        } else {
+            openZaloAppInfo();
         }
     }
 

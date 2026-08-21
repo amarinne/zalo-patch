@@ -310,12 +310,21 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
     }
 
     private void assertHookIdentities(SymbolSchema.Active active) {
+        boolean backupMapped = active.minCode == 260801903L;
+        assertEquals(backupMapped,
+                !active.string("symbols.backup.interval_reader_class", "").isEmpty());
+        assertEquals(backupMapped,
+                !active.string("symbols.backup.interval_reader_method", "").isEmpty());
         for (Tweaks.Item item : Tweaks.ITEMS) {
             TweakHookInfo.Info info = TweakHookInfo.forKey(item.key, active);
             assertNotNull("Missing hook metadata for " + item.key, info);
             assertFalse("Missing hook path for " + item.key, info.path.isEmpty());
             assertFalse("Placeholder hook path for " + item.key,
                     "No runtime hook".equals(info.path));
+            if (Tweaks.KEY_BACKUP_FREQUENT_PUSH.equals(item.key) && !backupMapped) {
+                assertTrue(info.path.contains("<Zalo preference helper>"));
+                continue;
+            }
             for (String symbol : info.driftSymbols) {
                 assertFalse("Fallback identity displayed for " + item.key + ": " + symbol,
                         symbol.contains("<"));

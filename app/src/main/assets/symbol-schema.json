@@ -1102,6 +1102,10 @@
           "analytics_screen_accessor": "A",
           "analytics_session_accessor": "B",
           "analytics_view_accessor": "C"
+        },
+        "backup": {
+          "interval_reader_class": "u40.p0",
+          "interval_reader_method": "Y"
         }
       }
     }

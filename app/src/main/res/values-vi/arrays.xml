@@ -8,4 +8,10 @@
         <item>5000 thông báo</item>
         <item>Không giới hạn</item>
     </string-array>
+    <string-array name="zp_backup_interval_entries">
+        <item>Mỗi giờ</item>
+        <item>Mỗi 3 giờ</item>
+        <item>Mỗi 6 giờ</item>
+        <item>Mỗi 12 giờ</item>
+    </string-array>
 </resources>

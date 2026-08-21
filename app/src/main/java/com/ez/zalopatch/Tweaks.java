@@ -18,7 +18,7 @@ public final class Tweaks {
      */
     public static final String PREFS_NAME = "tweaks";
     public static final String KEY_PREFS_SCHEMA_VERSION = "internal.prefs_schema_version";
-    public static final int PREFS_SCHEMA_VERSION = 6;
+    public static final int PREFS_SCHEMA_VERSION = 7;
 
     // Stable identity keys. User-facing section names live in resources.
     public static final String SECTION_NAVIGATION = "navigation";
@@ -29,6 +29,7 @@ public final class Tweaks {
     public static final String SECTION_CALLS = "calls";
     public static final String SECTION_ADS = "ads";
     public static final String SECTION_NOTIFICATIONS = "notifications";
+    public static final String SECTION_BACKUP = "backup";
     public static final String SECTION_DEVELOPER = "developer";
 
     public static final String KEY_HIDE_DISCOVERY_TAB = "ui.hide_discovery_tab";
@@ -66,6 +67,8 @@ public final class Tweaks {
     public static final String KEY_AUTO_RECORD_CALLS = "calls.auto_record";
     public static final String KEY_CALL_RECORDING_NOTIFICATIONS = "calls.recording_notifications";
     public static final String KEY_CALL_RECORDING_PROBE = "calls.recording_probe";
+    public static final String KEY_BACKUP_FREQUENT_PUSH = "backup.frequent_push";
+    public static final String KEY_BACKUP_PUSH_INTERVAL = "backup.push_interval";
 
     public static final List<String> TELEMETRY_KEYS = Collections.unmodifiableList(Arrays.asList(
             KEY_DISABLE_EVENT_ANALYTICS,
@@ -147,6 +150,11 @@ public final class Tweaks {
             return Collections.singletonList(
                     new Group(R.string.zp_group_call_recording, KEY_AUTO_RECORD_CALLS,
                             KEY_CALL_RECORDING_NOTIFICATIONS));
+        }
+        if (SECTION_BACKUP.equals(section)) {
+            return Collections.singletonList(
+                    new Group(R.string.zp_group_backup_schedule,
+                            KEY_BACKUP_FREQUENT_PUSH, KEY_BACKUP_PUSH_INTERVAL));
         }
         if (SECTION_DEVELOPER.equals(section)) {
             return Arrays.asList(
@@ -267,6 +275,9 @@ public final class Tweaks {
                     true, false),
             new Item(SECTION_CALLS, KEY_CALL_RECORDING_NOTIFICATIONS,
                     R.string.zp_tweak_recording_notifications, R.string.zp_tweak_recording_notifications_summary,
+                    true, false),
+            new Item(SECTION_BACKUP, KEY_BACKUP_FREQUENT_PUSH,
+                    R.string.zp_tweak_backup_frequent, R.string.zp_tweak_backup_frequent_summary,
                     true, false),
             new Item(SECTION_DEVELOPER, KEY_CALL_RECORDING_PROBE,
                     R.string.zp_tweak_call_recording_probe, R.string.zp_tweak_call_recording_probe_summary,

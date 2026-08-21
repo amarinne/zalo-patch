@@ -7,7 +7,7 @@
     <string name="zp_restart_sent">Restart command sent</string>
     <string name="zp_restart_root_denied">Root access denied</string>
     <string name="zp_restart_failed">Restart command failed</string>
-    <string name="zp_restart_root_required_summary">Root required; force stop Zalo to apply.</string>
+    <string name="zp_restart_manual_fallback_summary">Without root, opens Zalo app info for manual force stop.</string>
     <string name="zp_root_access_title">Root access</string>
     <string name="zp_root_access_granted">Granted · tap to check again</string>
     <string name="zp_root_access_denied">Denied · tap to check again</string>
@@ -49,6 +49,7 @@
     <string name="zp_me_title">Me screen</string>
     <string name="zp_ads_title">Ads and promotions</string>
     <string name="zp_calls_title">Calls</string>
+    <string name="zp_backup_push_title">Message backup</string>
     <string name="zp_developer_tools_title">Developer tools</string>
     <string name="zp_developer_tools_summary">Runtime status, version maps, diagnostics, and compatibility remap.</string>
     <string name="zp_telemetry_title">Telemetry</string>
@@ -118,6 +119,9 @@
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>
     <string name="zp_tweak_recording_notifications_summary">Shows recording and save status.</string>
+    <string name="zp_tweak_backup_frequent">Frequent scheduled backup</string>
+    <string name="zp_tweak_backup_frequent_summary">Shortens Zalo’s message-backup interval. Zalo automatic backup must be enabled. Each run exports the full message database and shows Zalo’s normal notification; Drive media keeps its native schedule.</string>
+    <string name="zp_backup_interval_title">Scheduled interval</string>
     <string name="zp_tweak_call_recording_probe">Call recording probe</string>
     <string name="zp_tweak_call_recording_probe_summary">Collects call state only. No audio is stored.</string>
     <string name="zp_tweak_hide_message_ads">Hide message ads</string>
@@ -144,6 +148,7 @@
     <string name="zp_group_message_rendering">Message rendering</string>
     <string name="zp_group_status_privacy">Status privacy</string>
     <string name="zp_group_call_recording">Call recording</string>
+    <string name="zp_group_backup_schedule">Scheduled message backup</string>
     <string name="zp_group_call_diagnostics">Call diagnostics</string>
     <string name="zp_group_developer_tools">Tools</string>
 
