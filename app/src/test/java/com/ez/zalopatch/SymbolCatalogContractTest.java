@@ -19,27 +19,33 @@ public final class SymbolCatalogContractTest {
     private static final String BASE_HASH = "a".repeat(64);
     private static final String SIGNER_HASH = "b".repeat(64);
 
+    /**
+     * The payload names the container the profile was mapped from; the installed artifact need not
+     * be that container, so verification binds versionCode only. An entry therefore stays usable on
+     * a Play bundle variant (Decision 14) and on a re-signed redistribution (Decision 15). Which
+     * tier the artifact matched on is decided in ZaloArtifactState, not here.
+     */
     @Test
     public void verifiesSignedExactArtifactEnvelope() throws Exception {
         Fixture fixture = fixture(152);
         SymbolCatalogContract.Entry entry = SymbolCatalogContract.verify(
-                fixture.envelope, fixture.publicKeyPem, VERSION, BASE_HASH, SIGNER_HASH, 152);
+                fixture.envelope, fixture.publicKeyPem, VERSION, 152);
         assertEquals(14, entry.sequence);
         assertEquals(fixture.digest, entry.digest);
         assertEquals(14, new JSONObject(entry.profileJson).getInt("schema_revision"));
     }
 
     @Test
-    public void wrongArtifactSignatureAndMinimumModuleFailClosed() throws Exception {
+    public void wrongVersionSignatureAndMinimumModuleFailClosed() throws Exception {
         Fixture fixture = fixture(153);
         assertThrows(IllegalArgumentException.class, () -> SymbolCatalogContract.verify(
-                fixture.envelope, fixture.publicKeyPem, VERSION, "c".repeat(64), SIGNER_HASH, 152));
+                fixture.envelope, fixture.publicKeyPem, VERSION + 1L, 153));
         assertThrows(IllegalArgumentException.class, () -> SymbolCatalogContract.verify(
-                fixture.envelope, fixture.publicKeyPem, VERSION, BASE_HASH, SIGNER_HASH, 152));
+                fixture.envelope, fixture.publicKeyPem, VERSION, 152));
         byte[] changed = fixture.envelope.clone();
         changed[changed.length - 8] ^= 1;
         assertThrows(Exception.class, () -> SymbolCatalogContract.verify(
-                changed, fixture.publicKeyPem, VERSION, BASE_HASH, SIGNER_HASH, 153));
+                changed, fixture.publicKeyPem, VERSION, 153));
     }
 
     @Test

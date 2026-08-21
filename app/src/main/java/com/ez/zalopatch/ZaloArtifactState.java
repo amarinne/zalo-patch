@@ -40,12 +40,13 @@ public final class ZaloArtifactState {
      */
     public static final String EVIDENCE_VERSION_SIGNER = "version_signer";
     /**
-     * The installed artifact carries the profile's exact versionCode, but the Zalo signing
-     * certificate was replaced because LSPatch resigns every APK it patches. Detected via the
-     * loader-injected {@code lspatch.documents} provider (see {@link ZaloArtifactIdentity}), not
-     * from the signer digest itself, so an unrelated repack still falls through to a mismatch.
+     * The installed artifact carries the profile's exact versionCode, but neither the mapped base
+     * APK container nor the Zalo signing certificate. Re-signing rezips without rebuilding dex, and
+     * a repacker has no source to re-obfuscate with, so the mapped symbol names normally survive.
+     * Symbols are accepted and every anchor is left to structural preflight. Provenance is
+     * unverified at this tier, so it is always surfaced rather than folded into a plain ready.
      */
-    public static final String EVIDENCE_LSPATCH_RESIGNED = "lspatch_resigned";
+    public static final String EVIDENCE_VERSION_ONLY = "version_only";
     public static final String EVIDENCE_NONE = "none";
     /**
      * Authorized, but the stored state predates the match tier or has not been reconciled since.
@@ -111,22 +112,29 @@ public final class ZaloArtifactState {
             ZaloArtifactIdentity identity = ZaloArtifactIdentity.capture(context, true);
             String previousGeneration = preferences.getString(KEY_GENERATION, "");
             boolean generationChanged = !identity.generation.equals(previousGeneration);
-            SymbolCatalogContract.Entry catalogEntry = SymbolCatalogCache.load(context,
-                    identity.versionCode, identity.baseApkSha256, identity.signerSha256);
+            SymbolCatalogContract.Entry catalogEntry = SymbolCatalogCache.load(
+                    context, identity.versionCode);
             long now = System.currentTimeMillis();
             long catalogCheckedAt = preferences.getLong(KEY_CATALOG_CHECKED_AT, 0L);
             String catalogStatus = catalogEntry == null ? "missing" : "cached";
             String catalogError = "";
+            // A 404 caches nothing, so an uncached artifact alone must not force the fetch: that
+            // kept `catalogEntry == null` true forever and re-queried on every reconcile, ignoring
+            // the interval entirely. A recorded `unknown` for this same generation is a negative
+            // answer and is honoured until the interval elapses. Manual retry still works because
+            // it zeroes KEY_CATALOG_CHECKED_AT, which drives the interval clause.
+            boolean knownAbsent = "unknown".equals(
+                    preferences.getString(KEY_CATALOG_STATUS, "missing"));
             if (!instrumentationInstalled(context)
-                    && (catalogEntry == null || generationChanged
-                    || now - catalogCheckedAt >= CATALOG_CHECK_INTERVAL_MS)) {
+                    && (generationChanged
+                    || now - catalogCheckedAt >= CATALOG_CHECK_INTERVAL_MS
+                    || (catalogEntry == null && !knownAbsent))) {
                 SymbolCatalogClient.Result catalogResult = SymbolCatalogClient.resolve(
                         BuildConfig.SYMBOL_CATALOG_URL, identity, catalogEntry);
                 catalogStatus = catalogResult.status;
                 if ("available".equals(catalogResult.status)) {
                     if (SymbolCatalogCache.save(context, identity, catalogResult.envelope)) {
-                        catalogEntry = SymbolCatalogCache.load(context, identity.versionCode,
-                                identity.baseApkSha256, identity.signerSha256);
+                        catalogEntry = SymbolCatalogCache.load(context, identity.versionCode);
                         catalogStatus = catalogEntry == null ? "invalid" : "updated";
                     } else {
                         catalogStatus = "invalid";
@@ -155,17 +163,10 @@ public final class ZaloArtifactState {
             String verification = profile.string("artifact.verification", "unverified");
             String profileHash = profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "";
             Decision decision = decide(profile.valid, profile.validation, catalogStatus,
-                    expectedSigner, expectedHash, identity.signerSha256, identity.baseApkSha256,
-                    identity.lspatched);
+                    expectedSigner, expectedHash, identity.signerSha256, identity.baseApkSha256);
             String status = decision.status;
             String error = decision.error;
             String evidence = decision.evidence;
-            // authorizes() re-checks profileSigner.equals(storedSigner) on every hook launch. A
-            // resigned LSPatch install can never match the real Zalo signer, so what gets stored
-            // here for that case is the profile's own expected signer, matching the recomputed
-            // profileSigner value at hook time and keeping that check meaningful for everyone else.
-            String signerToStore = EVIDENCE_LSPATCH_RESIGNED.equals(evidence)
-                    ? expectedSigner : identity.signerSha256;
             if (generationChanged) {
                 clearSelfCheck(preferences);
             }
@@ -175,7 +176,7 @@ public final class ZaloArtifactState {
                     .putString(KEY_GENERATION, identity.generation)
                     .putLong(KEY_VERSION_CODE, identity.versionCode)
                     .putString(KEY_BASE_SHA256, identity.baseApkSha256)
-                    .putString(KEY_SIGNER_SHA256, signerToStore)
+                    .putString(KEY_SIGNER_SHA256, identity.signerSha256)
                     .putInt(KEY_PROFILE_REVISION, profile.schemaRevision)
                     .putString(KEY_PROFILE_SHA256, profileHash)
                     .putString(KEY_PROFILE_SOURCE, profile.source)
@@ -216,26 +217,32 @@ public final class ZaloArtifactState {
     /**
      * Decides whether the installed artifact may use a selected profile.
      *
-     * <p>The profile is already selected by exact {@code versionCode}; symbols are never taken from
-     * another version, a range, or the nearest known profile. Within one {@code versionCode} the
-     * Zalo signing certificate is the provenance check, and the base APK hash is recorded evidence
-     * rather than a gate: Play serves per-device bundle variants and re-stamps its signing block per
-     * download, so one release legitimately has several base APK hashes over identical code. Anchors
-     * that did move are caught per feature by structural preflight.
+     * <p>The profile is selected by exact {@code versionCode}; symbols are never taken from another
+     * version here. Container identity is recorded evidence rather than a gate, at two tiers.
+     *
+     * <p>The base APK hash identifies a download, not a build: Play serves per-device bundle
+     * variants and re-stamps its signing block per serving, so one release legitimately has several
+     * base APK hashes over byte-identical dex (Decision 14).
+     *
+     * <p>The signer is likewise not a gate (Decision 15). Re-signing requires a rezip, not a dex
+     * rebuild, so clone tools and mirror redistributions produce a fresh signer over unchanged code.
+     * Repackaging does not re-obfuscate either, because that needs source the repacker does not
+     * have, so schema symbol names survive it. Where a container genuinely did diverge, the names
+     * fail to resolve and per-anchor structural preflight declines that feature.
+     *
+     * <p>Preflight validates structure, not identity, so it cannot prove a resolved name belongs to
+     * the class it was mapped from. The tier is therefore reported rather than hidden: it is the
+     * triage signal that says whether a defect report describes this module or someone's patch.
      */
     static Decision decide(boolean profileValid, String profileValidation, String catalogStatus,
                            String expectedSigner, String expectedBaseHash,
-                           String actualSigner, String actualBaseHash, boolean lspatched) {
+                           String actualSigner, String actualBaseHash) {
         if (!profileValid) {
             return new Decision("unsupported", EVIDENCE_NONE,
                     profileValidation + "; catalog " + catalogStatus);
         }
         if (expectedSigner == null || !expectedSigner.equals(actualSigner)) {
-            if (lspatched) {
-                return new Decision("ready", EVIDENCE_LSPATCH_RESIGNED, "");
-            }
-            return new Decision("mismatch", EVIDENCE_NONE,
-                    "Zalo signing certificate does not match the selected profile");
+            return new Decision("ready", EVIDENCE_VERSION_ONLY, "");
         }
         if (expectedBaseHash != null && expectedBaseHash.equals(actualBaseHash)) {
             return new Decision("ready", EVIDENCE_EXACT_APK, "");
@@ -247,14 +254,18 @@ public final class ZaloArtifactState {
      * Authorization inputs, deliberately excluding the install identity. Splits, install path and
      * install time vary across devices and across ordinary Play activity on one device, and carry
      * no symbol information. What remains: the module reconciled to {@code ready}, a profile is
-     * selected for the installed versionCode, the Zalo signer matches the profile, and the hook
-     * process resolved the same profile bytes the module did.
+     * selected for the installed versionCode, and the hook process resolved the same profile bytes
+     * the module did.
+     *
+     * <p>The signer comparison this used to make was the provenance gate a second time, in the hook
+     * process. Provenance is a reported tier rather than a gate (Decision 15), and the profile hash
+     * is what carries the cross-process consistency intent: a version move changes the selected
+     * profile, which moves the hash.
      */
-    static boolean authorizes(String status, boolean profileValid, String profileSigner,
-                              String storedSigner, String profileHash, String storedProfileHash) {
+    static boolean authorizes(String status, boolean profileValid, String profileHash,
+                              String storedProfileHash) {
         return "ready".equals(status)
                 && profileValid
-                && profileSigner != null && profileSigner.equals(storedSigner)
                 && profileHash != null && profileHash.equals(storedProfileHash);
     }
 
@@ -264,7 +275,6 @@ public final class ZaloArtifactState {
             String status = HookConfig.getRawString(KEY_STATUS, "pending");
             String storedLightweight = HookConfig.getRawString(KEY_LIGHTWEIGHT, "");
             String generation = HookConfig.getRawString(KEY_GENERATION, "");
-            String storedSigner = HookConfig.getRawString(KEY_SIGNER_SHA256, "");
             String storedProfileHash = HookConfig.getRawString(KEY_PROFILE_SHA256, "");
             String evidence = HookConfig.getRawString(KEY_EVIDENCE, EVIDENCE_UNKNOWN);
             String error = HookConfig.getRawString(KEY_ERROR, "");
@@ -281,7 +291,6 @@ public final class ZaloArtifactState {
                 requestFromHook(context);
             }
             boolean authorized = authorizes(status, profile.valid,
-                    profile.string("artifact.signer_sha256", ""), storedSigner,
                     currentProfileHash, storedProfileHash);
             if (!authorized) {
                 requestFromHook(context);
@@ -315,8 +324,6 @@ public final class ZaloArtifactState {
             SymbolSchema.Active profile = SymbolSchema.active(context);
             String profileHash = profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "";
             boolean authorized = authorizes(status, profile.valid,
-                    profile.string("artifact.signer_sha256", ""),
-                    preferences.getString(KEY_SIGNER_SHA256, ""),
                     profileHash, preferences.getString(KEY_PROFILE_SHA256, ""));
             String reason = authorized ? "" : preferences.getString(KEY_ERROR, "");
             if (!authorized && reason.isEmpty()) {
@@ -355,9 +362,10 @@ public final class ZaloArtifactState {
             summary.append("\nBase APK container differs from the mapped one; matched on exact "
                     + "versionCode and Zalo signing certificate.");
         }
-        if (EVIDENCE_LSPATCH_RESIGNED.equals(evidence)) {
-            summary.append("\nZalo signing certificate differs because LSPatch resigned the APK; "
-                    + "matched on exact versionCode and the LSPatch loader marker instead.");
+        if (EVIDENCE_VERSION_ONLY.equals(evidence)) {
+            summary.append("\nZalo signing certificate differs from the mapped one; matched on "
+                    + "exact versionCode only. Provenance is unverified and every anchor is "
+                    + "gated by structural preflight.");
         }
         if (reconcileSuppressed(context)) {
             summary.append("\nRe-check suppressed while com.ez.zalopatch.test is installed; "
@@ -451,8 +459,12 @@ public final class ZaloArtifactState {
 
         /** True when the profile was mapped from a different container of the same release. */
         public boolean containerUnverified() {
-            return compatible && (EVIDENCE_VERSION_SIGNER.equals(evidence)
-                    || EVIDENCE_LSPATCH_RESIGNED.equals(evidence));
+            return compatible && EVIDENCE_VERSION_SIGNER.equals(evidence);
+        }
+
+        /** True when the installed artifact does not carry the mapped Zalo signing certificate. */
+        public boolean signerUnverified() {
+            return compatible && EVIDENCE_VERSION_ONLY.equals(evidence);
         }
     }
 

@@ -1,7 +1,10 @@
 package com.ez.zalopatch.xposed.core;
 
+import android.content.Context;
+
 import com.ez.zalopatch.DiagnosticsState;
 import com.ez.zalopatch.HookConfig;
+import com.ez.zalopatch.RuntimeEnvironmentReporter;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZaloArtifactState;
@@ -27,25 +30,47 @@ import de.robv.android.xposed.XposedBridge;
 public final class MainFeatures {
     private static final String FEATURE_RUNTIME_DISCOVERY = "runtime_discovery";
     private static final String FEATURE_SYMBOL_PROBE = "symbol_probe";
+    private static final String FEATURE_SYMBOL_FALLBACK = "symbol_fallback";
 
     private MainFeatures() {
     }
 
-    public static void start(ClassLoader classLoader, boolean mainProcess) {
+    public static void start(
+            ClassLoader classLoader, boolean mainProcess, boolean resourceHooksObserved) {
+        Context context = HookConfig.resolveFallbackContextForHooks();
+        if (mainProcess) {
+            RuntimeEnvironmentReporter.report(context, resourceHooksObserved);
+        }
         if (mainProcess) {
             runFeature(new SymbolSchemaHealthFeature(classLoader));
         }
         List<Feature> features = new ArrayList<>();
         features.add(new NotificationFeature(classLoader));
-        ZaloArtifactState.Compatibility artifact = ZaloArtifactState.forHooks(
-                HookConfig.resolveFallbackContextForHooks());
+        ZaloArtifactState.Compatibility artifact = ZaloArtifactState.forHooks(context);
         features.add(new TelemetryFeature(classLoader, artifact.compatible));
         features.add(new InteractionTraceFeature(classLoader));
-        if (artifact.compatible) {
-            markArtifactReady(artifact);
-            SymbolPreflight.Result preflight = SymbolPreflight.inspect(
-                    SymbolSchema.activeForHooks(HookConfig.resolveFallbackContextForHooks()),
-                    classLoader);
+
+        SymbolPreflight.Result preflight = artifact.compatible
+                ? SymbolPreflight.inspect(SymbolSchema.activeForHooks(context), classLoader)
+                : null;
+        // The exact profile resolved nothing, or no profile covers this release at all. Try the
+        // neighbouring releases before giving up: a release that did not move the anchors this
+        // module hooks is common, and the alternative is every feature silently off until the
+        // version is remapped. Only an artifact that reconciled to `unsupported` may take this
+        // path; `pending` and `failed` mean verification has not finished, which is not the same
+        // as a version nobody mapped.
+        Adopted fallback = null;
+        if (preflight == null || preflight.resolved() == 0) {
+            if (artifact.compatible || "unsupported".equals(artifact.status)) {
+                fallback = adoptNearestResolvingProfile(context, classLoader);
+                if (fallback != null) {
+                    preflight = fallback.preflight;
+                }
+            }
+        }
+
+        if (artifact.compatible || fallback != null) {
+            markArtifactReady(artifact, fallback);
             boolean bottomEnabled = HookConfig.isEnabled(Tweaks.KEY_HIDE_DISCOVERY_TAB)
                     || HookConfig.isEnabled(Tweaks.KEY_HIDE_TIMELINE_TAB)
                     || HookConfig.isEnabled(Tweaks.KEY_KEEP_GROUP_TAB)
@@ -64,7 +89,7 @@ public final class MainFeatures {
                     preflight.zinstantMessage, preflight.reason(preflight.zinstantMessageErrors),
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
-            features.add(new StatusPrivacyFeature(classLoader));
+            addStatusPrivacy(features, classLoader, preflight);
             features.add(new CallRecordingFeature(classLoader));
             features.add(new CallRecordingProbeFeature(classLoader));
         } else {
@@ -78,6 +103,29 @@ public final class MainFeatures {
 
         for (Feature feature : features) {
             runFeature(feature);
+        }
+    }
+
+    private static void addStatusPrivacy(List<Feature> features, ClassLoader classLoader,
+                                         SymbolPreflight.Result preflight) {
+        boolean seenEnabled = HookConfig.isEnabled(Tweaks.KEY_BLOCK_SEEN_STATUS);
+        boolean typingEnabled = HookConfig.isEnabled(Tweaks.KEY_BLOCK_TYPING_STATUS);
+        if (preflight.statusPrivacy || (!seenEnabled && !typingEnabled)) {
+            features.add(new StatusPrivacyFeature(classLoader));
+            return;
+        }
+        String reason = preflight.reason(preflight.statusPrivacyErrors);
+        if (seenEnabled) {
+            SelfCheckRegistry.markStale(Tweaks.KEY_BLOCK_SEEN_STATUS,
+                    "structural preflight", reason);
+        } else {
+            SelfCheckRegistry.markDisabled(Tweaks.KEY_BLOCK_SEEN_STATUS, "seen acknowledgement send");
+        }
+        if (typingEnabled) {
+            SelfCheckRegistry.markStale(Tweaks.KEY_BLOCK_TYPING_STATUS,
+                    "structural preflight", reason);
+        } else {
+            SelfCheckRegistry.markDisabled(Tweaks.KEY_BLOCK_TYPING_STATUS, "typing indicator send");
         }
     }
 
@@ -109,7 +157,72 @@ public final class MainFeatures {
         }
     }
 
-    private static void markArtifactReady(ZaloArtifactState.Compatibility artifact) {
+    /**
+     * Takes the nearest bundled profile from another release whose anchors actually resolve here.
+     *
+     * <p>Candidates are preflighted in versionCode order, nearest first, and the first one to
+     * resolve any anchor family is adopted for the rest of this Zalo process. Structural preflight
+     * is the whole of the check: it validates that a mapped name exists with the mapped shape, and
+     * it cannot prove the name still denotes the class it was mapped from, so a profile is adopted
+     * for the families it resolved and every other family stays gated off as usual.
+     */
+    private static Adopted adoptNearestResolvingProfile(Context context,
+                                                        ClassLoader classLoader) {
+        try {
+            long installed = SymbolSchema.installedZaloVersionCode(context);
+            if (installed <= 0L) {
+                return null;
+            }
+            for (SymbolSchema.Active candidate
+                    : SymbolSchema.fallbackProfilesForHooks(context, installed)) {
+                SymbolPreflight.Result result = SymbolPreflight.inspect(candidate, classLoader);
+                if (result.resolved() == 0) {
+                    continue;
+                }
+                SymbolSchema.adoptForHooks(candidate, installed);
+                SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
+                        candidate.source + ": " + result.resolved() + "/" + result.total()
+                                + " resolved " + result.breakdown(),
+                        "no exact profile resolved; symbols taken from a neighbouring release",
+                        "");
+                return new Adopted(candidate, result);
+            }
+            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
+                    "no neighbouring profile resolved", "", "");
+            return null;
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
+                    "fallback unavailable", "", throwable.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** A neighbouring-release profile that preflighted clean, with the result that chose it. */
+    private static final class Adopted {
+        final SymbolSchema.Active profile;
+        final SymbolPreflight.Result preflight;
+
+        Adopted(SymbolSchema.Active profile, SymbolPreflight.Result preflight) {
+            this.profile = profile;
+            this.preflight = preflight;
+        }
+    }
+
+    private static void markArtifactReady(ZaloArtifactState.Compatibility artifact,
+                                          Adopted fallback) {
+        if (fallback != null) {
+            SelfCheckRegistry.markStatus("zalo_artifact", "stale", "neighbouring release profile",
+                    "No exact profile resolved for the installed Zalo; symbols taken from "
+                            + fallback.profile.source + " and gated by preflight", "");
+            return;
+        }
+        if (artifact.signerUnverified()) {
+            SelfCheckRegistry.markStatus("zalo_artifact", "ok", "versionCode profile",
+                    "Zalo signing certificate differs from the mapped one; provenance unverified, "
+                            + "anchors gated by preflight",
+                    "");
+            return;
+        }
         if (artifact.containerUnverified()) {
             SelfCheckRegistry.markStatus("zalo_artifact", "ok", "versionCode and signer profile",
                     "Base APK container differs from the mapped one; anchors gated by preflight",

@@ -1,26 +1,20 @@
 package com.ez.zalopatch;
 
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.Locale;
 
 final class ZaloRestart {
-    private static final String TARGET_PACKAGE = "com.zing.zalo";
-
     interface Callback {
         void onResult(Result result);
     }
 
     enum Result {
         SENT,
-        MANUAL_FORCE_STOP_NEEDED,
         ROOT_DENIED,
         FAILED
     }
@@ -37,21 +31,11 @@ final class ZaloRestart {
     }
 
     private static Result restartBlocking(Context context) {
-        // Best effort only: this is a cached fast-path for reads, not the source of truth. The
-        // module's ContentProvider always reflects the live SharedPreferences values, so a failed
-        // (unrooted) mirror write must not block relaunching the target app below.
-        TweakStore.syncProperties(context);
-        long changeGeneration = SettingsChanges.generation(context);
-        Result rootResult = restartWithRoot(context, changeGeneration);
-        if (rootResult != null) {
-            return rootResult;
-        }
-        return restartWithoutRoot(context);
-    }
-
-    /** Returns null when no root is available, so the caller can fall back. */
-    private static Result restartWithRoot(Context context, long changeGeneration) {
         try {
+            long changeGeneration = SettingsChanges.generation(context);
+            if (!TweakStore.syncProperties(context)) {
+                return Result.ROOT_DENIED;
+            }
             Process process = new ProcessBuilder(
                     "su", "-c",
                     "am force-stop com.zing.zalo && monkey -p com.zing.zalo -c android.intent.category.LAUNCHER 1")
@@ -73,30 +57,9 @@ final class ZaloRestart {
             String message = output.toString().toLowerCase(Locale.US);
             if (message.contains("denied") || message.contains("not allowed")
                     || message.contains("permission")) {
-                return null;
+                return Result.ROOT_DENIED;
             }
             return Result.FAILED;
-        } catch (java.io.IOException noSuBinary) {
-            // No su binary at all: not a rooted device (e.g. a stock LSPatch install). Fall back.
-            return null;
-        } catch (Exception ignored) {
-            return Result.FAILED;
-        }
-    }
-
-    /**
-     * LSPatch commonly runs without root (that is its main appeal over LSPosed/Magisk), so this
-     * app cannot force-stop another app itself. Send the user to Zalo's App info screen instead,
-     * where a manual "Force stop" is one tap away; the toast (see the caller) tells them why.
-     * Pending changes are deliberately left marked, since nothing has actually been applied yet.
-     */
-    private static Result restartWithoutRoot(Context context) {
-        try {
-            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:" + TARGET_PACKAGE));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(intent);
-            return Result.MANUAL_FORCE_STOP_NEEDED;
         } catch (Exception ignored) {
             return Result.FAILED;
         }

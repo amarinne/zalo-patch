@@ -101,8 +101,8 @@ android {
         applicationId = "com.ez.zalopatch"
         minSdk = 24
         targetSdk = 34
-        versionCode = 160
-        versionName = "0.4.156-report-field-contract+B160-20260816T1756Z"
+        versionCode = 163
+        versionName = "0.4.159-status-privacy+B163-20260820T1716Z"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")

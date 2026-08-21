@@ -25,6 +25,8 @@ final class SymbolPreflight {
                 schema, classLoader, result.zinstantMessageErrors);
         result.zinstantFeed = checkZinstantFeed(
                 schema, classLoader, result.zinstantFeedErrors);
+        result.statusPrivacy = checkStatusPrivacy(
+                schema, classLoader, result.statusPrivacyErrors);
         return result;
     }
 
@@ -160,6 +162,32 @@ final class SymbolPreflight {
         return errors.isEmpty();
     }
 
+    private static boolean checkStatusPrivacy(SymbolSchema.Active schema, ClassLoader loader,
+                                              List<String> errors) {
+        Class<?> ack = load(schema.string("symbols.chat.seen_ack_class", ""), loader, errors);
+        Class<?> manager = load(schema.string(
+                "symbols.chat.send_seen_manager_class", ""), loader, errors);
+        Class<?> repository = load(schema.string(
+                "symbols.chat.message_repository_class", ""), loader, errors);
+        if (ack != null) {
+            field(ack, schema.string("symbols.chat.seen_ack_type_field", ""),
+                    Integer.TYPE, errors);
+        }
+        if (manager != null && ack != null) {
+            methodExact(manager, schema.string("symbols.chat.send_seen_single_method", ""),
+                    Void.TYPE, errors, ack);
+            methodExact(manager, schema.string("symbols.chat.send_seen_batch_method", ""),
+                    Void.TYPE, errors, ArrayList.class);
+        }
+        if (repository != null) {
+            methodExact(repository, schema.string("symbols.chat.send_ack_method", ""),
+                    Void.TYPE, errors, List.class, Boolean.TYPE, Boolean.TYPE, Boolean.TYPE);
+            methodExact(repository, schema.string("symbols.chat.send_typing_method", ""),
+                    Void.TYPE, errors, String.class, Integer.TYPE, Boolean.TYPE, Boolean.TYPE);
+        }
+        return errors.isEmpty();
+    }
+
     private static Class<?> load(String name, ClassLoader loader, List<String> errors) {
         if (name.isEmpty()) {
             errors.add("class name missing");
@@ -221,6 +249,22 @@ final class SymbolPreflight {
         errors.add(owner.getName() + "#" + name + " method missing");
     }
 
+    private static void methodExact(Class<?> owner, String name, Class<?> returnType,
+                                    List<String> errors, Class<?>... parameterTypes) {
+        if (name.isEmpty()) {
+            errors.add(owner.getName() + " method name missing");
+            return;
+        }
+        try {
+            Method method = owner.getDeclaredMethod(name, parameterTypes);
+            if (method.getReturnType() != returnType) {
+                errors.add(owner.getName() + "#" + name + " return type changed");
+            }
+        } catch (Throwable throwable) {
+            errors.add(owner.getName() + "#" + name + " signature changed");
+        }
+    }
+
     static final class Result {
         boolean inboxMedia;
         boolean inboxCategories;
@@ -228,12 +272,14 @@ final class SymbolPreflight {
         boolean bottomTabs;
         boolean zinstantMessage;
         boolean zinstantFeed;
+        boolean statusPrivacy;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
         final List<String> bottomErrors = new ArrayList<>();
         final List<String> zinstantMessageErrors = new ArrayList<>();
         final List<String> zinstantFeedErrors = new ArrayList<>();
+        final List<String> statusPrivacyErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -248,11 +294,12 @@ final class SymbolPreflight {
             if (bottomTabs) count++;
             if (zinstantMessage) count++;
             if (zinstantFeed) count++;
+            if (statusPrivacy) count++;
             return count;
         }
 
         int total() {
-            return 6;
+            return 7;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -264,6 +311,7 @@ final class SymbolPreflight {
             append(value, "bottom_tabs", bottomTabs);
             append(value, "zinstant_message", zinstantMessage);
             append(value, "zinstant_feed", zinstantFeed);
+            append(value, "status_privacy", statusPrivacy);
             return value.toString();
         }
 

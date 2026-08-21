@@ -9,6 +9,9 @@ import android.widget.TextView;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.net.Uri;
+import android.provider.Settings;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -49,6 +52,10 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         settingsStack.addView(restartBlocker, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         refreshApplyBar(false);
+        RootAccess.probeIfNeeded(this, state -> {
+            refreshApplyBar(false);
+            onRootAccessChanged(state);
+        });
     }
 
     @Override
@@ -75,13 +82,16 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
-    private void refreshApplyBar(boolean animate) {
+    final void refreshApplyBar(boolean animate) {
         if (applyBar == null) {
             return;
         }
         int count = SettingsChanges.pendingCount(this);
-        applyMessage.setText(getResources().getQuantityString(
-                R.plurals.zp_pending_changes, count, count));
+        boolean rootGranted = RootAccess.cached(this) == RootAccess.State.GRANTED;
+        applyMessage.setText(rootGranted
+                ? getResources().getQuantityString(R.plurals.zp_pending_changes, count, count)
+                : getString(R.string.zp_restart_root_required_summary));
+        applyButton.setEnabled(rootGranted && !restartInFlight);
         boolean show = count > 0;
         if (show == (applyBar.getVisibility() == View.VISIBLE)) {
             return;
@@ -108,7 +118,7 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     }
 
     protected final void restartZalo() {
-        if (restartInFlight) {
+        if (restartInFlight || RootAccess.cached(this) != RootAccess.State.GRANTED) {
             return;
         }
         restartInFlight = true;
@@ -124,19 +134,14 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
 
     private void finishRestart(ZaloRestart.Result result) {
         restartInFlight = false;
-        applyButton.setEnabled(true);
         setRestartBlockerVisible(false);
         onRestartStateChanged(false);
         int message = result == ZaloRestart.Result.SENT
                 ? R.string.zp_restart_sent
-                : result == ZaloRestart.Result.MANUAL_FORCE_STOP_NEEDED
-                ? R.string.zp_restart_manual_force_stop_needed
                 : result == ZaloRestart.Result.ROOT_DENIED
                 ? R.string.zp_restart_root_denied
                 : R.string.zp_restart_failed;
-        int toastDuration = result == ZaloRestart.Result.MANUAL_FORCE_STOP_NEEDED
-                ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT;
-        Toast.makeText(this, message, toastDuration).show();
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         refreshApplyBar(true);
         onRestartResult(result);
     }
@@ -155,5 +160,25 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     }
 
     protected void onRestartStateChanged(boolean inFlight) {
+    }
+
+    protected void onRootAccessChanged(RootAccess.State state) {
+    }
+
+    protected final void recheckRootAccess() {
+        RootAccess.recheck(this, state -> {
+            refreshApplyBar(false);
+            onRootAccessChanged(state);
+        });
+    }
+
+    protected final void openZaloAppInfo() {
+        try {
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:com.zing.zalo")));
+        } catch (RuntimeException exception) {
+            Toast.makeText(this, R.string.zp_open_zalo_app_info_failed,
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 }

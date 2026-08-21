@@ -92,10 +92,8 @@ public final class SymbolSchema {
             if (!current.lightweightKey.equals(storedLightweight)) {
                 return null;
             }
-            SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context,
-                    installedVersionCode,
-                    preferences.getString(ZaloArtifactState.KEY_BASE_SHA256, ""),
-                    preferences.getString(ZaloArtifactState.KEY_SIGNER_SHA256, ""));
+            SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(
+                    context, installedVersionCode);
             if (entry == null) return null;
             Active active = select(entry.profileJson,
                     "Remote catalog " + entry.sequence, installedVersionCode);
@@ -154,8 +152,10 @@ public final class SymbolSchema {
      * Newest bundled profile, regardless of the installed Zalo version. This exists only so an
      * unmapped version can be probed: running the structural checks says which anchor families
      * would have resolved, which is the evidence an exact-profile gate otherwise suppresses. It
-     * must never back a hook. Obfuscated names shuffle between Zalo releases, so a name that
-     * resolves here may belong to an unrelated class.
+     * must never back a hook: it is picked by schema revision alone, without preflight. Obfuscated
+     * names shuffle between Zalo releases, so a name that resolves here may belong to an unrelated
+     * class. {@link #fallbackProfilesForHooks(Context, long)} is the path that may back a hook, and
+     * it differs precisely in that the caller preflights each candidate first.
      */
     public static Active probeProfileForHooks(Context context) {
         context = hookContext(context);
@@ -185,6 +185,86 @@ public final class SymbolSchema {
             return probe.valid ? probe : null;
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    /**
+     * Bundled profiles other than the one mapped for {@code installedVersionCode}, nearest release
+     * first, for the caller to try when the exact profile resolved nothing.
+     *
+     * <p>Ordering is by absolute versionCode distance, breaking ties toward the newer release. The
+     * list is candidates only: a caller must structurally preflight each against the live
+     * classloader and take one only if its anchors resolve. Obfuscated names shuffle between
+     * releases, so a name resolving here can belong to an unrelated class, and preflight is what
+     * separates the two.
+     */
+    public static List<Active> fallbackProfilesForHooks(Context context,
+                                                        long installedVersionCode) {
+        context = hookContext(context);
+        List<Active> candidates = new ArrayList<>();
+        try {
+            String bundleJson = readBundledJson(context);
+            JSONArray profiles = new JSONObject(bundleJson).optJSONArray("profiles");
+            if (profiles == null) {
+                return candidates;
+            }
+            List<Long> codes = new ArrayList<>();
+            for (int index = 0; index < profiles.length(); index++) {
+                JSONObject profile = profiles.optJSONObject(index);
+                if (profile == null) continue;
+                JSONObject range = profile.optJSONObject("zalo_version");
+                long code = range == null ? -1L : range.optLong("min_code", -1L);
+                if (code > 0L && code != installedVersionCode && !codes.contains(code)) {
+                    codes.add(code);
+                }
+            }
+            orderByVersionDistance(codes, installedVersionCode);
+            for (long code : codes) {
+                Active candidate = select(bundleJson, "Fallback profile " + code, code);
+                if (candidate.valid) {
+                    candidates.add(candidate);
+                }
+            }
+        } catch (Throwable ignored) {
+            return candidates;
+        }
+        return candidates;
+    }
+
+    /**
+     * Orders candidate profile versionCodes by absolute distance from the installed one, nearest
+     * first, breaking ties toward the newer release.
+     *
+     * <p>Distance is the only signal available before preflight runs. A tie means one mapped
+     * release sits either side of the installed one; the newer is tried first because Zalo carries
+     * anchors forward more often than it reinstates an older shape.
+     */
+    static void orderByVersionDistance(List<Long> codes, long installedVersionCode) {
+        Collections.sort(codes, (left, right) -> {
+            long leftDistance = Math.abs(left - installedVersionCode);
+            long rightDistance = Math.abs(right - installedVersionCode);
+            if (leftDistance != rightDistance) {
+                return Long.compare(leftDistance, rightDistance);
+            }
+            return Long.compare(right, left);
+        });
+    }
+
+    /**
+     * Installs a profile as the one every hook-side symbol read resolves to for this process.
+     *
+     * <p>Feature symbol lookups all funnel through {@link #activeForHooks(Context)}, so a fallback
+     * chosen after preflight has to land in that cache or the features would keep reading the exact
+     * profile that just failed. Scoped to the Zalo process lifetime; nothing is persisted, and the
+     * module process still reconciles and reports from the exact profile.
+     */
+    public static void adoptForHooks(Active profile, long installedVersionCode) {
+        if (profile == null || !profile.valid) {
+            return;
+        }
+        synchronized (SymbolSchema.class) {
+            cachedHookSchema = profile;
+            cachedHookVersionCode = installedVersionCode;
         }
     }
 

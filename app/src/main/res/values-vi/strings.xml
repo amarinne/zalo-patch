@@ -11,9 +11,11 @@
     -->
     <string name="zp_restart_title">Khởi động lại Zalo</string>
     <string name="zp_restart_sent">Đã gửi lệnh khởi động lại</string>
-    <string name="zp_restart_manual_force_stop_needed">Không có root: đang mở thông tin ứng dụng Zalo. Nhấn Buộc dừng, sau đó mở lại Zalo để áp dụng thay đổi</string>
     <string name="zp_restart_root_denied">Quyền root bị từ chối</string>
     <string name="zp_restart_failed">Không thể khởi động lại</string>
+    <string name="zp_open_zalo_app_info">Mở thông tin ứng dụng Zalo</string>
+    <string name="zp_open_zalo_app_info_summary">Buộc dừng Zalo thủ công, sau đó mở lại.</string>
+    <string name="zp_open_zalo_app_info_failed">Không thể mở thông tin ứng dụng Zalo</string>
     <string name="zp_section_status">Trạng thái</string>
     <string name="zp_section_interface">Giao diện Zalo</string>
     <string name="zp_section_ads_notifications">Quảng cáo và thông báo</string>
@@ -64,10 +66,10 @@
     <string name="zp_tweak_hide_zcloud_banner_summary">Ẩn banner zCloud phía trên Tin nhắn.</string>
     <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
     <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
-    <string name="zp_tweak_block_seen_status">Chặn trạng thái đã xem và đã nhận</string>
-    <string name="zp_tweak_block_seen_status_summary">Ngừng gửi cả xác nhận đã xem lẫn đã nhận cho phía bên kia, ở mọi trường hợp — tin nhắn vẫn hiển thị đã đọc trên máy bạn.</string>
-    <string name="zp_tweak_block_typing_status">Chặn trạng thái đang nhập</string>
-    <string name="zp_tweak_block_typing_status_summary">Ngừng gửi biểu tượng \"đang nhập…\" khi bạn gõ tin nhắn.</string>
+    <string name="zp_tweak_block_seen_status">Chặn trạng thái Đã xem</string>
+    <string name="zp_tweak_block_seen_status_summary">Ẩn xác nhận đã xem của bạn nhưng vẫn gửi trạng thái đã nhận. Bạn vẫn thấy xác nhận của người khác.</string>
+    <string name="zp_tweak_block_typing_status">Chặn trạng thái Đang nhập</string>
+    <string name="zp_tweak_block_typing_status_summary">Không gửi chỉ báo đang nhập trong cuộc trò chuyện cá nhân hoặc nhóm.</string>
     <string name="zp_tweak_auto_record_calls">Tự động ghi âm cuộc gọi</string>
     <string name="zp_tweak_auto_record_calls_summary">Lưu bản ghi âm của cuộc gọi Zalo đã kết thúc thành file M4A.</string>
     <string name="zp_tweak_recording_notifications">Thông báo ghi âm</string>
@@ -90,6 +92,7 @@
     <string name="zp_default_inbox_filter">Bộ lọc Tin nhắn mặc định</string>
     <string name="zp_group_in_app_ads">Quảng cáo trong ứng dụng</string>
     <string name="zp_group_me_services">Cá nhân</string>
+    <string name="zp_group_status_privacy">Quyền riêng tư trạng thái</string>
     <string name="zp_group_call_recording">Ghi âm cuộc gọi</string>
     <string name="zp_backup_title">Sao lưu cài đặt</string>
 

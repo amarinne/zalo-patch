@@ -15,8 +15,7 @@ public final class RemoteCatalogActivationTest extends AndroidTestCase {
     public void testCachedSignedProfileActivatesWithoutBundledExactProfile() throws Exception {
         Context context = getContext();
         ZaloArtifactIdentity identity = ZaloArtifactIdentity.capture(context, true);
-        SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context,
-                identity.versionCode, identity.baseApkSha256, identity.signerSha256);
+        SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context, identity.versionCode);
         assertNotNull("No signed catalog entry cached for installed Zalo", entry);
 
         JSONObject bundle = new JSONObject(readBundledSchema(context));
@@ -39,10 +38,11 @@ public final class RemoteCatalogActivationTest extends AndroidTestCase {
         assertNotNull(remote);
         assertTrue(remote.valid);
         assertEquals("Remote catalog " + entry.sequence, remote.source);
-        assertEquals(identity.baseApkSha256,
-                remote.string("artifact.base_apk_sha256", ""));
-        assertEquals(identity.signerSha256,
-                remote.string("artifact.signer_sha256", ""));
+        // The entry names the container it was mapped from, which need not be the installed one:
+        // lookup and verification bind versionCode alone (Decision 15). Assert the mapped identity
+        // is carried, not that it equals this device's container.
+        assertEquals(64, remote.string("artifact.base_apk_sha256", "").length());
+        assertEquals(64, remote.string("artifact.signer_sha256", "").length());
     }
 
     private static String readBundledSchema(Context context) throws Exception {

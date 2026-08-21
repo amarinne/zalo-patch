@@ -15,7 +15,7 @@ import java.util.Locale;
 
 public final class NotificationRuleStore {
     public static final String MIRROR_KEY = "notifications.custom_rules";
-    private static final String PREF_KEY = "notifications.custom_rules_json";
+    static final String PREF_KEY = "notifications.custom_rules_json";
     private static final int FORMAT_VERSION = 1;
 
     public enum Type {
@@ -152,6 +152,15 @@ public final class NotificationRuleStore {
                 decodeList(root, Type.KEYWORD_EXCEPTIONS),
                 decodeList(root, Type.ACCOUNT_BLOCKLIST),
                 decodeList(root, Type.ACCOUNT_EXCEPTIONS));
+    }
+
+    static RuleSet resolve(String propertyJson, String providerJson) {
+        String selected = propertyJson != null ? propertyJson : providerJson;
+        try {
+            return decode(selected);
+        } catch (Exception ignored) {
+            return RuleSet.empty();
+        }
     }
 
     public static List<String> sanitize(List<String> values) {

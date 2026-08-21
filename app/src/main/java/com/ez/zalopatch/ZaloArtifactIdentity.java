@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.ProviderInfo;
 import android.content.pm.Signature;
 import android.os.Build;
 
@@ -29,19 +28,10 @@ final class ZaloArtifactIdentity {
     final List<Split> splits;
     final String lightweightKey;
     final String generation;
-    /**
-     * True when the installed Zalo package was repackaged by LSPatch, detected by the
-     * loader-injected {@code *.lspatch.documents} provider every LSPatch build carries. LSPatch
-     * always resigns the APK with its own key, so {@link #signerSha256} never matches the
-     * original Zalo signer on a patched install; that resign is what LSPatch does by design, not
-     * evidence of a tampered artifact, so callers use this flag to relax the signer check instead
-     * of treating every LSPatch install as untrusted.
-     */
-    final boolean lspatched;
 
     private ZaloArtifactIdentity(long versionCode, String versionName, long lastUpdateTime,
                                  String sourceDir, String baseApkSha256, String signerSha256,
-                                 List<Split> splits, boolean lspatched) {
+                                 List<Split> splits) {
         this.versionCode = versionCode;
         this.versionName = versionName;
         this.lastUpdateTime = lastUpdateTime;
@@ -49,16 +39,14 @@ final class ZaloArtifactIdentity {
         this.baseApkSha256 = baseApkSha256;
         this.signerSha256 = signerSha256;
         this.splits = Collections.unmodifiableList(new ArrayList<>(splits));
-        this.lspatched = lspatched;
         this.lightweightKey = sha256(canonical(false));
         this.generation = baseApkSha256.isEmpty() ? "" : sha256(canonical(true));
     }
 
     static ZaloArtifactIdentity capture(Context context, boolean hashApks) throws Exception {
         PackageManager packageManager = context.getPackageManager();
-        int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES)
-                | PackageManager.GET_PROVIDERS;
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
         PackageInfo info = packageManager.getPackageInfo(PACKAGE_NAME, flags);
         ApplicationInfo applicationInfo = info.applicationInfo;
         if (applicationInfo == null || applicationInfo.sourceDir == null) {
@@ -70,19 +58,7 @@ final class ZaloArtifactIdentity {
         List<Split> splits = splits(applicationInfo, hashApks);
         return new ZaloArtifactIdentity(code, info.versionName == null ? "" : info.versionName,
                 info.lastUpdateTime, applicationInfo.sourceDir, baseHash,
-                signerDigest(info), splits, isLspatched(info));
-    }
-
-    private static boolean isLspatched(PackageInfo info) {
-        if (info.providers == null) {
-            return false;
-        }
-        for (ProviderInfo provider : info.providers) {
-            if (provider.authority != null && provider.authority.contains("lspatch.documents")) {
-                return true;
-            }
-        }
-        return false;
+                signerDigest(info), splits);
     }
 
     private static List<Split> splits(ApplicationInfo info, boolean hashApks) throws Exception {

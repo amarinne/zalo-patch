@@ -5,12 +5,28 @@
     <!-- Dashboard -->
     <string name="zp_restart_title">Restart Zalo</string>
     <string name="zp_restart_sent">Restart command sent</string>
-    <string name="zp_restart_manual_force_stop_needed">No root: opening Zalo\'s app info. Tap Force stop, then reopen Zalo to apply changes</string>
     <string name="zp_restart_root_denied">Root access denied</string>
     <string name="zp_restart_failed">Restart command failed</string>
+    <string name="zp_restart_root_required_summary">Root required; force stop Zalo to apply.</string>
+    <string name="zp_root_access_title">Root access</string>
+    <string name="zp_root_access_granted">Granted · tap to check again</string>
+    <string name="zp_root_access_denied">Denied · tap to check again</string>
+    <string name="zp_root_access_absent">Not available · tap to check again</string>
+    <string name="zp_open_zalo_app_info">Open Zalo app info</string>
+    <string name="zp_open_zalo_app_info_summary">Force stop Zalo manually, then reopen it.</string>
+    <string name="zp_open_zalo_app_info_failed">Could not open Zalo app info</string>
     <string name="zp_runtime_status_title">Runtime status</string>
     <string name="zp_runtime_status_empty">No runtime data yet</string>
     <string name="zp_runtime_status_counts">%1$d active · %2$d failed · %3$d stale</string>
+    <string name="zp_runtime_environment_title">Runtime environment</string>
+    <string name="zp_runtime_environment_pending">Waiting for a Zalo runtime report</string>
+    <string name="zp_runtime_environment_summary">%1$s · Resource hooks: %2$s</string>
+    <string name="zp_runtime_framework_lsposed">LSPosed</string>
+    <string name="zp_runtime_framework_lspatch">LSPatch</string>
+    <string name="zp_runtime_framework_unknown">Unknown Xposed runtime</string>
+    <string name="zp_capability_observed">observed</string>
+    <string name="zp_capability_pending">pending observation</string>
+    <string name="zp_capability_unavailable">unavailable</string>
     <string name="zp_section_status">Status</string>
     <string name="zp_section_interface">Zalo interface</string>
     <string name="zp_section_ads_notifications">Ads &amp; notifications</string>
@@ -45,6 +61,9 @@
     <string name="zp_language_vietnamese">Tiếng Việt</string>
     <string name="zp_unavailable">Unavailable.</string>
     <string name="zp_unavailable_with_summary">Unavailable. %1$s</string>
+    <string name="zp_requirement_root">Root required.</string>
+    <string name="zp_requirement_resource_hooks">This runtime did not expose resource hooks.</string>
+    <string name="zp_requirement_with_summary">%1$s %2$s</string>
 
     <!-- Tweak rows -->
     <string name="zp_tweak_hide_discovery">Hide Discovery tab</string>
@@ -91,10 +110,10 @@
     <string name="zp_tweak_oa_chip_summary">Shows Official Account conversations.</string>
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
-    <string name="zp_tweak_block_seen_status">Block seen and received status</string>
-    <string name="zp_tweak_block_seen_status_summary">Stops sending both read receipts and delivered status to the other side, everywhere — messages still show as read locally.</string>
+    <string name="zp_tweak_block_seen_status">Block seen status</string>
+    <string name="zp_tweak_block_seen_status_summary">Hides your read receipts while preserving delivered status. You still see other people’s receipts.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
-    <string name="zp_tweak_block_typing_status_summary">Stops sending the \"is typing…\" indicator while you type.</string>
+    <string name="zp_tweak_block_typing_status_summary">Stops sending the typing indicator in individual and group chats.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>
@@ -165,11 +184,12 @@
     <string name="zp_diagnostic_prepare_report">Prepare metadata-only report</string>
     <string name="zp_diagnostic_prepare_report_summary">Uses current package, symbol, self-check, and safe setting state. No root commands.</string>
     <string name="zp_diagnostic_start_capture">Start guided capture</string>
-    <string name="zp_diagnostic_start_capture_summary">Temporarily enables debug.zalopatch for up to 30 minutes. Root approval is required.</string>
+    <string name="zp_diagnostic_start_capture_summary">Root is required for filtered logs. Without root, the report contains metadata and structured runtime evidence only.</string>
     <string name="zp_diagnostic_capture_explanation_title">Additional diagnostics recommended</string>
     <string name="zp_diagnostic_capture_explanation">This category usually needs runtime evidence. Guided capture temporarily enables filtered diagnostics. You can still prepare a metadata-only report.</string>
     <string name="zp_diagnostic_capture_active">Capture active</string>
     <string name="zp_diagnostic_capture_active_summary">Debug logging is temporarily enabled. Restart Zalo, reproduce the problem, return here, then finish. It restores automatically after 30 minutes.</string>
+    <string name="zp_diagnostic_metadata_only_capture_active_summary">Root is unavailable, so no logs are being collected. Reproduce the problem, return here, then finish the metadata-only report.</string>
     <string name="zp_diagnostic_compatibility_capture_active_summary">Schema discovery and debug logging are temporarily armed. Restart Zalo, open Messages until rows load, open Me, return here, then finish. Nothing activates automatically.</string>
     <string name="zp_diagnostic_compatibility_mapped_capture_active_summary">This Zalo version already has an exact bundled map. Debug logging is temporarily enabled for the compatibility problem; remap discovery is not armed.</string>
     <string name="zp_diagnostic_compatibility_mapped_title">Exact version map available</string>
@@ -203,6 +223,7 @@
     <string name="zp_diagnostic_clip_label">Zalo Patch report ID</string>
     <string name="zp_diagnostic_id_copied">Report ID copied</string>
     <string name="zp_diagnostic_capture_started">Capture started. Restart Zalo and reproduce the problem.</string>
+    <string name="zp_diagnostic_metadata_only_capture_started">Metadata-only capture started. Root logs are unavailable.</string>
     <string name="zp_diagnostic_capture_ready">Capture finished. Debug logging restored and report ready.</string>
     <string name="zp_diagnostic_capture_cancelled">Capture cancelled. Debug logging restored.</string>
     <string name="zp_diagnostic_capture_expired">Capture expired. Previous debug logging restored.</string>
