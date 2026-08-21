@@ -29,10 +29,14 @@ public final class SectionActivity {
         private static final String ARG_SECTION = "section";
         private static final String MASTER_TELEMETRY = "internal.telemetry_master";
         static final String DEVELOPER_REPORT = "internal.developer_report";
+        static final String DEVELOPER_RUNTIME_ENVIRONMENT =
+                "internal.developer_runtime_environment";
         private Map<String, SelfCheckData.Row> selfCheckRows = new HashMap<>();
         private final Map<String, ZpSwitchPreference> switches = new HashMap<>();
         private final Map<ZpRowPreference, String[]> pageStatuses = new HashMap<>();
         private ZpRowPreference developerRuntimeStatus;
+        private ZpRowPreference developerRootAccess;
+        private ZpRowPreference developerRuntimeEnvironment;
         private ZpRowPreference recordingsRow;
         private ZpMainSwitchPreference telemetryMaster;
         private boolean recordingCountLoading;
@@ -91,6 +95,7 @@ public final class SectionActivity {
             }
             refreshRecordingCount();
             refreshDeveloperRuntimeStatus();
+            refreshDeveloperEnvironment();
         }
 
         private void buildScreen() {
@@ -98,6 +103,8 @@ public final class SectionActivity {
             switches.clear();
             pageStatuses.clear();
             developerRuntimeStatus = null;
+            developerRootAccess = null;
+            developerRuntimeEnvironment = null;
             recordingsRow = null;
             telemetryMaster = null;
             resourceRequirementMet = RequirementGate.isMet(
@@ -149,6 +156,21 @@ public final class SectionActivity {
             });
             section.add(displayHookDetail);
 
+            developerRootAccess = PreferenceUi.action(context,
+                    getString(R.string.zp_root_access_title), null);
+            developerRootAccess.setKey(StatusActivity.INTERNAL_ROOT_ACCESS);
+            developerRootAccess.setOnPreferenceClickListener(preference -> {
+                ((StatusActivity) requireActivity()).recheckRootAccess();
+                return true;
+            });
+            section.add(developerRootAccess);
+
+            developerRuntimeEnvironment = PreferenceUi.info(context,
+                    getString(R.string.zp_runtime_environment_title), null);
+            developerRuntimeEnvironment.setKey(DEVELOPER_RUNTIME_ENVIRONMENT);
+            section.add(developerRuntimeEnvironment);
+            refreshDeveloperEnvironment();
+
             SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(context));
             developerRuntimeStatus = PreferenceUi.nav(context,
                     getString(R.string.zp_runtime_status_title), runtimeSummary(counts));
@@ -197,6 +219,49 @@ public final class SectionActivity {
             developerRuntimeStatus.refreshStyle();
         }
 
+        void refreshDeveloperEnvironment() {
+            if (!isAdded()) return;
+            Context context = requireContext();
+            if (developerRootAccess != null) {
+                RootAccess.State state = RootAccess.cached(context);
+                int summary = state == RootAccess.State.GRANTED
+                        ? R.string.zp_root_access_granted
+                        : state == RootAccess.State.DENIED
+                        ? R.string.zp_root_access_denied
+                        : R.string.zp_root_access_absent;
+                developerRootAccess.value(getString(summary));
+                developerRootAccess.refreshStyle();
+            }
+            if (developerRuntimeEnvironment != null) {
+                developerRuntimeEnvironment.value(runtimeEnvironmentSummary(context));
+                developerRuntimeEnvironment.refreshStyle();
+            }
+        }
+
+        private String runtimeEnvironmentSummary(Context context) {
+            RuntimeEnvironment.Snapshot snapshot = RuntimeEnvironment.current(context);
+            if (!snapshot.reported) {
+                return getString(R.string.zp_runtime_environment_pending);
+            }
+            int framework = snapshot.framework == RuntimeEnvironment.Framework.LSPOSED
+                    ? R.string.zp_runtime_framework_lsposed
+                    : snapshot.framework == RuntimeEnvironment.Framework.LSPATCH
+                    ? R.string.zp_runtime_framework_lspatch
+                    : R.string.zp_runtime_framework_unknown;
+            return getString(R.string.zp_runtime_environment_summary,
+                    getString(framework), getString(resourceHooksStatusRes(snapshot.resourceHooks)));
+        }
+
+        private int resourceHooksStatusRes(RuntimeEnvironment.ResourceHooks status) {
+            if (status == RuntimeEnvironment.ResourceHooks.OBSERVED) {
+                return R.string.zp_capability_observed;
+            }
+            if (status == RuntimeEnvironment.ResourceHooks.UNAVAILABLE) {
+                return R.string.zp_capability_unavailable;
+            }
+            return R.string.zp_capability_pending;
+        }
+
         private String runtimeSummary(SelfCheckData.Counts counts) {
             if (counts.total() == 0) return getString(R.string.zp_runtime_status_empty);
             return getString(R.string.zp_runtime_status_counts,
@@ -226,6 +291,14 @@ public final class SectionActivity {
             if (Tweaks.KEY_DEFAULT_INBOX_FILTER.equals(key)) {
                 section.addDependent(defaultInboxFilterPreference(context),
                         Tweaks.KEY_FILTER_POPOVER_CATEGORIES);
+                return;
+            }
+            if (Tweaks.KEY_BACKUP_PUSH_INTERVAL.equals(key)) {
+                section.addDependent(backupIntPreference(context, key,
+                                R.string.zp_backup_interval_title,
+                                R.array.zp_backup_interval_entries,
+                                R.array.zp_backup_interval_values),
+                        Tweaks.KEY_BACKUP_FREQUENT_PUSH);
                 return;
             }
             Tweaks.Item item = itemFor(key);
@@ -285,6 +358,29 @@ public final class SectionActivity {
                 SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, value);
                 SettingsChanges.markChanged(context, Tweaks.KEY_DEFAULT_INBOX_FILTER);
                 return true;
+            });
+            return preference;
+        }
+
+        private Preference backupIntPreference(Context context, String key, int title,
+                                               int entries, int values) {
+            ZpListPreference preference = new ZpListPreference(context);
+            preference.setKey(key);
+            preference.setTitle(title);
+            preference.setEntries(entries);
+            preference.setEntryValues(values);
+            preference.setValue(String.valueOf(SettingsStore.getInt(context, key)));
+            preference.setSummaryProvider(androidx.preference.ListPreference
+                    .SimpleSummaryProvider.getInstance());
+            preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
+                try {
+                    SettingsStore.putInt(context, key,
+                            Integer.parseInt(String.valueOf(newValue)));
+                    SettingsChanges.markChanged(context, key);
+                    return true;
+                } catch (NumberFormatException ignored) {
+                    return false;
+                }
             });
             return preference;
         }
@@ -523,6 +619,9 @@ public final class SectionActivity {
             }
             if (Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS.equals(key)) {
                 return new String[]{"calls.auto_record.notifications"};
+            }
+            if (Tweaks.KEY_BACKUP_FREQUENT_PUSH.equals(key)) {
+                return new String[]{"backup.scheduled"};
             }
             if (Tweaks.KEY_HIDE_MEDIA_BOX.equals(key)) {
                 return new String[]{"inbox.media_box"};

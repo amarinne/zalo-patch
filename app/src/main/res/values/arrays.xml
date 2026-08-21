@@ -41,4 +41,16 @@
         <item>vi</item>
         <item>en</item>
     </string-array>
+    <string-array name="zp_backup_interval_entries">
+        <item>Every hour</item>
+        <item>Every 3 hours</item>
+        <item>Every 6 hours</item>
+        <item>Every 12 hours</item>
+    </string-array>
+    <string-array name="zp_backup_interval_values">
+        <item>1</item>
+        <item>3</item>
+        <item>6</item>
+        <item>12</item>
+    </string-array>
 </resources>

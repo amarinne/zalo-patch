@@ -7,6 +7,7 @@ import org.json.JSONObject;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,6 +28,8 @@ final class SymbolPreflight {
                 schema, classLoader, result.zinstantFeedErrors);
         result.statusPrivacy = checkStatusPrivacy(
                 schema, classLoader, result.statusPrivacyErrors);
+        result.backupScheduled = checkBackupScheduled(
+                schema, classLoader, result.backupScheduledErrors);
         return result;
     }
 
@@ -188,6 +191,25 @@ final class SymbolPreflight {
         return errors.isEmpty();
     }
 
+    private static boolean checkBackupScheduled(SymbolSchema.Active schema, ClassLoader loader,
+                                                List<String> errors) {
+        Class<?> owner = load(schema.string("symbols.backup.interval_reader_class", ""),
+                loader, errors);
+        if (owner != null) {
+            String name = schema.string("symbols.backup.interval_reader_method", "");
+            try {
+                Method method = owner.getDeclaredMethod(name,
+                        Long.TYPE, Boolean.TYPE, String.class);
+                if (method.getReturnType() != Long.TYPE || !Modifier.isStatic(method.getModifiers())) {
+                    errors.add(owner.getName() + "#" + name + " shape changed");
+                }
+            } catch (Throwable throwable) {
+                errors.add(owner.getName() + "#" + name + " signature changed");
+            }
+        }
+        return errors.isEmpty();
+    }
+
     private static Class<?> load(String name, ClassLoader loader, List<String> errors) {
         if (name.isEmpty()) {
             errors.add("class name missing");
@@ -273,6 +295,7 @@ final class SymbolPreflight {
         boolean zinstantMessage;
         boolean zinstantFeed;
         boolean statusPrivacy;
+        boolean backupScheduled;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
@@ -280,6 +303,7 @@ final class SymbolPreflight {
         final List<String> zinstantMessageErrors = new ArrayList<>();
         final List<String> zinstantFeedErrors = new ArrayList<>();
         final List<String> statusPrivacyErrors = new ArrayList<>();
+        final List<String> backupScheduledErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -295,11 +319,12 @@ final class SymbolPreflight {
             if (zinstantMessage) count++;
             if (zinstantFeed) count++;
             if (statusPrivacy) count++;
+            if (backupScheduled) count++;
             return count;
         }
 
         int total() {
-            return 7;
+            return 8;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -312,6 +337,7 @@ final class SymbolPreflight {
             append(value, "zinstant_message", zinstantMessage);
             append(value, "zinstant_feed", zinstantFeed);
             append(value, "status_privacy", statusPrivacy);
+            append(value, "backup_scheduled", backupScheduled);
             return value.toString();
         }
 

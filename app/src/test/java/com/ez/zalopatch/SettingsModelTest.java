@@ -97,6 +97,7 @@ public final class SettingsModelTest {
                 Tweaks.SECTION_NOTIFICATIONS,
                 Tweaks.SECTION_TELEMETRY,
                 Tweaks.SECTION_CALLS,
+                Tweaks.SECTION_BACKUP,
                 Tweaks.SECTION_DEVELOPER);
         for (String section : sections) {
             for (Tweaks.Group group : Tweaks.groups(section)) {
@@ -110,6 +111,7 @@ public final class SettingsModelTest {
             expected.add(item.key);
         }
         assertTrue(rendered.remove(Tweaks.KEY_DEFAULT_INBOX_FILTER));
+        assertTrue(rendered.remove(Tweaks.KEY_BACKUP_PUSH_INTERVAL));
         assertEquals(expected, rendered);
     }
 
@@ -119,6 +121,7 @@ public final class SettingsModelTest {
                 Tweaks.SECTION_NAVIGATION, Tweaks.SECTION_INBOX, Tweaks.SECTION_CHAT,
                 Tweaks.SECTION_ME, Tweaks.SECTION_ADS, Tweaks.SECTION_NOTIFICATIONS,
                 Tweaks.SECTION_TELEMETRY, Tweaks.SECTION_CALLS,
+                Tweaks.SECTION_BACKUP,
                 Tweaks.SECTION_DEVELOPER)) {
             assertEquals(section, section.toLowerCase(java.util.Locale.US));
             assertFalse(section.contains(" "));

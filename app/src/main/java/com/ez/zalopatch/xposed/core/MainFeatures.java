@@ -9,6 +9,7 @@ import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZaloArtifactState;
 import com.ez.zalopatch.xposed.features.BottomTabsFeature;
+import com.ez.zalopatch.xposed.features.BackupPushFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingProbeFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingFeature;
 import com.ez.zalopatch.xposed.features.ChatFeature;
@@ -90,6 +91,11 @@ public final class MainFeatures {
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
             addStatusPrivacy(features, classLoader, preflight);
+            if (mainProcess) {
+                features.add(new BackupPushFeature(classLoader,
+                        preflight.backupScheduled,
+                        preflight.reason(preflight.backupScheduledErrors)));
+            }
             features.add(new CallRecordingFeature(classLoader));
             features.add(new CallRecordingProbeFeature(classLoader));
         } else {

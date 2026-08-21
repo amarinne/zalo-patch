@@ -11,6 +11,8 @@ public final class SettingsBackupTest extends TestCase {
         Map<String, Object> source = new LinkedHashMap<>();
         source.put(Tweaks.KEY_HIDE_DISCOVERY_TAB, true);
         source.put(Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION, 250);
+        source.put(Tweaks.KEY_BACKUP_FREQUENT_PUSH, true);
+        source.put(Tweaks.KEY_BACKUP_PUSH_INTERVAL, 3);
 
         String json = SettingsBackup.encodeSettings(source, 1234L, "test");
         Map<String, Object> decoded = SettingsBackup.decodeSettings(json);
@@ -19,6 +21,8 @@ public final class SettingsBackupTest extends TestCase {
         assertFalse(decoded.containsKey(Tweaks.KEY_CALL_RECORDING_PROBE));
         assertFalse(decoded.containsKey(Tweaks.KEY_AUTO_RECORD_CALLS));
         assertFalse(decoded.containsKey(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS));
+        assertEquals(true, decoded.get(Tweaks.KEY_BACKUP_FREQUENT_PUSH));
+        assertEquals(3, decoded.get(Tweaks.KEY_BACKUP_PUSH_INTERVAL));
     }
 
     public void testUnsupportedRetentionFallsBackToDefault() throws Exception {
