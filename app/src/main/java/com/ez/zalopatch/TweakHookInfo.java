@@ -97,6 +97,19 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_REACTION_ROW:
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
                 break;
+            case Tweaks.KEY_BLOCK_SEEN_STATUS:
+                path = schema.string("symbols.chat.send_seen_manager_class", "<seen manager>")
+                        + "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>")
+                        + "()/" + schema.string("symbols.chat.send_seen_batch_method", "<enqueue batch>")
+                        + "() + "
+                        + schema.string("symbols.chat.message_repository_class", "<message repository>")
+                        + "#" + schema.string("symbols.chat.send_ack_method", "<send ack>") + "()";
+                break;
+            case Tweaks.KEY_BLOCK_TYPING_STATUS:
+                path = schema.string("symbols.chat.message_repository_class", "<message repository>")
+                        + "#" + schema.string("symbols.chat.send_typing_method", "<send typing>")
+                        + "()";
+                break;
             case Tweaks.KEY_AUTO_RECORD_CALLS:
                 path = "PeerJNI#zrtc_peer_start_record_audio() + CallCallback callbacks";
                 break;
@@ -232,6 +245,17 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_FEED_ADS:
                 return Collections.singletonList("#" + schema.string(
                         "symbols.zinstant.feed_bind_method", "<bind>") + "()");
+            case Tweaks.KEY_BLOCK_SEEN_STATUS:
+                return Arrays.asList(
+                        schema.string("symbols.chat.send_seen_manager_class", "<seen manager>"),
+                        "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>") + "()",
+                        schema.string("symbols.chat.send_seen_batch_method", "<enqueue batch>") + "()",
+                        schema.string("symbols.chat.message_repository_class", "<message repository>"),
+                        "#" + schema.string("symbols.chat.send_ack_method", "<send ack>") + "()");
+            case Tweaks.KEY_BLOCK_TYPING_STATUS:
+                return Arrays.asList(
+                        schema.string("symbols.chat.message_repository_class", "<message repository>"),
+                        "#" + schema.string("symbols.chat.send_typing_method", "<send typing>") + "()");
             default:
                 return Collections.emptyList();
         }

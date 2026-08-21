@@ -58,12 +58,11 @@ public final class HookConfig {
         synchronized (HookConfig.class) {
             cached = notificationRules;
             if (cached == null) {
-                String json = SettingsPropertyMirror.readBlob(NotificationRuleStore.MIRROR_KEY);
-                try {
-                    cached = NotificationRuleStore.decode(json);
-                } catch (Exception ignored) {
-                    cached = NotificationRuleStore.RuleSet.empty();
-                }
+                String propertyJson = SettingsPropertyMirror.readBlob(
+                        NotificationRuleStore.MIRROR_KEY);
+                String providerJson = propertyJson == null
+                        ? readValue(appContext, NotificationRuleStore.PREF_KEY) : null;
+                cached = NotificationRuleStore.resolve(propertyJson, providerJson);
                 notificationRules = cached;
             }
         }

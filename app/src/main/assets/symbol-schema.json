@@ -1,11 +1,11 @@
 {
   "bundle_version": 1,
-  "bundle_revision": 2,
+  "bundle_revision": 3,
   "zalo_package": "com.zing.zalo",
   "profiles": [
     {
       "schema_version": 1,
-      "schema_revision": 12,
+      "schema_revision": 15,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260602901,
@@ -247,7 +247,15 @@
             "😮",
             "😢",
             "😡"
-          ]
+          ],
+          "send_seen_manager_class": "vd0.f0",
+          "seen_ack_class": "a00.b",
+          "seen_ack_type_field": "a",
+          "send_seen_single_method": "d",
+          "send_seen_batch_method": "e",
+          "message_repository_class": "yz.p",
+          "send_ack_method": "Q",
+          "send_typing_method": "S"
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",
@@ -385,7 +393,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 13,
+      "schema_revision": 16,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260701901,
@@ -623,7 +631,15 @@
             "😮",
             "😢",
             "😡"
-          ]
+          ],
+          "send_seen_manager_class": "yd0.h0",
+          "seen_ack_class": "e00.b",
+          "seen_ack_type_field": "a",
+          "send_seen_single_method": "d",
+          "send_seen_batch_method": "e",
+          "message_repository_class": "c00.q",
+          "send_ack_method": "Q",
+          "send_typing_method": "S"
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",
@@ -734,7 +750,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 14,
+      "schema_revision": 17,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260801903,
@@ -972,7 +988,15 @@
             "😮",
             "😢",
             "😡"
-          ]
+          ],
+          "send_seen_manager_class": "je0.k0",
+          "seen_ack_class": "n00.b",
+          "seen_ack_type_field": "a",
+          "send_seen_single_method": "d",
+          "send_seen_batch_method": "e",
+          "message_repository_class": "l00.r",
+          "send_ack_method": "Q",
+          "send_typing_method": "S"
         },
         "bottom_tabs": {
           "legacy_state_class": "com.zing.zalo.ui.maintab.e",

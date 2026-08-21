@@ -36,6 +36,7 @@ public final class SectionActivity {
         private ZpRowPreference recordingsRow;
         private ZpMainSwitchPreference telemetryMaster;
         private boolean recordingCountLoading;
+        private boolean resourceRequirementMet;
         private final ActivityResultLauncher<String> recordingNotificationPermissionLauncher =
                 registerForActivityResult(
                         new ActivityResultContracts.RequestPermission(), granted -> {
@@ -69,6 +70,12 @@ public final class SectionActivity {
         @Override
         public void onResume() {
             super.onResume();
+            boolean currentResourceRequirement = RequirementGate.isMet(
+                    requireContext(), Tweaks.Requirement.RESOURCE_HOOKS);
+            if (currentResourceRequirement != resourceRequirementMet) {
+                buildScreen();
+                return;
+            }
             selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(requireContext()));
             for (Map.Entry<String, ZpSwitchPreference> entry : switches.entrySet()) {
                 entry.getValue().setChecked(TweakStore.isEnabled(requireContext(), entry.getKey()));
@@ -88,6 +95,13 @@ public final class SectionActivity {
 
         private void buildScreen() {
             Context context = requireContext();
+            switches.clear();
+            pageStatuses.clear();
+            developerRuntimeStatus = null;
+            recordingsRow = null;
+            telemetryMaster = null;
+            resourceRequirementMet = RequirementGate.isMet(
+                    context, Tweaks.Requirement.RESOURCE_HOOKS);
             String section = requireArguments().getString(ARG_SECTION);
             SymbolSchema.Active schema = SymbolSchema.active(context);
             selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(context));
@@ -218,9 +232,14 @@ public final class SectionActivity {
             if (item == null) {
                 return;
             }
-            Preference row = item.implemented
-                    ? implementedPreference(context, schema, item)
-                    : plannedPreference(context, schema, item);
+            Preference row;
+            if (!item.implemented) {
+                row = plannedPreference(context, schema, item);
+            } else if (!RequirementGate.isMet(context, item.requirement)) {
+                row = unavailableRequirementPreference(context, item);
+            } else {
+                row = implementedPreference(context, schema, item);
+            }
             String dependency = null;
             if (Tweaks.KEY_CATEGORY_GROUPS.equals(item.key)
                     || Tweaks.KEY_CATEGORY_STRANGERS.equals(item.key)
@@ -407,10 +426,27 @@ public final class SectionActivity {
 
         private Preference plannedPreference(Context context, SymbolSchema.Active schema, Tweaks.Item item) {
             String summary = item.summaryRes == 0 ? "" : getString(item.summaryRes);
-            return PreferenceUi.unavailable(context,
+            Preference preference = PreferenceUi.unavailable(context,
                     getString(item.titleRes),
                     summary.isEmpty() ? getString(R.string.zp_unavailable)
                             : getString(R.string.zp_unavailable_with_summary, summary));
+            preference.setKey(item.key);
+            return preference;
+        }
+
+        private Preference unavailableRequirementPreference(Context context, Tweaks.Item item) {
+            int requirementRes = item.requirement == Tweaks.Requirement.ROOT
+                    ? R.string.zp_requirement_root
+                    : R.string.zp_requirement_resource_hooks;
+            String behavior = item.summaryRes == 0 ? "" : getString(item.summaryRes);
+            String summary = behavior.isEmpty()
+                    ? getString(requirementRes)
+                    : getString(R.string.zp_requirement_with_summary,
+                    getString(requirementRes), behavior);
+            Preference preference = PreferenceUi.unavailable(context,
+                    getString(item.titleRes), summary);
+            preference.setKey(item.key);
+            return preference;
         }
 
         /** Compact per-row runtime state. Replaces the old second tracking row under each toggle. */
@@ -469,6 +505,12 @@ public final class SectionActivity {
             }
             if (Tweaks.KEY_HIDE_REACTION_ROW.equals(key)) {
                 return new String[]{"messages.reaction_row"};
+            }
+            if (Tweaks.KEY_BLOCK_SEEN_STATUS.equals(key)) {
+                return new String[]{Tweaks.KEY_BLOCK_SEEN_STATUS};
+            }
+            if (Tweaks.KEY_BLOCK_TYPING_STATUS.equals(key)) {
+                return new String[]{Tweaks.KEY_BLOCK_TYPING_STATUS};
             }
             if (Tweaks.KEY_CALL_RECORDING_PROBE.equals(key)) {
                 return new String[]{"calls.recording_probe.lifecycle",

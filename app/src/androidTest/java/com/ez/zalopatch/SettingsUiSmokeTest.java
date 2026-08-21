@@ -126,17 +126,64 @@ public final class SettingsUiSmokeTest
         StatusActivity activity = getActivity();
         SharedPreferences ui = SettingsChanges.preferences(activity);
         Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        Map<String, ?> originalRoot = RootAccess.snapshotForTest(activity);
         try {
+            assertTrue(ui.edit().clear().commit());
+            RootAccess.setForTest(activity, RootAccess.State.DENIED);
             SettingsChanges.markChanged(activity, "test.pending");
+            getInstrumentation().runOnMainSync(() -> activity.refreshApplyBar(false));
             StatusActivity.DashboardFragment fragment =
                     new StatusActivity.DashboardFragment();
             open(activity, fragment);
             Preference restart = fragment.findPreference(StatusActivity.INTERNAL_RESTART);
+            Preference appInfo = fragment.findPreference(StatusActivity.INTERNAL_ZALO_APP_INFO);
+            Preference root = fragment.findPreference(StatusActivity.INTERNAL_ROOT_ACCESS);
 
             assertNotNull(restart);
             assertTrue(restart.isVisible());
+            assertFalse(restart.isEnabled());
+            assertEquals("Root required; force stop Zalo to apply.",
+                    String.valueOf(restart.getSummary()));
+            assertNotNull(appInfo);
+            assertNotNull(root);
+            assertEquals(android.view.View.VISIBLE,
+                    activity.findViewById(R.id.zp_apply_bar).getVisibility());
+            assertEquals("Root required; force stop Zalo to apply.",
+                    String.valueOf(((android.widget.TextView) activity.findViewById(
+                            R.id.zp_apply_message)).getText()));
+            assertFalse(activity.findViewById(R.id.zp_apply_button).isEnabled());
         } finally {
+            RootAccess.restoreForTest(activity, originalRoot);
             restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testResourceHookRequirementUsesPendingThenUnavailableRendering() {
+        StatusActivity activity = getActivity();
+        Map<String, ?> originalRuntime = RuntimeEnvironment.snapshotForTest(activity);
+        try {
+            RuntimeEnvironment.clearForTest(activity);
+            SectionActivity.SettingsFragment pending =
+                    SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_INBOX);
+            open(activity, pending);
+            assertTrue(pending.findPreference(Tweaks.KEY_HIDE_ZCLOUD_BANNER)
+                    instanceof ZpSwitchPreference);
+
+            long zaloVersion = SymbolSchema.installedZaloVersionCode(activity);
+            assertTrue(RuntimeEnvironment.record(activity, "lspatch", "unavailable",
+                    BuildConfig.VERSION_CODE, zaloVersion));
+            SectionActivity.SettingsFragment unsupported =
+                    SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_INBOX);
+            open(activity, unsupported);
+            Preference row = unsupported.findPreference(Tweaks.KEY_HIDE_ZCLOUD_BANNER);
+            assertNotNull(row);
+            assertFalse(row instanceof ZpSwitchPreference);
+            assertFalse(row.isSelectable());
+            assertNull(row.getOnPreferenceChangeListener());
+            assertTrue(String.valueOf(row.getSummary()).contains(
+                    "did not expose resource hooks"));
+        } finally {
+            RuntimeEnvironment.restoreForTest(activity, originalRuntime);
         }
     }
 
@@ -301,6 +348,10 @@ public final class SettingsUiSmokeTest
         assertEquals("Ngôn ngữ", vietnamese.getString(R.string.zp_language_title));
         assertEquals("Telemetry", vietnamese.getString(R.string.zp_telemetry_title));
         assertEquals("Self-check", vietnamese.getString(R.string.zp_self_check_page_title));
+        assertEquals("Runtime environment",
+                vietnamese.getString(R.string.zp_runtime_environment_title));
+        assertEquals("Root access", vietnamese.getString(R.string.zp_root_access_title));
+        assertEquals("Root required.", vietnamese.getString(R.string.zp_requirement_root));
     }
 
     public void testApplicationColdStartUsesSelectedLanguage() {

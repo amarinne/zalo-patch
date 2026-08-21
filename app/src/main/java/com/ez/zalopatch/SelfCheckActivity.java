@@ -17,6 +17,7 @@ public final class SelfCheckActivity {
 
     public static final class SelfCheckFragment extends ZpPreferenceFragment {
         private ZpRowPreference metrics;
+        private ZpRowPreference runtimeEnvironment;
         private PreferenceCategory failedCategory;
         private PreferenceCategory staleCategory;
 
@@ -49,6 +50,9 @@ public final class SelfCheckActivity {
 
             metrics = PreferenceUi.metrics(context,
                     getString(R.string.zp_self_check_heading), null);
+            runtimeEnvironment = PreferenceUi.info(context,
+                    getString(R.string.zp_runtime_environment_title), null);
+            screen.addPreference(runtimeEnvironment);
             screen.addPreference(metrics);
 
             failedCategory = PreferenceUi.category(screen, "");
@@ -64,6 +68,20 @@ public final class SelfCheckActivity {
             if (metrics == null) {
                 return;
             }
+            RuntimeEnvironment.Snapshot environment = RuntimeEnvironment.current(requireContext());
+            if (!environment.reported) {
+                runtimeEnvironment.value(getString(R.string.zp_runtime_environment_pending));
+            } else {
+                int frameworkRes = environment.framework == RuntimeEnvironment.Framework.LSPOSED
+                        ? R.string.zp_runtime_framework_lsposed
+                        : environment.framework == RuntimeEnvironment.Framework.LSPATCH
+                        ? R.string.zp_runtime_framework_lspatch
+                        : R.string.zp_runtime_framework_unknown;
+                runtimeEnvironment.value(getString(R.string.zp_runtime_environment_summary,
+                        getString(frameworkRes), getString(resourceHooksStatusRes(
+                                environment.resourceHooks))));
+            }
+            runtimeEnvironment.refreshStyle();
             List<SelfCheckData.Row> rows = SelfCheckData.load(requireContext());
             SelfCheckData.Counts counts = SelfCheckData.counts(rows);
             String runtime = rows.isEmpty()
@@ -74,6 +92,16 @@ public final class SelfCheckActivity {
             metrics.refreshStyle();
             refreshAttentionCategory(failedCategory, rows, "failed");
             refreshAttentionCategory(staleCategory, rows, "stale");
+        }
+
+        private int resourceHooksStatusRes(RuntimeEnvironment.ResourceHooks status) {
+            if (status == RuntimeEnvironment.ResourceHooks.OBSERVED) {
+                return R.string.zp_capability_observed;
+            }
+            if (status == RuntimeEnvironment.ResourceHooks.UNAVAILABLE) {
+                return R.string.zp_capability_unavailable;
+            }
+            return R.string.zp_capability_pending;
         }
 
         private String headline(SelfCheckData.Counts counts) {

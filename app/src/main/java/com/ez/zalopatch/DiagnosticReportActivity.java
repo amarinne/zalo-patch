@@ -207,16 +207,23 @@ public final class DiagnosticReportActivity {
                 } else if (session != null) {
                     actions.add(PreferenceUi.info(context,
                             getString(R.string.zp_diagnostic_capture_active),
-                            getString("compatibility".equals(session.category)
+                            getString(!session.debugLoggingManaged
+                                    ? R.string.zp_diagnostic_metadata_only_capture_active_summary
+                                    : "compatibility".equals(session.category)
                                     ? SymbolSchema.active(context).valid
                                     ? R.string.zp_diagnostic_compatibility_mapped_capture_active_summary
                                     : R.string.zp_diagnostic_compatibility_capture_active_summary
                                     : R.string.zp_diagnostic_capture_active_summary)));
                     ZpRowPreference restart = PreferenceUi.action(context,
-                            getString(R.string.zp_diagnostic_restart_zalo),
-                            getString(R.string.zp_diagnostic_restart_zalo_summary));
+                            getString(session.debugLoggingManaged
+                                    ? R.string.zp_diagnostic_restart_zalo
+                                    : R.string.zp_open_zalo_app_info),
+                            getString(session.debugLoggingManaged
+                                    ? R.string.zp_diagnostic_restart_zalo_summary
+                                    : R.string.zp_open_zalo_app_info_summary));
                     restart.setOnPreferenceClickListener(preference -> {
-                        host().restartZalo();
+                        if (session.debugLoggingManaged) host().restartZalo();
+                        else host().openZaloAppInfo();
                         return true;
                     });
                     actions.add(restart);
@@ -399,7 +406,9 @@ public final class DiagnosticReportActivity {
                         session = result.session;
                         draft = null;
                         reviewedReportId = null;
-                        statusMessage = getString(R.string.zp_diagnostic_capture_started);
+                        statusMessage = getString(result.session.debugLoggingManaged
+                                ? R.string.zp_diagnostic_capture_started
+                                : R.string.zp_diagnostic_metadata_only_capture_started);
                     } else {
                         session = DiagnosticCaptureManager.current(context);
                         statusMessage = startFailureMessage(result.failure);

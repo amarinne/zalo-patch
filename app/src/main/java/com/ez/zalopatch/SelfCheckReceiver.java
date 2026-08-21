@@ -18,6 +18,8 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
             "com.ez.zalopatch.COMPLETE_RUNTIME_DISCOVERY";
     public static final String ACTION_RECORD_RUNTIME_DISCOVERY_EVIDENCE =
             "com.ez.zalopatch.RECORD_RUNTIME_DISCOVERY_EVIDENCE";
+    public static final String ACTION_RECORD_RUNTIME_ENVIRONMENT =
+            "com.ez.zalopatch.RECORD_RUNTIME_ENVIRONMENT";
     public static final String EXTRA_VALUES = "values";
     private static final AtomicBoolean REJECTION_LOGGED = new AtomicBoolean(false);
 
@@ -35,6 +37,16 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
     }
 
     static void handleAllowed(Context context, Intent intent) {
+        if (ACTION_RECORD_RUNTIME_ENVIRONMENT.equals(intent.getAction())) {
+            RuntimeEnvironment.record(context, intent.getStringExtra("framework"),
+                    intent.getStringExtra("resource_hooks_status") == null
+                            ? (intent.getBooleanExtra("resource_hooks_observed", false)
+                                    ? "observed" : "pending")
+                            : intent.getStringExtra("resource_hooks_status"),
+                    intent.getIntExtra("module_version_code", -1),
+                    intent.getLongExtra("zalo_version_code", -1L));
+            return;
+        }
         if (ACTION_COMPLETE_RUNTIME_DISCOVERY.equals(intent.getAction())) {
             DiagnosticsState.completeRuntimeDiscovery(
                     context, intent.getLongExtra("version_code", -1L));

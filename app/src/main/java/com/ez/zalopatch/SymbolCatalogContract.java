@@ -17,8 +17,21 @@ final class SymbolCatalogContract {
     private SymbolCatalogContract() {
     }
 
+    /**
+     * Verifies a signed catalog entry against the installed artifact.
+     *
+     * <p>Binding is on exact {@code versionCode}. The container hashes carried in the payload are
+     * the identity of the artifact the profile was mapped from, which the module reads to report a
+     * match tier; they are deliberately not compared against the installed artifact here. The base
+     * APK hash identifies a download rather than a build (Decision 14), and re-signing rezips
+     * without rebuilding dex (Decision 15), so comparing either made a correctly signed entry
+     * unusable on a container carrying identical code.
+     *
+     * <p>Entry authenticity is unaffected: it rests on the pinned catalog public key, and
+     * {@code versionCode} stays in the binding, so an entry for another release is still refused.
+     */
     static Entry verify(byte[] envelopeBytes, byte[] publicKeyPem, long versionCode,
-                        String baseApkSha256, String signerSha256, int moduleVersionCode)
+                        int moduleVersionCode)
             throws Exception {
         if (envelopeBytes == null || envelopeBytes.length == 0
                 || envelopeBytes.length > MAX_ENTRY_BYTES) {
@@ -50,8 +63,6 @@ final class SymbolCatalogContract {
                 || sequence <= 0
                 || !SymbolSchema.TARGET_PACKAGE.equals(root.optString("packageName", ""))
                 || root.optLong("versionCode", -1L) != versionCode
-                || !baseApkSha256.equals(root.optString("baseApkSha256", ""))
-                || !signerSha256.equals(root.optString("signerSha256", ""))
                 || minimumModule > moduleVersionCode
                 || profile == null) {
             throw new IllegalArgumentException("catalog artifact mismatch");

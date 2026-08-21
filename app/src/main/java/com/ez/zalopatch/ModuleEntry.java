@@ -22,6 +22,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookInitPackageResources, IXposedHookZygoteInit {
     private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final String TAG = "ZaloPatch";
+    private static final long RESOURCE_HOOK_OBSERVATION_WINDOW_MS = 5_000L;
+    private static final AtomicBoolean RESOURCE_HOOKS_OBSERVED = new AtomicBoolean(false);
     private final AtomicBoolean featuresStarted = new AtomicBoolean(false);
 
     @Override
@@ -48,6 +50,8 @@ public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookIni
         if (!TARGET_PACKAGE.equals(resparam.packageName)) {
             return;
         }
+        RESOURCE_HOOKS_OBSERVED.set(true);
+        RuntimeEnvironmentReporter.report(HookConfig.resolveFallbackContextForHooks(), true);
         resparam.res.hookLayout(TARGET_PACKAGE, "layout", "messageslist", new de.robv.android.xposed.callbacks.XC_LayoutInflated() {
             @Override
             public void handleLayoutInflated(LayoutInflatedParam liparam) {
@@ -83,11 +87,20 @@ public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookIni
         if (!featuresStarted.compareAndSet(false, true)) {
             return;
         }
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(new Runnable() {
             @Override
             public void run() {
                 HookConfig.logStartupSnapshot();
-                MainFeatures.start(classLoader, mainProcess);
+                MainFeatures.start(classLoader, mainProcess, RESOURCE_HOOKS_OBSERVED.get());
+                if (mainProcess) {
+                    mainHandler.postDelayed(() -> RuntimeEnvironmentReporter.report(
+                                    HookConfig.resolveFallbackContextForHooks(),
+                                    RESOURCE_HOOKS_OBSERVED.get()
+                                            ? RuntimeEnvironment.ResourceHooks.OBSERVED
+                                            : RuntimeEnvironment.ResourceHooks.UNAVAILABLE),
+                            RESOURCE_HOOK_OBSERVATION_WINDOW_MS);
+                }
             }
         });
     }

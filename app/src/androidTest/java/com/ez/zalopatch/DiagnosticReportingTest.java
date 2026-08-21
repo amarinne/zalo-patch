@@ -21,6 +21,10 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
         assertTrue(BuildConfig.DIAGNOSTIC_INTAKE_URL.endsWith("/v1/reports"));
 
         JSONObject product = root.getJSONObject("productMetadata");
+        assertTrue(product.has("runtimeFramework"));
+        assertTrue(product.has("runtimeEnvironmentReported"));
+        assertTrue(product.has("resourceHooksObserved"));
+        assertTrue(product.has("resourceHooksStatus"));
         JSONObject remap = product.getJSONObject("remapEvidence");
         assertFalse(remap.getBoolean("requestedForReport"));
         assertTrue(remap.has("exactBundledProfileMapped"));
@@ -34,7 +38,11 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
         assertTrue(setup.has("symbolSchemaValid"));
         assertTrue(setup.has("runtimeSelfCheckPresent"));
         assertTrue(setup.has("internetPermissionGranted"));
-        assertEquals("not_checked", setup.getString("rootAccessStatus"));
+        String rootStatus = setup.getString("rootAccessStatus");
+        assertTrue("not_checked".equals(rootStatus)
+                || "granted".equals(rootStatus)
+                || "denied".equals(rootStatus)
+                || "error".equals(rootStatus));
 
         JSONObject raw = root.getJSONObject("rawDiagnostics");
         assertEquals("", raw.getString("diagnosticEventsAndLogs"));
@@ -131,6 +139,85 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
                             previousCompleted)
                     .commit();
             TweakStore.initialize(getContext());
+        }
+    }
+
+    public void testRuntimeEnvironmentProviderAndReceiverFallbackPersistEvidence() {
+        long zaloVersion = SymbolSchema.installedZaloVersionCode(getContext());
+        java.util.Map<String, ?> previous = RuntimeEnvironment.snapshotForTest(getContext());
+        RuntimeEnvironment.clearForTest(getContext());
+        try {
+            android.os.Bundle extras = new android.os.Bundle();
+            extras.putString("framework", "lspatch");
+            extras.putBoolean("resource_hooks_observed", false);
+            extras.putInt("module_version_code", BuildConfig.VERSION_CODE);
+            extras.putLong("zalo_version_code", zaloVersion);
+            android.os.Bundle response = getContext().getContentResolver().call(
+                    android.net.Uri.parse("content://com.ez.zalopatch.config"),
+                    "record_runtime_environment", null, extras);
+            assertNotNull(response);
+            assertTrue(response.getBoolean("recorded", false));
+            RuntimeEnvironment.Snapshot provider = RuntimeEnvironment.current(getContext());
+            assertTrue(provider.reported);
+            assertEquals(RuntimeEnvironment.Framework.LSPATCH, provider.framework);
+            assertFalse(provider.resourceHooksObserved);
+            assertEquals(RuntimeEnvironment.ResourceHooks.PENDING, provider.resourceHooks);
+
+            if (android.os.Build.VERSION.SDK_INT < 34) return;
+            android.content.Intent fallback = new android.content.Intent(
+                    SelfCheckReceiver.ACTION_RECORD_RUNTIME_ENVIRONMENT)
+                    .setComponent(new android.content.ComponentName(getContext(),
+                            SelfCheckReceiver.class))
+                    .putExtra("framework", "lspatch")
+                    .putExtra("resource_hooks_status", "observed")
+                    .putExtra("resource_hooks_observed", true)
+                    .putExtra("module_version_code", BuildConfig.VERSION_CODE)
+                    .putExtra("zalo_version_code", zaloVersion);
+            android.app.BroadcastOptions options = android.app.BroadcastOptions.makeBasic();
+            options.setShareIdentityEnabled(true);
+            getContext().sendBroadcast(fallback, null, options.toBundle());
+            long deadline = android.os.SystemClock.uptimeMillis() + 2_000L;
+            while (!RuntimeEnvironment.current(getContext()).resourceHooksObserved
+                    && android.os.SystemClock.uptimeMillis() < deadline) {
+                android.os.SystemClock.sleep(25L);
+            }
+            assertTrue(RuntimeEnvironment.current(getContext()).resourceHooksObserved);
+        } finally {
+            RuntimeEnvironment.restoreForTest(getContext(), previous);
+        }
+    }
+
+    public void testNotificationRulesReachProviderWithoutPropertyMirror() throws Exception {
+        android.content.SharedPreferences prefs = TweakStore.preferences(getContext());
+        boolean hadValue = prefs.contains(NotificationRuleStore.PREF_KEY);
+        String previous = prefs.getString(NotificationRuleStore.PREF_KEY, "");
+        NotificationRuleStore.RuleSet rules = new NotificationRuleStore.RuleSet(
+                java.util.Collections.singletonList("provider-only-rule"), null, null, null);
+        String encoded = NotificationRuleStore.encode(rules);
+        try {
+            assertTrue(prefs.edit().putString(NotificationRuleStore.PREF_KEY, encoded).commit());
+            android.database.Cursor cursor = getContext().getContentResolver().query(
+                    android.net.Uri.withAppendedPath(
+                            ConfigProvider.URI, NotificationRuleStore.PREF_KEY),
+                    null, null, null, null);
+            assertNotNull(cursor);
+            String providerJson = null;
+            try {
+                assertTrue(cursor.moveToFirst());
+                providerJson = cursor.getString(cursor.getColumnIndexOrThrow("value"));
+            } finally {
+                cursor.close();
+            }
+            NotificationRuleStore.RuleSet resolved =
+                    NotificationRuleStore.resolve(null, providerJson);
+            assertEquals(1, resolved.total());
+            assertEquals("provider-only-rule", resolved.list(
+                    NotificationRuleStore.Type.KEYWORD_BLOCKLIST).get(0));
+        } finally {
+            android.content.SharedPreferences.Editor editor = prefs.edit();
+            if (hadValue) editor.putString(NotificationRuleStore.PREF_KEY, previous);
+            else editor.remove(NotificationRuleStore.PREF_KEY);
+            editor.commit();
         }
     }
 }
