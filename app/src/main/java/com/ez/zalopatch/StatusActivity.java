@@ -39,6 +39,8 @@ public final class StatusActivity extends ZpSettingsActivity {
     static final String ROUTE_BACKUP = "settings_backup";
     static final String ROUTE_DIAGNOSTICS = "diagnostics";
     static final String INTERNAL_RESTART = "internal.restart_zalo";
+    static final String INTERNAL_ROOT_ACCESS = "internal.root_access";
+    static final String INTERNAL_ZALO_APP_INFO = "internal.zalo_app_info";
     private static final String ARG_PAGE_TITLE = "settings.page_title";
 
     private static final int REQUEST_SETTINGS_EXPORT = 2001;
@@ -149,6 +151,15 @@ public final class StatusActivity extends ZpSettingsActivity {
                 .findFragmentById(R.id.zp_settings_content);
         if (fragment instanceof DashboardFragment) {
             ((DashboardFragment) fragment).setRestartEnabled(!inFlight);
+        }
+    }
+
+    @Override
+    protected void onRootAccessChanged(RootAccess.State state) {
+        Fragment fragment = getSupportFragmentManager()
+                .findFragmentById(R.id.zp_settings_content);
+        if (fragment instanceof DashboardFragment) {
+            ((DashboardFragment) fragment).refresh();
         }
     }
 
@@ -317,6 +328,10 @@ public final class StatusActivity extends ZpSettingsActivity {
     public static final class DashboardFragment extends ZpPreferenceFragment {
         private ZpRowPreference restart;
         private ZpRowPreference filter;
+        private ZpRowPreference runtimeEnvironment;
+        private ZpRowPreference rootAccess;
+        private ZpRowPreference appInfo;
+        private boolean restartAvailable = true;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -358,6 +373,26 @@ public final class StatusActivity extends ZpSettingsActivity {
                 return true;
             });
             section.add(restart);
+            rootAccess = PreferenceUi.action(context,
+                    getString(R.string.zp_root_access_title), null);
+            rootAccess.setKey(INTERNAL_ROOT_ACCESS);
+            rootAccess.setOnPreferenceClickListener(preference -> {
+                host().recheckRootAccess();
+                return true;
+            });
+            section.add(rootAccess);
+            appInfo = PreferenceUi.action(context,
+                    getString(R.string.zp_open_zalo_app_info),
+                    getString(R.string.zp_open_zalo_app_info_summary));
+            appInfo.setKey(INTERNAL_ZALO_APP_INFO);
+            appInfo.setOnPreferenceClickListener(preference -> {
+                host().openZaloAppInfo();
+                return true;
+            });
+            section.add(appInfo);
+            runtimeEnvironment = PreferenceUi.info(context,
+                    getString(R.string.zp_runtime_environment_title), null);
+            section.add(runtimeEnvironment);
         }
 
         private String ruleCountValue(int total) {
@@ -453,7 +488,24 @@ public final class StatusActivity extends ZpSettingsActivity {
             Context context = getContext();
             if (context == null || restart == null) return;
 
+            RootAccess.State rootState = RootAccess.cached(context);
+            restart.setEnabled(restartAvailable && rootState == RootAccess.State.GRANTED);
+            restart.setSummary(rootState == RootAccess.State.GRANTED
+                    ? null : getString(R.string.zp_restart_root_required_summary));
             restart.refreshStyle();
+            if (rootAccess != null) {
+                int rootSummary = rootState == RootAccess.State.GRANTED
+                        ? R.string.zp_root_access_granted
+                        : rootState == RootAccess.State.DENIED
+                        ? R.string.zp_root_access_denied
+                        : R.string.zp_root_access_absent;
+                rootAccess.value(getString(rootSummary));
+                rootAccess.refreshStyle();
+            }
+            if (runtimeEnvironment != null) {
+                runtimeEnvironment.value(runtimeEnvironmentSummary(context));
+                runtimeEnvironment.refreshStyle();
+            }
             if (filter != null) {
                 filter.value(ruleCountValue(NotificationRuleStore.load(context).total()));
                 filter.refreshStyle();
@@ -461,9 +513,36 @@ public final class StatusActivity extends ZpSettingsActivity {
         }
 
         private void setRestartEnabled(boolean enabled) {
+            restartAvailable = enabled;
             if (restart != null) {
-                restart.setEnabled(enabled);
+                restart.setEnabled(enabled
+                        && RootAccess.cached(requireContext()) == RootAccess.State.GRANTED);
             }
+        }
+
+        private String runtimeEnvironmentSummary(Context context) {
+            RuntimeEnvironment.Snapshot snapshot = RuntimeEnvironment.current(context);
+            if (!snapshot.reported) {
+                return getString(R.string.zp_runtime_environment_pending);
+            }
+            int frameworkRes = snapshot.framework == RuntimeEnvironment.Framework.LSPOSED
+                    ? R.string.zp_runtime_framework_lsposed
+                    : snapshot.framework == RuntimeEnvironment.Framework.LSPATCH
+                    ? R.string.zp_runtime_framework_lspatch
+                    : R.string.zp_runtime_framework_unknown;
+            return getString(R.string.zp_runtime_environment_summary,
+                    getString(frameworkRes), getString(resourceHooksStatusRes(
+                            snapshot.resourceHooks)));
+        }
+
+        private int resourceHooksStatusRes(RuntimeEnvironment.ResourceHooks status) {
+            if (status == RuntimeEnvironment.ResourceHooks.OBSERVED) {
+                return R.string.zp_capability_observed;
+            }
+            if (status == RuntimeEnvironment.ResourceHooks.UNAVAILABLE) {
+                return R.string.zp_capability_unavailable;
+            }
+            return R.string.zp_capability_pending;
         }
     }
 }

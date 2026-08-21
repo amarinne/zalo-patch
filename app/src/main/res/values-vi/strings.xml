@@ -13,6 +13,9 @@
     <string name="zp_restart_sent">Đã gửi lệnh khởi động lại</string>
     <string name="zp_restart_root_denied">Quyền root bị từ chối</string>
     <string name="zp_restart_failed">Không thể khởi động lại</string>
+    <string name="zp_open_zalo_app_info">Mở thông tin ứng dụng Zalo</string>
+    <string name="zp_open_zalo_app_info_summary">Buộc dừng Zalo thủ công, sau đó mở lại.</string>
+    <string name="zp_open_zalo_app_info_failed">Không thể mở thông tin ứng dụng Zalo</string>
     <string name="zp_section_status">Trạng thái</string>
     <string name="zp_section_interface">Giao diện Zalo</string>
     <string name="zp_section_ads_notifications">Quảng cáo và thông báo</string>

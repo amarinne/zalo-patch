@@ -5,6 +5,11 @@ import java.util.Collections;
 import java.util.List;
 
 public final class Tweaks {
+    public enum Requirement {
+        NONE,
+        ROOT,
+        RESOURCE_HOOKS
+    }
     /**
      * The only preference file the hooked Zalo process can read. It is opened world-readable and
      * mirrored to system properties for exactly that reason, so nothing private belongs in it.
@@ -155,15 +160,23 @@ public final class Tweaks {
         public final int summaryRes;
         public final boolean implemented;
         public final boolean defaultEnabled;
+        public final Requirement requirement;
 
         public Item(String section, String key, int titleRes, int summaryRes,
                     boolean implemented, boolean defaultEnabled) {
+            this(section, key, titleRes, summaryRes, implemented, defaultEnabled,
+                    Requirement.NONE);
+        }
+
+        public Item(String section, String key, int titleRes, int summaryRes,
+                    boolean implemented, boolean defaultEnabled, Requirement requirement) {
             this.section = section;
             this.key = key;
             this.titleRes = titleRes;
             this.summaryRes = summaryRes;
             this.implemented = implemented;
             this.defaultEnabled = defaultEnabled;
+            this.requirement = requirement == null ? Requirement.NONE : requirement;
         }
     }
 
@@ -221,7 +234,7 @@ public final class Tweaks {
                     true, false),
             new Item(SECTION_INBOX, KEY_HIDE_ZCLOUD_BANNER,
                     R.string.zp_tweak_hide_zcloud_banner, R.string.zp_tweak_hide_zcloud_banner_summary,
-                    true, false),
+                    true, false, Requirement.RESOURCE_HOOKS),
             new Item(SECTION_INBOX, KEY_FILTER_POPOVER_CATEGORIES,
                     R.string.zp_tweak_inbox_chip_bar, R.string.zp_tweak_inbox_chip_bar_summary,
                     true, false),

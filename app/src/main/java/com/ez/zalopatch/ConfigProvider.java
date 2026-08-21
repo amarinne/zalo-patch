@@ -231,6 +231,19 @@ public final class ConfigProvider extends ContentProvider {
             result.putBoolean("recorded", recorded);
             return result;
         }
+        if ("record_runtime_environment".equals(method)) {
+            if (!callerAllowed() || extras == null) return null;
+            boolean recorded = RuntimeEnvironment.record(getContext(),
+                    extras.getString("framework", "unknown"),
+                    extras.getString("resource_hooks_status",
+                            extras.getBoolean("resource_hooks_observed", false)
+                                    ? "observed" : "pending"),
+                    extras.getInt("module_version_code", -1),
+                    extras.getLong("zalo_version_code", -1L));
+            Bundle result = new Bundle();
+            result.putBoolean("recorded", recorded);
+            return result;
+        }
         if ("complete_runtime_discovery".equals(method)) {
             if (!callerAllowed()) return null;
             long versionCode;

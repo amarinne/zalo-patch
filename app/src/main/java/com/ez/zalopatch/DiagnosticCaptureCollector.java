@@ -18,8 +18,12 @@ final class DiagnosticCaptureCollector {
     }
 
     CapturedData collect(long startedAtWallMs) {
-        String rootStatus = checkRootAccess(runner);
-        if (!"granted".equals(rootStatus)) {
+        return collect(startedAtWallMs, RootAccess.probe(runner));
+    }
+
+    CapturedData collect(long startedAtWallMs, RootAccess.State rootState) {
+        String rootStatus = rootState.reportValue();
+        if (rootState != RootAccess.State.GRANTED) {
             return new CapturedData("metadata_only_root_denied", rootStatus, "", "", "",
                     java.util.Collections.singletonList("root_access"),
                     java.util.Collections.emptyMap());
@@ -83,12 +87,7 @@ final class DiagnosticCaptureCollector {
     }
 
     static String checkRootAccess(DiagnosticRootProcessRunner runner) {
-        DiagnosticRootProcessRunner.Result result = runner.run(
-                "id -u", DiagnosticReportContract.COMMAND_TIMEOUT_MS);
-        if (result.timedOut) return "error";
-        if (result.exitCode == 0 && "0".equals(result.output.trim())) return "granted";
-        if (result.exitCode < 0 && result.output.trim().isEmpty()) return "error";
-        return "denied";
+        return RootAccess.probe(runner).reportValue();
     }
 
     static String filterModuleLines(String output) {

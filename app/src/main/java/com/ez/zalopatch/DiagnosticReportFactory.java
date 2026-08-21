@@ -53,10 +53,14 @@ final class DiagnosticReportFactory {
         root.put("category", category);
         root.put("description", description);
         PackageSnapshot packages = packageSnapshot(context);
+        String rootStatus = capture == null
+                ? RootAccess.hasFreshCache(context)
+                ? RootAccess.cached(context).reportValue() : "not_checked"
+                : capture.data.rootAccessStatus;
         root.put("commonMetadata", commonMetadata(context, packages));
-        root.put("productMetadata", productMetadata(context, packages,
-                capture == null ? "not_checked" : capture.data.rootAccessStatus, capture));
-        root.put("capture", captureMetadata(capture, createdAt));
+        root.put("productMetadata", productMetadata(
+                context, packages, rootStatus, capture));
+        root.put("capture", captureMetadata(capture, createdAt, rootStatus));
         root.put("rawDiagnostics", rawDiagnostics(context, capture));
         String json = root.toString();
         if (!DiagnosticReportContract.validDraftJson(json)) {
@@ -125,6 +129,11 @@ final class DiagnosticReportFactory {
         product.put("debugLoggingEnabled", HookConfig.isDebugEnabled());
         product.put("traceLoggingEnabled", systemPropertyEnabled("debug.zalopatch.trace"));
         product.put("rootAccessStatus", rootStatus);
+        RuntimeEnvironment.Snapshot environment = RuntimeEnvironment.current(context);
+        product.put("runtimeFramework", environment.framework.value());
+        product.put("runtimeEnvironmentReported", environment.reported);
+        product.put("resourceHooksObserved", environment.resourceHooksObserved);
+        product.put("resourceHooksStatus", environment.resourceHooks.value());
         product.put("pendingSettingsChanges", SettingsChanges.pendingCount(context));
         product.put("customNotificationRuleCount", NotificationRuleStore.load(context).total());
 
@@ -332,7 +341,8 @@ final class DiagnosticReportFactory {
     }
 
     private static JSONObject captureMetadata(
-            DiagnosticCaptureManager.FinishedCapture capture, long finishedAtMs)
+            DiagnosticCaptureManager.FinishedCapture capture, long finishedAtMs,
+            String rootStatus)
             throws Exception {
         JSONObject metadata = new JSONObject();
         if (capture == null) {
@@ -340,7 +350,7 @@ final class DiagnosticReportFactory {
             metadata.put("startedAtUtc", JSONObject.NULL);
             metadata.put("finishedAtUtc", utc(finishedAtMs));
             metadata.put("previousDiagnosticLoggingEnabled", JSONObject.NULL);
-            metadata.put("rootAccessStatus", "not_checked");
+            metadata.put("rootAccessStatus", rootStatus);
             metadata.put("commandFailures", new JSONArray());
             metadata.put("truncationFlags", new JSONObject());
             return metadata;
@@ -349,7 +359,8 @@ final class DiagnosticReportFactory {
         metadata.put("startedAtUtc", utc(capture.session.startedAtWallMs));
         metadata.put("finishedAtUtc", utc(capture.finishedAtWallMs));
         metadata.put("previousDiagnosticLoggingEnabled",
-                capture.session.previousDebugLogging);
+                capture.session.debugLoggingManaged
+                        ? capture.session.previousDebugLogging : JSONObject.NULL);
         metadata.put("rootAccessStatus", capture.data.rootAccessStatus);
         JSONArray failures = new JSONArray();
         for (String failure : capture.data.commandFailures) failures.put(failure);

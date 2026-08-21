@@ -166,4 +166,19 @@ public final class DiagnosticReportContractTest {
         assertFalse(DiagnosticReportActivity.canUpload("R1-A", "R1-B"));
         assertTrue(DiagnosticReportActivity.canUpload("R1-A", "R1-A"));
     }
+
+    @Test
+    public void rootlessCaptureProducesExplicitMetadataOnlyEnvelope() {
+        DiagnosticCaptureCollector.CapturedData data =
+                new DiagnosticCaptureCollector(new DiagnosticRootProcessRunner())
+                        .collect(123L, RootAccess.State.ABSENT);
+
+        assertEquals("metadata_only_root_denied", data.outcome);
+        assertEquals("error", data.rootAccessStatus);
+        assertEquals(java.util.Collections.singletonList("root_access"),
+                data.commandFailures);
+        assertEquals("", data.logs);
+        assertEquals("", data.crashExcerpt);
+        assertEquals("", data.lsposedLines);
+    }
 }

@@ -23,20 +23,18 @@ final class DiagnosticCaptureManager {
         DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         DiagnosticDraftStore.clear(context);
         DiagnosticRootProcessRunner runner = new DiagnosticRootProcessRunner();
-        String rootStatus = DiagnosticCaptureCollector.checkRootAccess(runner);
-        if (!"granted".equals(rootStatus)) {
-            return StartResult.failure("denied".equals(rootStatus)
-                    ? StartFailure.ROOT_DENIED : StartFailure.ROOT_ERROR);
-        }
+        RootAccess.State rootState = RootAccess.getOrProbe(context);
+        boolean debugLoggingManaged = rootState == RootAccess.State.GRANTED;
         Session session = new Session(
                 DiagnosticReportContract.newReportId(), category, description,
                 System.currentTimeMillis(), SystemClock.elapsedRealtime(),
-                HookConfig.isDebugEnabled());
+                debugLoggingManaged && HookConfig.isDebugEnabled(), rootState,
+                debugLoggingManaged);
         if (!writeSession(context, session)) {
             return StartResult.failure(StartFailure.STATE_WRITE_FAILED);
         }
         scheduleTimeout(context, session.startedAtElapsedMs);
-        if (!setDebugLogging(runner, true)) {
+        if (debugLoggingManaged && !setDebugLogging(runner, true)) {
             if (setDebugLogging(runner, session.previousDebugLogging)) {
                 clearSession(context);
                 cancelTimeout(context);
@@ -48,7 +46,9 @@ final class DiagnosticCaptureManager {
                 && !SymbolSchema.active(context).valid
                 && !DiagnosticsState.requestRuntimeDiscovery(context)) {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
-            setDebugLogging(runner, session.previousDebugLogging);
+            if (session.debugLoggingManaged) {
+                setDebugLogging(runner, session.previousDebugLogging);
+            }
             clearSession(context);
             cancelTimeout(context);
             return StartResult.failure(StartFailure.STATE_WRITE_FAILED);
@@ -64,8 +64,10 @@ final class DiagnosticCaptureManager {
         }
         DiagnosticRootProcessRunner runner = new DiagnosticRootProcessRunner();
         DiagnosticCaptureCollector.CapturedData data =
-                new DiagnosticCaptureCollector(runner).collect(session.startedAtWallMs);
-        if (!setDebugLogging(runner, session.previousDebugLogging)) {
+                new DiagnosticCaptureCollector(runner).collect(
+                        session.startedAtWallMs, session.rootState);
+        if (session.debugLoggingManaged
+                && !setDebugLogging(runner, session.previousDebugLogging)) {
             return null;
         }
         if ("compatibility".equals(session.category)
@@ -85,7 +87,8 @@ final class DiagnosticCaptureManager {
             return true;
         }
         boolean previous = prefs.getBoolean(KEY_PREVIOUS_DEBUG, false);
-        if (!setDebugLogging(new DiagnosticRootProcessRunner(), previous)) return false;
+        if (debugManaged(prefs)
+                && !setDebugLogging(new DiagnosticRootProcessRunner(), previous)) return false;
         if ("compatibility".equals(prefs.getString(KEY_CATEGORY, ""))) {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         }
@@ -101,7 +104,8 @@ final class DiagnosticCaptureManager {
         Session session = readSession(context);
         if (session != null && !expired(session, SystemClock.elapsedRealtime())) return false;
         boolean previous = prefs.getBoolean(KEY_PREVIOUS_DEBUG, false);
-        if (!setDebugLogging(new DiagnosticRootProcessRunner(), previous)) return false;
+        if (debugManaged(prefs)
+                && !setDebugLogging(new DiagnosticRootProcessRunner(), previous)) return false;
         if ("compatibility".equals(prefs.getString(KEY_CATEGORY, ""))) {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         }
@@ -155,10 +159,15 @@ final class DiagnosticCaptureManager {
                 || !DiagnosticReportContract.validDescription(description)) {
             return null;
         }
+        boolean managed = debugManaged(prefs);
         return new Session(reportId, category, description,
                 prefs.getLong(KEY_STARTED_WALL, -1L),
                 prefs.getLong(KEY_STARTED_ELAPSED, -1L),
-                prefs.getBoolean(KEY_PREVIOUS_DEBUG, false));
+                prefs.getBoolean(KEY_PREVIOUS_DEBUG, false),
+                prefs.contains(KEY_ROOT_STATE)
+                        ? parseRootState(prefs.getString(KEY_ROOT_STATE, ""))
+                        : managed ? RootAccess.State.GRANTED : RootAccess.State.ABSENT,
+                managed);
     }
 
     private static boolean writeSession(Context context, Session session) {
@@ -170,6 +179,8 @@ final class DiagnosticCaptureManager {
                 .putLong(KEY_STARTED_WALL, session.startedAtWallMs)
                 .putLong(KEY_STARTED_ELAPSED, session.startedAtElapsedMs)
                 .putBoolean(KEY_PREVIOUS_DEBUG, session.previousDebugLogging)
+                .putString(KEY_ROOT_STATE, session.rootState.name())
+                .putBoolean(KEY_DEBUG_MANAGED, session.debugLoggingManaged)
                 .commit();
     }
 
@@ -235,15 +246,20 @@ final class DiagnosticCaptureManager {
         final long startedAtWallMs;
         final long startedAtElapsedMs;
         final boolean previousDebugLogging;
+        final RootAccess.State rootState;
+        final boolean debugLoggingManaged;
 
         Session(String reportId, String category, String description, long startedAtWallMs,
-                long startedAtElapsedMs, boolean previousDebugLogging) {
+                long startedAtElapsedMs, boolean previousDebugLogging,
+                RootAccess.State rootState, boolean debugLoggingManaged) {
             this.reportId = reportId;
             this.category = category;
             this.description = description;
             this.startedAtWallMs = startedAtWallMs;
             this.startedAtElapsedMs = startedAtElapsedMs;
             this.previousDebugLogging = previousDebugLogging;
+            this.rootState = rootState == null ? RootAccess.State.ABSENT : rootState;
+            this.debugLoggingManaged = debugLoggingManaged;
         }
     }
 
@@ -267,4 +283,20 @@ final class DiagnosticCaptureManager {
     private static final String KEY_STARTED_WALL = "started_wall";
     private static final String KEY_STARTED_ELAPSED = "started_elapsed";
     private static final String KEY_PREVIOUS_DEBUG = "previous_debug";
+    private static final String KEY_ROOT_STATE = "root_state";
+    private static final String KEY_DEBUG_MANAGED = "debug_managed";
+
+    private static RootAccess.State parseRootState(String value) {
+        try {
+            return RootAccess.State.valueOf(value);
+        } catch (IllegalArgumentException ignored) {
+            return RootAccess.State.ABSENT;
+        }
+    }
+
+    private static boolean debugManaged(SharedPreferences prefs) {
+        // Sessions created before capability-aware capture always required and managed root.
+        return !prefs.contains(KEY_DEBUG_MANAGED)
+                || prefs.getBoolean(KEY_DEBUG_MANAGED, false);
+    }
 }

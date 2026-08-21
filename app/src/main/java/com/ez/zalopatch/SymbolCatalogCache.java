@@ -14,16 +14,15 @@ final class SymbolCatalogCache {
     private SymbolCatalogCache() {
     }
 
-    static SymbolCatalogContract.Entry load(Context context, long versionCode,
-                                            String baseHash, String signerHash) {
-        if (context == null || versionCode <= 0L || baseHash.isEmpty() || signerHash.isEmpty()) {
+    static SymbolCatalogContract.Entry load(Context context, long versionCode) {
+        if (context == null || versionCode <= 0L) {
             return null;
         }
         try {
             AtomicFile file = atomicFile(context);
             byte[] envelope = readBounded(file.openRead(), SymbolCatalogContract.MAX_ENTRY_BYTES);
             return SymbolCatalogContract.verify(envelope, publicKey(context), versionCode,
-                    baseHash, signerHash, BuildConfig.VERSION_CODE);
+                    BuildConfig.VERSION_CODE);
         } catch (Exception ignored) {
             return null;
         }
@@ -33,7 +32,7 @@ final class SymbolCatalogCache {
         if (context == null || identity == null) return false;
         try {
             SymbolCatalogContract.verify(envelope, publicKey(context), identity.versionCode,
-                    identity.baseApkSha256, identity.signerSha256, BuildConfig.VERSION_CODE);
+                    BuildConfig.VERSION_CODE);
             AtomicFile file = atomicFile(context);
             FileOutputStream output = file.startWrite();
             try {
