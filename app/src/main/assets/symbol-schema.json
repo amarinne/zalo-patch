@@ -1,11 +1,11 @@
 {
   "bundle_version": 1,
-  "bundle_revision": 3,
+  "bundle_revision": 4,
   "zalo_package": "com.zing.zalo",
   "profiles": [
     {
       "schema_version": 1,
-      "schema_revision": 15,
+      "schema_revision": 18,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260602901,
@@ -150,6 +150,12 @@
         }
       },
       "symbols": {
+        "webview": {
+          "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
+          "companion_class": "com.zing.zalo.ui.zviews.ss",
+          "open_dispatch_method": "j",
+          "redirect_transform_method": "A8"
+        },
         "me": {
           "tab_me_class": "com.zing.zalo.ui.maintab.me.TabMeView",
           "adapter_class": "ge1.k",
@@ -393,7 +399,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 16,
+      "schema_revision": 19,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260701901,
@@ -538,6 +544,12 @@
         }
       },
       "symbols": {
+        "webview": {
+          "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
+          "companion_class": "com.zing.zalo.ui.zviews.xs",
+          "open_dispatch_method": "j",
+          "redirect_transform_method": "z8"
+        },
         "me": {
           "tab_me_class": "com.zing.zalo.ui.maintab.me.TabMeView",
           "adapter_class": "pe1.k",
@@ -750,7 +762,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 17,
+      "schema_revision": 20,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260801903,
@@ -895,6 +907,12 @@
         }
       },
       "symbols": {
+        "webview": {
+          "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
+          "companion_class": "com.zing.zalo.ui.zviews.xs",
+          "open_dispatch_method": "j",
+          "redirect_transform_method": "z8"
+        },
         "me": {
           "tab_me_class": "com.zing.zalo.ui.maintab.me.TabMeView",
           "adapter_class": "lf1.k",

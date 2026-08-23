@@ -138,6 +138,80 @@ final class CallRecordingTranscoder {
         }
     }
 
+    /**
+     * Rebuilds the RIFF and {@code data} chunk length fields from the file's real
+     * size and re-validates.
+     *
+     * <p>Some native ZRTC writers stream PCM samples into the WAV but never
+     * back-patch the placeholder length fields when the recording stops, so the
+     * finished file fails {@link #isPcmWave} even though it holds valid audio.
+     * When the file already validates, or has no recoverable {@code data} chunk,
+     * this leaves it untouched.
+     */
+    static boolean repairHeader(File file) {
+        if (file == null || !file.isFile()) {
+            return false;
+        }
+        if (isPcmWave(file)) {
+            return true;
+        }
+        try (RandomAccessFile input = new RandomAccessFile(file, "rw")) {
+            long fileLength = input.length();
+            if (fileLength < 44L) {
+                return false;
+            }
+            if (!"RIFF".equals(readFourCc(input))) {
+                return false;
+            }
+            readUnsignedInt(input);
+            if (!"WAVE".equals(readFourCc(input))) {
+                return false;
+            }
+            boolean pcm16 = false;
+            long dataLengthField = -1L;
+            long dataContent = -1L;
+            while (input.getFilePointer() + 8L <= fileLength) {
+                String chunk = readFourCc(input);
+                long lengthFieldPos = input.getFilePointer();
+                long length = readUnsignedInt(input);
+                long content = input.getFilePointer();
+                if ("data".equals(chunk)) {
+                    dataLengthField = lengthFieldPos;
+                    dataContent = content;
+                    break;
+                }
+                if ("fmt ".equals(chunk) && length >= 16L) {
+                    int format = readUnsignedShort(input);
+                    int channels = readUnsignedShort(input);
+                    readUnsignedInt(input);
+                    readUnsignedInt(input);
+                    readUnsignedShort(input);
+                    int bitsPerSample = readUnsignedShort(input);
+                    pcm16 = format == 1 && bitsPerSample == 16
+                            && channels >= 1 && channels <= 2;
+                }
+                if (content + length > fileLength) {
+                    return false;
+                }
+                input.seek(content + length + (length & 1L));
+            }
+            if (!pcm16 || dataContent < 0L || dataContent >= fileLength) {
+                return false;
+            }
+            long realDataLength = fileLength - dataContent;
+            if (realDataLength <= 0L) {
+                return false;
+            }
+            input.seek(dataLengthField);
+            writeUnsignedInt(input, realDataLength);
+            input.seek(4L);
+            writeUnsignedInt(input, fileLength - 8L);
+        } catch (IOException ignored) {
+            return false;
+        }
+        return isPcmWave(file);
+    }
+
     private static int read(RandomAccessFile input, ByteBuffer buffer, int requested)
             throws IOException {
         byte[] bytes = new byte[requested];
@@ -213,6 +287,13 @@ final class CallRecordingTranscoder {
         byte[] bytes = new byte[4];
         input.readFully(bytes);
         return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xffffffffL;
+    }
+
+    private static void writeUnsignedInt(RandomAccessFile output, long value)
+            throws IOException {
+        byte[] bytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt((int) (value & 0xffffffffL)).array();
+        output.write(bytes);
     }
 
     private static final class WavInfo {

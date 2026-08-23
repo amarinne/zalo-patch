@@ -466,7 +466,10 @@ public final class CallRecordingFeature extends Feature {
                 return false;
             }
         }
-        return false;
+        // The native ZRTC writer never back-patched the RIFF/data length fields,
+        // so the stream never validates as a finished WAV. The file size has
+        // stopped changing by now; rebuild the header from it and re-check.
+        return CallRecordingStore.repairNativeImport(file);
     }
 
     private static boolean enqueueImport(
@@ -537,7 +540,8 @@ public final class CallRecordingFeature extends Feature {
             return;
         }
         for (File file : pending) {
-            if (CallRecordingStore.isNativeImportReady(file)) {
+            if (CallRecordingStore.isNativeImportReady(file)
+                    || CallRecordingStore.repairNativeImport(file)) {
                 enqueueImport(application, file, file.getName(),
                         "Zalo contact", "", "startup_recovery");
             } else {

@@ -111,6 +111,8 @@
     <string name="zp_tweak_oa_chip_summary">Shows Official Account conversations.</string>
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
+    <string name="zp_tweak_open_links_externally">Open links in system browser</string>
+    <string name="zp_tweak_open_links_externally_summary">Tapped chat and feed links open in your default browser or app, skipping Zalo’s in-app browser and its redirect server. Zalo settings, login, and mini-app pages are unaffected.</string>
     <string name="zp_tweak_block_seen_status">Block seen status</string>
     <string name="zp_tweak_block_seen_status_summary">Hides your read receipts while preserving delivered status. You still see other people’s receipts.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
@@ -146,6 +148,7 @@
     <string name="zp_group_in_app_ads">In-app ads</string>
     <string name="zp_group_me_services">Me screen services</string>
     <string name="zp_group_message_rendering">Message rendering</string>
+    <string name="zp_group_external_links">External links</string>
     <string name="zp_group_status_privacy">Status privacy</string>
     <string name="zp_group_call_recording">Call recording</string>
     <string name="zp_group_backup_schedule">Scheduled message backup</string>

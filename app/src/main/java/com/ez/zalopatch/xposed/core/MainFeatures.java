@@ -21,6 +21,7 @@ import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
 import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
 import com.ez.zalopatch.xposed.features.SymbolSchemaHealthFeature;
 import com.ez.zalopatch.xposed.features.TelemetryFeature;
+import com.ez.zalopatch.xposed.features.WebLinkExternalizeFeature;
 import com.ez.zalopatch.xposed.features.ZinstantFeature;
 
 import java.util.ArrayList;
@@ -91,6 +92,7 @@ public final class MainFeatures {
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
             addStatusPrivacy(features, classLoader, preflight);
+            addWebLinkExternalize(features, classLoader, preflight);
             if (mainProcess) {
                 features.add(new BackupPushFeature(classLoader,
                         preflight.backupScheduled,
@@ -133,6 +135,17 @@ public final class MainFeatures {
         } else {
             SelfCheckRegistry.markDisabled(Tweaks.KEY_BLOCK_TYPING_STATUS, "typing indicator send");
         }
+    }
+
+    private static void addWebLinkExternalize(List<Feature> features, ClassLoader classLoader,
+                                              SymbolPreflight.Result preflight) {
+        boolean enabled = HookConfig.isEnabled(Tweaks.KEY_OPEN_LINKS_EXTERNALLY);
+        if (preflight.webviewExternalize || !enabled) {
+            features.add(new WebLinkExternalizeFeature(classLoader));
+            return;
+        }
+        SelfCheckRegistry.markStale(Tweaks.KEY_OPEN_LINKS_EXTERNALLY,
+                "structural preflight", preflight.reason(preflight.webviewErrors));
     }
 
     /**

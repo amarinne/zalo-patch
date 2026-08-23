@@ -97,6 +97,15 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_REACTION_ROW:
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
                 break;
+            case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
+                path = schema.string("symbols.webview.companion_class", "<webview dispatcher>")
+                        + "#" + schema.string("symbols.webview.open_dispatch_method", "<open dispatch>")
+                        + "() + "
+                        + schema.string("symbols.webview.zalo_web_view_class", "<webview>")
+                        + "#" + schema.string(
+                                "symbols.webview.redirect_transform_method", "<redirect>")
+                        + "(Uri)";
+                break;
             case Tweaks.KEY_BLOCK_SEEN_STATUS:
                 path = schema.string("symbols.chat.send_seen_manager_class", "<seen manager>")
                         + "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>")
@@ -250,6 +259,14 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_FEED_ADS:
                 return Collections.singletonList("#" + schema.string(
                         "symbols.zinstant.feed_bind_method", "<bind>") + "()");
+            case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
+                return Arrays.asList(
+                        schema.string("symbols.webview.companion_class", "<webview dispatcher>"),
+                        "#" + schema.string("symbols.webview.open_dispatch_method",
+                                "<open dispatch>") + "()",
+                        schema.string("symbols.webview.zalo_web_view_class", "<webview>"),
+                        "#" + schema.string("symbols.webview.redirect_transform_method",
+                                "<redirect>") + "(Uri)");
             case Tweaks.KEY_BLOCK_SEEN_STATUS:
                 return Arrays.asList(
                         schema.string("symbols.chat.send_seen_manager_class", "<seen manager>"),

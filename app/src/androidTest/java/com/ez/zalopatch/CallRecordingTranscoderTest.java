@@ -90,6 +90,30 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         }
     }
 
+    public void testNativeWaveHeaderRepairRestoresImportReadiness() throws Exception {
+        File file = new File(getInstrumentation().getTargetContext().getCacheDir(),
+                "call-recording-unfinalized.part");
+        file.delete();
+        try {
+            writeSilenceWav(file, 16_000, 1, 500);
+            try (RandomAccessFile output = new RandomAccessFile(file, "rw")) {
+                output.seek(4L);
+                writeLittleEndianInt(output, 0);
+                output.seek(40L);
+                writeLittleEndianInt(output, 0);
+            }
+            assertFalse(CallRecordingStore.isNativeImportReady(file));
+            assertTrue(CallRecordingStore.repairNativeImport(file));
+            assertTrue(CallRecordingStore.isNativeImportReady(file));
+            try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+                assertEquals(file.length() - 8L, readLittleEndianInt(input, 4L));
+                assertEquals(file.length() - 44L, readLittleEndianInt(input, 40L));
+            }
+        } finally {
+            file.delete();
+        }
+    }
+
     public void testIdentityAttestationCapturesSourceUid() throws Exception {
         assertEquals(Process.myUid(),
                 CallRecordingImportProtocol.attest(CallRecordingImportProtocol.identity()));
@@ -157,5 +181,22 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
     private static void writeShort(FileOutputStream output, int value) throws IOException {
         output.write(value & 0xff);
         output.write((value >>> 8) & 0xff);
+    }
+
+    private static void writeLittleEndianInt(RandomAccessFile output, int value)
+            throws IOException {
+        output.write(value & 0xff);
+        output.write((value >>> 8) & 0xff);
+        output.write((value >>> 16) & 0xff);
+        output.write((value >>> 24) & 0xff);
+    }
+
+    private static long readLittleEndianInt(RandomAccessFile input, long offset)
+            throws IOException {
+        input.seek(offset);
+        return (input.readUnsignedByte())
+                | ((long) input.readUnsignedByte() << 8)
+                | ((long) input.readUnsignedByte() << 16)
+                | ((long) input.readUnsignedByte() << 24);
     }
 }

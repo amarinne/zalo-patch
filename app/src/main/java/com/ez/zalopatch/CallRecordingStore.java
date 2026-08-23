@@ -171,6 +171,10 @@ public final class CallRecordingStore {
         return file != null && file.isFile() && CallRecordingTranscoder.isPcmWave(file);
     }
 
+    public static boolean repairNativeImport(File file) {
+        return file != null && file.isFile() && CallRecordingTranscoder.repairHeader(file);
+    }
+
     private static void queue(
             Context context, File processing, Metadata metadata, boolean recovery) {
         String key = processing.getAbsolutePath();

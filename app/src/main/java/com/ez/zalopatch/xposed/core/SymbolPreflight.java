@@ -30,6 +30,8 @@ final class SymbolPreflight {
                 schema, classLoader, result.statusPrivacyErrors);
         result.backupScheduled = checkBackupScheduled(
                 schema, classLoader, result.backupScheduledErrors);
+        result.webviewExternalize = checkWebviewExternalize(
+                schema, classLoader, result.webviewErrors);
         return result;
     }
 
@@ -210,6 +212,56 @@ final class SymbolPreflight {
         return errors.isEmpty();
     }
 
+    /**
+     * The webview anchors have two different owners: the open dispatch lives on the extracted
+     * Kotlin companion sibling, the redirect transform on {@code ZaloWebView} itself. Both
+     * re-obfuscate per release; the first and last dispatch parameters are interfaces whose names
+     * rotate, so only their positions are pinned and the middle four types carry the shape.
+     */
+    private static boolean checkWebviewExternalize(SymbolSchema.Active schema, ClassLoader loader,
+                                                   List<String> errors) {
+        Class<?> webView = load(schema.string("symbols.webview.zalo_web_view_class", ""),
+                loader, errors);
+        Class<?> companion = load(schema.string("symbols.webview.companion_class", ""),
+                loader, errors);
+        if (webView != null) {
+            String transform = schema.string("symbols.webview.redirect_transform_method", "");
+            try {
+                Method method = webView.getDeclaredMethod(transform, android.net.Uri.class);
+                if (method.getReturnType() != android.net.Uri.class
+                        || !Modifier.isStatic(method.getModifiers())) {
+                    errors.add(webView.getName() + "#" + transform + " shape changed");
+                }
+            } catch (Throwable throwable) {
+                errors.add(webView.getName() + "#" + transform + " signature changed");
+            }
+        }
+        if (companion != null) {
+            String dispatch = schema.string("symbols.webview.open_dispatch_method", "");
+            int matches = 0;
+            for (Method method : companion.getDeclaredMethods()) {
+                Class<?>[] parameters = method.getParameterTypes();
+                if (dispatch.equals(method.getName())
+                        && method.getReturnType() == Void.TYPE
+                        && Modifier.isStatic(method.getModifiers())
+                        && parameters.length == 6
+                        && parameters[0].isInterface()
+                        && parameters[1] == String.class
+                        && parameters[2] == android.os.Bundle.class
+                        && parameters[3] == Boolean.TYPE
+                        && parameters[4] == Integer.TYPE
+                        && parameters[5].isInterface()) {
+                    matches++;
+                }
+            }
+            if (matches != 1) {
+                errors.add(companion.getName() + "#" + dispatch
+                        + " expected one matching method, found " + matches);
+            }
+        }
+        return errors.isEmpty();
+    }
+
     private static Class<?> load(String name, ClassLoader loader, List<String> errors) {
         if (name.isEmpty()) {
             errors.add("class name missing");
@@ -296,6 +348,7 @@ final class SymbolPreflight {
         boolean zinstantFeed;
         boolean statusPrivacy;
         boolean backupScheduled;
+        boolean webviewExternalize;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
@@ -304,6 +357,7 @@ final class SymbolPreflight {
         final List<String> zinstantFeedErrors = new ArrayList<>();
         final List<String> statusPrivacyErrors = new ArrayList<>();
         final List<String> backupScheduledErrors = new ArrayList<>();
+        final List<String> webviewErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -320,11 +374,12 @@ final class SymbolPreflight {
             if (zinstantFeed) count++;
             if (statusPrivacy) count++;
             if (backupScheduled) count++;
+            if (webviewExternalize) count++;
             return count;
         }
 
         int total() {
-            return 8;
+            return 9;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -338,6 +393,7 @@ final class SymbolPreflight {
             append(value, "zinstant_feed", zinstantFeed);
             append(value, "status_privacy", statusPrivacy);
             append(value, "backup_scheduled", backupScheduled);
+            append(value, "webview_externalize", webviewExternalize);
             return value.toString();
         }
 
