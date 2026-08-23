@@ -1,6 +1,7 @@
 package com.ez.zalopatch;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 
 import androidx.annotation.NonNull;
 import androidx.preference.ListPreference;
@@ -16,6 +17,13 @@ public final class ZpListPreference extends ListPreference implements ZpStyledPr
         setIconSpaceReserved(false);
         setPersistent(false);
         style.setChevron(true);
+    }
+
+    /** Opt-in leading icon. Icon space is reserved only while a glyph is set. */
+    @Override
+    public void setIcon(Drawable icon) {
+        super.setIcon(icon);
+        setIconSpaceReserved(icon != null);
     }
 
     @Override

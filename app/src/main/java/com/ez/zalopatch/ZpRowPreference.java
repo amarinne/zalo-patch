@@ -1,6 +1,7 @@
 package com.ez.zalopatch;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 
 import androidx.annotation.ColorRes;
 import androidx.annotation.NonNull;
@@ -27,6 +28,13 @@ public class ZpRowPreference extends Preference implements ZpStyledPreference {
         setLayoutResource(layoutResource);
         setIconSpaceReserved(false);
         setPersistent(false);
+    }
+
+    /** Opt-in leading icon. Icon space is reserved only while a glyph is set. */
+    @Override
+    public void setIcon(Drawable icon) {
+        super.setIcon(icon);
+        setIconSpaceReserved(icon != null);
     }
 
     @Override

@@ -43,6 +43,7 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         FrameLayout settingsStack = findViewById(R.id.zp_settings_stack);
         restartBlocker = new View(this);
         restartBlocker.setBackgroundColor(Color.argb(51, 0, 0, 0));
+        restartBlocker.setAlpha(0f);
         restartBlocker.setClickable(true);
         restartBlocker.setFocusable(true);
         restartBlocker.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -99,11 +100,14 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
             if (animate) {
                 applyBar.setAlpha(0f);
                 applyBar.setTranslationY(applyBar.getHeight() > 0 ? applyBar.getHeight() : 80f);
-                applyBar.animate().alpha(1f).translationY(0f).setDuration(180L).start();
+                applyBar.animate().alpha(1f).translationY(0f)
+                        .setDuration(UiMotion.SHORT_MS)
+                        .setInterpolator(UiMotion.FAST_OUT_SLOW_IN).start();
             }
         } else if (animate) {
             applyBar.animate().alpha(0f).translationY(applyBar.getHeight())
-                    .setDuration(160L)
+                    .setDuration(UiMotion.SHORT_MS)
+                    .setInterpolator(UiMotion.FAST_OUT_SLOW_IN)
                     .withEndAction(() -> {
                         applyBar.setVisibility(View.GONE);
                         applyBar.setAlpha(1f);
@@ -156,9 +160,22 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         settingsContent.setImportantForAccessibility(visible
                 ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 : View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-        restartBlocker.setVisibility(visible ? View.VISIBLE : View.GONE);
+        // Fade the scrim instead of popping it. The end action refuses to hide the view when a
+        // restart started again mid-fade, so a quick cancel/restart cycle cannot blank it.
         if (visible) {
+            restartBlocker.setVisibility(View.VISIBLE);
+            restartBlocker.animate().alpha(1f).setDuration(UiMotion.SHORT_MS)
+                    .setInterpolator(UiMotion.FAST_OUT_SLOW_IN).start();
             restartBlocker.announceForAccessibility(restartBlocker.getContentDescription());
+        } else {
+            restartBlocker.animate().alpha(0f).setDuration(UiMotion.SHORT_MS)
+                    .setInterpolator(UiMotion.FAST_OUT_SLOW_IN)
+                    .withEndAction(() -> {
+                        if (!restartInFlight) {
+                            restartBlocker.setVisibility(View.GONE);
+                        }
+                    })
+                    .start();
         }
     }
 

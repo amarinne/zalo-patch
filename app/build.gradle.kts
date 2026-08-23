@@ -101,8 +101,8 @@ android {
         applicationId = "com.ez.zalopatch"
         minSdk = 24
         targetSdk = 34
-        versionCode = 168
-        versionName = "0.4.164-call-recording-wav-header-fix+B168-20260823T0646Z"
+        versionCode = 171
+        versionName = "0.4.167-call-recording-synchronous-stop+B171-20260823T1738Z"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")

@@ -93,6 +93,37 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
         }
     }
 
+    public void testRuntimeStatusTracePersistsSanitizedCallLifecycle() throws Exception {
+        String previous = RuntimeStatusTraceStore.raw(getContext());
+        try {
+            RuntimeStatusTraceStore.restore(getContext(), "[]");
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put("status", "active");
+            values.put("target", "PeerJNI#zrtc_peer_start_record_audio");
+            values.put("detail", "start direction=incoming trigger=onCallAudioState "
+                    + "media=audio_only display_name=Private phone_number=0123456789");
+            values.put("updated_at", 123L);
+            values.put("artifact_generation", "artifact");
+            values.put("run_id", "run");
+            RuntimeStatusTraceStore.record(getContext(), "calls.auto_record.native", values);
+            RuntimeStatusTraceStore.record(getContext(), "calls.auto_record.native", values);
+
+            java.util.List<JSONObject> events = RuntimeStatusTraceStore.load(getContext());
+            assertEquals(2, events.size());
+            JSONObject event = events.get(0);
+            assertEquals("calls.auto_record.native", event.getString("feature"));
+            assertEquals("direction=incoming trigger=onCallAudioState media=audio_only",
+                    event.getString("detail"));
+            String encoded = events.toString().toLowerCase(java.util.Locale.US);
+            assertFalse(encoded.contains("private"));
+            assertFalse(encoded.contains("0123456789"));
+            assertFalse(encoded.contains("display_name"));
+            assertFalse(encoded.contains("phone_number"));
+        } finally {
+            RuntimeStatusTraceStore.restore(getContext(), previous);
+        }
+    }
+
     public void testRuntimeDiscoveryEvidenceStorePersistsStructuredMetadata() {
         RemapEvidenceStore.clear(getContext());
         try {

@@ -25,7 +25,6 @@ public final class NotificationFilterActivity {
 
         private void buildScreen() {
             Context context = requireContext();
-            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(context);
             NotificationHistoryStore history = new NotificationHistoryStore(context);
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
             setPreferenceScreen(screen);
@@ -46,8 +45,9 @@ public final class NotificationFilterActivity {
             controlSection.addDependent(retention, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY);
             historyPage = PreferenceUi.nav(context,
                     getString(R.string.zp_notification_history_title));
+            historyPage.setIcon(R.drawable.ic_zp_archive);
             historyPage.setKey("notifications.history_page");
-            historyPage.value(getString(R.string.zp_stored_count, history.count()));
+            historyPage.value(getString(R.string.zp_loading));
             historyPage.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).openPage(
                         NotificationHistoryActivity.HistoryFragment.forBucket(null),
@@ -59,10 +59,10 @@ public final class NotificationFilterActivity {
             PreferenceCategory lists = PreferenceUi.category(screen,
                     getString(R.string.zp_filter_custom_lists));
             ZpSection listSection = ZpSection.in(lists);
-            addList(listSection, rules, NotificationRuleStore.Type.KEYWORD_BLOCKLIST);
-            addList(listSection, rules, NotificationRuleStore.Type.KEYWORD_EXCEPTIONS);
-            addList(listSection, rules, NotificationRuleStore.Type.ACCOUNT_BLOCKLIST);
-            addList(listSection, rules, NotificationRuleStore.Type.ACCOUNT_EXCEPTIONS);
+            addList(listSection, NotificationRuleStore.Type.KEYWORD_BLOCKLIST);
+            addList(listSection, NotificationRuleStore.Type.KEYWORD_EXCEPTIONS);
+            addList(listSection, NotificationRuleStore.Type.ACCOUNT_BLOCKLIST);
+            addList(listSection, NotificationRuleStore.Type.ACCOUNT_EXCEPTIONS);
 
             PreferenceCategory builtIn = PreferenceUi.category(screen,
                     getString(R.string.zp_filter_built_in));
@@ -76,8 +76,8 @@ public final class NotificationFilterActivity {
             ZpSection reviewSection = ZpSection.in(review);
             suppressed = PreferenceUi.nav(context,
                     getString(R.string.zp_filter_suppressed_title));
-            int suppressedCount = history.count(NotificationHistoryStore.Bucket.SUPPRESSED);
-            suppressed.value(getString(R.string.zp_stored_count, suppressedCount));
+            suppressed.setIcon(R.drawable.ic_zp_bell_minus);
+            suppressed.value(getString(R.string.zp_loading));
             suppressed.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).openPage(
                         NotificationHistoryActivity.HistoryFragment.forBucket(
@@ -89,6 +89,7 @@ public final class NotificationFilterActivity {
 
             screen.addPreference(PreferenceUi.footer(context,
                     getString(R.string.zp_filter_footer), ""));
+            refreshSnapshotAsync();
         }
 
         @Override
@@ -97,29 +98,57 @@ public final class NotificationFilterActivity {
             if (getPreferenceScreen() == null) {
                 return;
             }
-            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(requireContext());
-            for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
-                ZpRowPreference row = listRows.get(type);
-                if (row != null) {
-                    int count = rules.list(type).size();
-                    row.value(count == 1
-                            ? getString(R.string.zp_filter_item_count_one)
-                            : getString(R.string.zp_filter_item_count, count));
-                    row.refreshStyle();
-                }
-            }
-            if (suppressed != null) {
-                NotificationHistoryStore history = new NotificationHistoryStore(requireContext());
-                int count = history.count(NotificationHistoryStore.Bucket.SUPPRESSED);
-                suppressed.value(getString(R.string.zp_stored_count, count));
-                suppressed.refreshStyle();
-                historyPage.value(getString(R.string.zp_stored_count, history.count()));
-                historyPage.refreshStyle();
-            }
+            refreshSnapshotAsync();
             for (java.util.Map.Entry<String, ZpSwitchPreference> entry : toggles.entrySet()) {
                 entry.getValue().chips(notificationTrackingChips(requireContext(), entry.getKey()));
                 entry.getValue().refreshStyle();
             }
+        }
+
+        /**
+         * Counts come from SQLite and a rules JSON parse; load them off the main thread in one
+         * snapshot (same idiom as NotificationHistoryActivity.refreshAsync) and post the values
+         * back to the rows.
+         */
+        private void refreshSnapshotAsync() {
+            if (!isAdded()) {
+                return;
+            }
+            android.content.Context appContext =
+                    requireContext().getApplicationContext();
+            new Thread(() -> {
+                NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(appContext);
+                int[] listCounts = new int[NotificationRuleStore.Type.values().length];
+                for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+                    listCounts[type.ordinal()] = rules.list(type).size();
+                }
+                NotificationHistoryStore history = new NotificationHistoryStore(appContext);
+                int totalHistory = history.count();
+                int suppressedCount = history.count(NotificationHistoryStore.Bucket.SUPPRESSED);
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    if (!isAdded()) {
+                        return;
+                    }
+                    for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+                        ZpRowPreference row = listRows.get(type);
+                        if (row != null) {
+                            int count = listCounts[type.ordinal()];
+                            row.value(count == 1
+                                    ? getString(R.string.zp_filter_item_count_one)
+                                    : getString(R.string.zp_filter_item_count, count));
+                            row.refreshStyle();
+                        }
+                    }
+                    if (suppressed != null) {
+                        suppressed.value(getString(R.string.zp_stored_count, suppressedCount));
+                        suppressed.refreshStyle();
+                    }
+                    if (historyPage != null) {
+                        historyPage.value(getString(R.string.zp_stored_count, totalHistory));
+                        historyPage.refreshStyle();
+                    }
+                });
+            }, "notification-filter-snapshot").start();
         }
 
         private ZpSwitchPreference toggle(
@@ -177,6 +206,7 @@ public final class NotificationFilterActivity {
             ZpListPreference retention = new ZpListPreference(context);
             retention.setKey(Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION);
             retention.setTitle(R.string.zp_history_retention_title);
+            retention.setIcon(R.drawable.ic_zp_clock_fading);
             retention.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
             retention.setEntries(R.array.zp_history_retention_entries);
             retention.setEntryValues(R.array.zp_history_retention_values);
@@ -191,15 +221,25 @@ public final class NotificationFilterActivity {
             return retention;
         }
 
-        private void addList(
-                ZpSection section,
-                NotificationRuleStore.RuleSet rules,
-                NotificationRuleStore.Type type) {
-            int count = rules.list(type).size();
+        private int iconForType(NotificationRuleStore.Type type) {
+            switch (type) {
+                case KEYWORD_BLOCKLIST:
+                case ACCOUNT_BLOCKLIST:
+                    // Both blocklists deliberately share the ban glyph.
+                    return R.drawable.ic_zp_ban;
+                case KEYWORD_EXCEPTIONS:
+                    return R.drawable.ic_zp_type;
+                case ACCOUNT_EXCEPTIONS:
+                    return R.drawable.ic_zp_at_sign;
+                default:
+                    return 0;
+            }
+        }
+
+        private void addList(ZpSection section, NotificationRuleStore.Type type) {
             ZpRowPreference preference = PreferenceUi.nav(requireContext(), type.title(requireContext()));
-            preference.value(count == 1
-                    ? getString(R.string.zp_filter_item_count_one)
-                    : getString(R.string.zp_filter_item_count, count));
+            preference.setIcon(iconForType(type));
+            preference.value(getString(R.string.zp_loading));
             preference.setOnPreferenceClickListener(clicked -> {
                 ((StatusActivity) requireActivity()).openPage(
                         NotificationRuleListActivity.RuleFragment.forType(type),

@@ -33,6 +33,8 @@ Requires JDK 21 and Android SDK 34 or newer.
 ## Privacy
 
 - Diagnostic reports are prepared and uploaded only when requested by the user.
+- Bounded, sanitized runtime-status metadata is stored locally and may be included in a requested
+  diagnostic report.
 - Notification history stays in local app storage until exported or cleared.
 - Call recordings are stored on the device.
 

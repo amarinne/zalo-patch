@@ -11,6 +11,7 @@
     <application
         android:name=".ZpApplication"
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Zalo Patch"
         android:roundIcon="@mipmap/ic_launcher_round"

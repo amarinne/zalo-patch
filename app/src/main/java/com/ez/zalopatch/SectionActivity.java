@@ -81,14 +81,31 @@ public final class SectionActivity {
                 return;
             }
             selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(requireContext()));
+            // One computed pass over every row: only rows whose chips actually changed get a
+            // notifyChanged(), since each call is an O(n) adapter scan plus its own
+            // item-change notification.
+            ArrayList<ZpSwitchPreference> dirtySwitches = new ArrayList<>();
+            ArrayList<ZpRowPreference> dirtyStatuses = new ArrayList<>();
             for (Map.Entry<String, ZpSwitchPreference> entry : switches.entrySet()) {
                 entry.getValue().setChecked(TweakStore.isEnabled(requireContext(), entry.getKey()));
-                entry.getValue().chips(trackingChips(entry.getKey()));
-                entry.getValue().refreshStyle();
+                ZpRowStyle.Chip[] chips = trackingChips(entry.getKey());
+                if (!entry.getValue().rowStyle().hasChips(chips)) {
+                    entry.getValue().chips(chips);
+                    dirtySwitches.add(entry.getValue());
+                }
             }
             for (Map.Entry<ZpRowPreference, String[]> entry : pageStatuses.entrySet()) {
-                entry.getKey().chips(trackingChipsForFeatures(entry.getValue()));
-                entry.getKey().refreshStyle();
+                ZpRowStyle.Chip[] chips = trackingChipsForFeatures(entry.getValue());
+                if (!entry.getKey().rowStyle().hasChips(chips)) {
+                    entry.getKey().chips(chips);
+                    dirtyStatuses.add(entry.getKey());
+                }
+            }
+            for (ZpSwitchPreference row : dirtySwitches) {
+                row.refreshStyle();
+            }
+            for (ZpRowPreference row : dirtyStatuses) {
+                row.refreshStyle();
             }
             if (telemetryMaster != null) {
                 telemetryMaster.setChecked(allTelemetryDisabled(requireContext()));
@@ -158,6 +175,7 @@ public final class SectionActivity {
 
             developerRootAccess = PreferenceUi.action(context,
                     getString(R.string.zp_root_access_title), null);
+            developerRootAccess.setIcon(R.drawable.ic_zp_key_round);
             developerRootAccess.setKey(StatusActivity.INTERNAL_ROOT_ACCESS);
             developerRootAccess.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).recheckRootAccess();
@@ -174,6 +192,7 @@ public final class SectionActivity {
             SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(context));
             developerRuntimeStatus = PreferenceUi.nav(context,
                     getString(R.string.zp_runtime_status_title), runtimeSummary(counts));
+            developerRuntimeStatus.setIcon(R.drawable.ic_zp_heart_pulse);
             developerRuntimeStatus.setKey("internal.developer_runtime_status");
             developerRuntimeStatus.dot(runtimeDotColor(counts));
             developerRuntimeStatus.setOnPreferenceClickListener(preference -> {
@@ -187,6 +206,7 @@ public final class SectionActivity {
             ZpRowPreference catalog = PreferenceUi.nav(context,
                     getString(R.string.zp_compatibility_catalog_title),
                     compatibilityCatalogSummary(context));
+            catalog.setIcon(R.drawable.ic_zp_map);
             catalog.setKey("internal.developer_compatibility_catalog");
             catalog.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).openPage(
@@ -202,6 +222,7 @@ public final class SectionActivity {
                             ? null
                             : getString(R.string.zp_diagnostic_remap_summary));
             report.setKey(DEVELOPER_REPORT);
+            report.setIcon(R.drawable.ic_zp_bug);
             report.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).openPage(
                         new DiagnosticReportActivity.ReportFragment(),
@@ -326,6 +347,7 @@ public final class SectionActivity {
             if (Tweaks.KEY_AUTO_RECORD_CALLS.equals(key)) {
                 recordingsRow = PreferenceUi.nav(context,
                         getString(R.string.zp_call_recordings_title));
+                recordingsRow.setIcon(R.drawable.ic_zp_mic);
                 recordingsRow.value(getString(R.string.zp_loading));
                 recordingsRow.setOnPreferenceClickListener(preference -> {
                     ((StatusActivity) requireActivity()).openPage(
@@ -342,6 +364,7 @@ public final class SectionActivity {
             ZpListPreference preference = new ZpListPreference(context);
             preference.setKey(Tweaks.KEY_DEFAULT_INBOX_FILTER);
             preference.setTitle(R.string.zp_default_inbox_filter);
+            preference.setIcon(R.drawable.ic_zp_list_filter);
             preference.setEntries(R.array.zp_inbox_filter_entries);
             preference.setEntryValues(R.array.zp_inbox_filter_values);
             preference.setValue(String.valueOf(

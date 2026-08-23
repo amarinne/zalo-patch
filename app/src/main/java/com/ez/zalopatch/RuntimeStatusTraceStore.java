@@ -12,11 +12,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-/** Bounded metadata-only history of runtime failures and stale anchors. */
+/** Bounded metadata-only history of runtime failures and call-recording transitions. */
 final class RuntimeStatusTraceStore {
     private static final String PREFS = "runtime_status_trace";
     private static final String KEY_EVENTS = "events";
-    private static final int MAX_EVENTS = 64;
+    private static final int MAX_EVENTS = 256;
 
     private RuntimeStatusTraceStore() {
     }
@@ -24,12 +24,17 @@ final class RuntimeStatusTraceStore {
     static void record(Context context, String feature, ContentValues values) {
         if (context == null || values == null) return;
         String status = safe(values.getAsString("status"), 32);
-        if (!"failed".equals(status) && !"stale".equals(status)) return;
+        boolean callRecording = feature != null && feature.startsWith("calls.auto_record.");
+        if (!"failed".equals(status) && !"stale".equals(status)
+                && !(callRecording && "active".equals(status))) return;
         JSONObject event = new JSONObject();
         try {
             event.put("feature", safe(feature, 128));
             event.put("status", status);
             event.put("target", safe(values.getAsString("target"), 512));
+            if (callRecording) {
+                event.put("detail", safeCallDetail(values.getAsString("detail")));
+            }
             event.put("errorType", errorType(values.getAsString("error")));
             event.put("errorCode", errorCode(values.getAsString("error")));
             event.put("updatedAt", Math.max(0L, longValue(values, "updated_at")));
@@ -44,7 +49,8 @@ final class RuntimeStatusTraceStore {
             for (int index = start; index < current.length(); index++) {
                 next.put(current.get(index));
             }
-            if (next.length() == 0 || !same(next.optJSONObject(next.length() - 1), event)) {
+            if (callRecording || next.length() == 0
+                    || !same(next.optJSONObject(next.length() - 1), event)) {
                 next.put(event);
             }
             preferences.edit().putString(KEY_EVENTS, next.toString()).commit();
@@ -137,6 +143,37 @@ final class RuntimeStatusTraceStore {
         if (lower.contains("nullpointer")) return "null_pointer";
         if (lower.contains("illegalargument")) return "illegal_argument";
         return error == null || error.isEmpty() ? "" : "other";
+    }
+
+    private static String safeCallDetail(String detail) {
+        if (detail == null || detail.isEmpty()) return "";
+        StringBuilder safeDetail = new StringBuilder();
+        for (String token : detail.split("\\s+")) {
+            int separator = token.indexOf('=');
+            if (separator <= 0 || separator == token.length() - 1) continue;
+            String key = token.substring(0, separator);
+            if (!safeCallDetailKey(key)) continue;
+            String value = token.substring(separator + 1)
+                    .replaceAll("[^A-Za-z0-9_.#-]", "");
+            if (value.isEmpty()) continue;
+            if (safeDetail.length() > 0) safeDetail.append(' ');
+            safeDetail.append(key).append('=').append(safe(value, 96));
+        }
+        return safe(safeDetail.toString(), 512);
+    }
+
+    private static boolean safeCallDetailKey(String key) {
+        return "direction".equals(key)
+                || "trigger".equals(key)
+                || "media".equals(key)
+                || "size".equals(key)
+                || "format".equals(key)
+                || "bytes".equals(key)
+                || "state".equals(key)
+                || "audio_active".equals(key)
+                || "uid".equals(key)
+                || "name".equals(key)
+                || "phone".equals(key);
     }
 
     private static String safe(String value, int max) {

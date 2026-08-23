@@ -35,36 +35,40 @@
                 android:id="@+id/zp_settings_content"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent" />
+
+            <!-- Bottom overlay, deliberately outside the vertical flow: showing or hiding the
+                 apply bar must never resize the list viewport, which used to jump the scroll
+                 position one frame after each pending-change toggle. -->
+            <LinearLayout
+                android:id="@+id/zp_apply_bar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="@color/zp_row_surface"
+                android:elevation="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/zp_apply_message"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="@color/zp_on_surface" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/zp_apply_button"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/zp_restart_title" />
+            </LinearLayout>
         </FrameLayout>
-
-        <LinearLayout
-            android:id="@+id/zp_apply_bar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/zp_row_surface"
-            android:elevation="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="8dp"
-            android:paddingBottom="8dp"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/zp_apply_message"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textAppearance="?attr/textAppearanceBodyMedium"
-                android:textColor="@color/zp_on_surface" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/zp_apply_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/zp_restart_title" />
-        </LinearLayout>
     </LinearLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

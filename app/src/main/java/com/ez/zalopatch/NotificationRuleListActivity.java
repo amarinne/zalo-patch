@@ -67,6 +67,7 @@ public final class NotificationRuleListActivity {
             ZpRowPreference add = PreferenceUi.action(context,
                     getString(R.string.zp_rule_add_item),
                     getString(R.string.zp_rule_add_summary));
+            add.setIcon(R.drawable.ic_zp_plus);
             add.setOnPreferenceClickListener(preference -> {
                 showAddDialog();
                 return true;

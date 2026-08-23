@@ -9,12 +9,15 @@ import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceScreen;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -69,6 +72,7 @@ public final class DiagnosticReportActivity {
         private DiagnosticReportFactory.Draft draft;
         private ZpRowPreference reportAction;
         private ZpRowPreference secondaryReportAction;
+        private ZpRowPreference draftUploadRow;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -157,6 +161,7 @@ public final class DiagnosticReportActivity {
             Context context = requireContext();
             reportAction = null;
             secondaryReportAction = null;
+            draftUploadRow = null;
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
 
             PreferenceCategory problemCategory = PreferenceUi.category(screen,
@@ -182,7 +187,7 @@ public final class DiagnosticReportActivity {
                 statusMessage = "";
                 if (preparedState) {
                     invalidateDraft();
-                    buildScreen();
+                    rebuildPreservingScroll();
                 } else if (reportAction != null) {
                     boolean valid = validDescription();
                     reportAction.setEnabled(valid);
@@ -297,6 +302,7 @@ public final class DiagnosticReportActivity {
                         upload();
                         return true;
                     });
+                    draftUploadRow = upload;
                     ZpRowPreference discard = PreferenceUi.action(context,
                             getString(R.string.zp_diagnostic_discard));
                     discard.destructive(true);
@@ -305,7 +311,7 @@ public final class DiagnosticReportActivity {
                         draft = null;
                         reviewedReportId = null;
                         statusMessage = getString(R.string.zp_diagnostic_discarded);
-                        buildScreen();
+                        rebuildPreservingScroll();
                         return true;
                     });
                     actions.add(discard);
@@ -367,7 +373,7 @@ public final class DiagnosticReportActivity {
                             invalidateDraft();
                         }
                         dialog.dismiss();
-                        buildScreen();
+                        rebuildPreservingScroll();
                     })
                     .setNegativeButton(R.string.zp_cancel, null)
                     .show();
@@ -509,7 +515,14 @@ public final class DiagnosticReportActivity {
                         if (reviewReportId != null && draft != null
                                 && reviewReportId.equals(draft.reportId)) {
                             reviewedReportId = reviewReportId;
-                            buildScreen();
+                            // Targeted update: reviewing the JSON only unlocks the upload row,
+                            // so flip it in place instead of rebuilding and jumping the list.
+                            if (draftUploadRow != null) {
+                                draftUploadRow.setEnabled(DiagnosticReportActivity.canUpload(
+                                        draft.reportId, reviewedReportId));
+                            } else {
+                                buildScreen();
+                            }
                         }
                     })
                     .show();
@@ -614,7 +627,7 @@ public final class DiagnosticReportActivity {
                 post(() -> {
                     loadLocalState();
                     if (expired) statusMessage = getString(R.string.zp_diagnostic_capture_expired);
-                    buildScreen();
+                    rebuildPreservingScroll();
                 });
             }, "diagnostic-capture-cleanup").start();
         }
@@ -680,16 +693,46 @@ public final class DiagnosticReportActivity {
             return getString(R.string.zp_diagnostic_failure_invalid);
         }
 
+        /**
+         * Rebuilds the screen while keeping the reader anchored. State flips in this page swap
+         * whole action groups, so a rebuild is sometimes unavoidable, but losing the scroll
+         * position on every capture-polling flip is not.
+         */
+        private void rebuildPreservingScroll() {
+            RecyclerView list = getListView();
+            RecyclerView.LayoutManager layoutManager = list == null ? null : list.getLayoutManager();
+            int position = 0;
+            int offset = 0;
+            if (layoutManager instanceof LinearLayoutManager) {
+                LinearLayoutManager linear = (LinearLayoutManager) layoutManager;
+                position = Math.max(0, linear.findFirstVisibleItemPosition());
+                View first = linear.findViewByPosition(position);
+                offset = first == null ? 0 : first.getTop();
+            }
+            buildScreen();
+            if (list != null) {
+                final int restorePosition = position;
+                final int restoreOffset = offset;
+                list.post(() -> {
+                    RecyclerView.LayoutManager manager = list.getLayoutManager();
+                    if (manager instanceof LinearLayoutManager) {
+                        ((LinearLayoutManager) manager).scrollToPositionWithOffset(
+                                restorePosition, restoreOffset);
+                    }
+                });
+            }
+        }
+
         private void runBusy(Runnable task) {
             busy = true;
             statusMessage = getString(R.string.zp_diagnostic_working);
-            buildScreen();
+            rebuildPreservingScroll();
             new Thread(task, "diagnostic-report-work").start();
         }
 
         private void finishBusy() {
             busy = false;
-            buildScreen();
+            rebuildPreservingScroll();
         }
 
         private void post(Runnable action) {

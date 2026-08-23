@@ -49,7 +49,6 @@ public final class CallRecordingFeature extends Feature {
     private static final String FEATURE_METADATA = "calls.auto_record.metadata";
     private static final String CALL_CALLBACK = "com.vng.zing.vn.zrtc.CallCallback";
     private static final String PEER_JNI = "com.vng.zing.vn.zrtc.PeerJNI";
-    private static final long CALLBACK_STOP_DELAY_MS = 250L;
     private static final long ACTIVITY_FALLBACK_DELAY_MS = 500L;
     private static final int ACTIVITY_FALLBACK_ATTEMPTS = 5;
     private static final long WAV_READY_TIMEOUT_MS = 5_000L;
@@ -280,7 +279,10 @@ public final class CallRecordingFeature extends Feature {
                     return;
                 }
                 if (CallRecordingLifecycle.shouldStopAudio(methodName, state)) {
-                    scheduleStop(session, methodName);
+                    // ZRTC ignores recordAudio(false, ...) after its controller leaves the
+                    // confirmed state. Stop inside this before-hook instead of scheduling work
+                    // that may run after the host advances the terminal call state.
+                    stop(session, methodName);
                     return;
                 }
                 if (CallRecordingLifecycle.shouldStartAudio(methodName, state)) {
@@ -552,17 +554,6 @@ public final class CallRecordingFeature extends Feature {
         }
     }
 
-    private static void scheduleStop(Session session, String trigger) {
-        synchronized (session) {
-            if (!session.started || session.stopScheduled) {
-                return;
-            }
-            session.stopScheduled = true;
-        }
-        STOP_SCHEDULER.schedule(() -> stop(session, trigger),
-                CALLBACK_STOP_DELAY_MS, TimeUnit.MILLISECONDS);
-    }
-
     private static void scheduleActivityFallback(int attempt) {
         STOP_SCHEDULER.schedule(() -> {
             ArrayList<Session> sessions;
@@ -653,7 +644,6 @@ public final class CallRecordingFeature extends Feature {
         String pendingName;
         File tempFile;
         boolean started;
-        boolean stopScheduled;
         volatile boolean deleted;
 
         Session(long peerHandle, String peerUid) {

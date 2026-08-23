@@ -36,6 +36,17 @@
             android:background="@drawable/zp_status_dot"
             android:visibility="gone" />
 
+        <!-- Opt-in leading icon. AndroidX binds android.R.id.icon and hides this slot entirely
+             while the preference has no icon and icon space is not reserved, so rows without a
+             glyph keep the old geometry. -->
+        <ImageView
+            android:id="@android:id/icon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginEnd="14dp"
+            android:contentDescription="@null"
+            android:visibility="gone" />
+
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"

@@ -15,7 +15,6 @@ import androidx.preference.PreferenceScreen;
 
 import android.view.Gravity;
 
-import androidx.interpolator.view.animation.FastOutSlowInInterpolator;
 import androidx.transition.Slide;
 
 import java.io.IOException;
@@ -99,8 +98,8 @@ public final class StatusActivity extends ZpSettingsActivity {
 
     private static Slide slide(int edge) {
         Slide slide = new Slide(edge);
-        slide.setDuration(220L);
-        slide.setInterpolator(new FastOutSlowInInterpolator());
+        slide.setDuration(UiMotion.PAGE_MS);
+        slide.setInterpolator(UiMotion.FAST_OUT_SLOW_IN);
         // The toolbar and apply bar are outside the swapped container; only the page moves.
         return slide;
     }
@@ -367,6 +366,7 @@ public final class StatusActivity extends ZpSettingsActivity {
             ZpSection section = ZpSection.in(category);
             restart = PreferenceUi.action(context,
                     getString(R.string.zp_restart_title), null);
+            restart.setIcon(R.drawable.ic_zp_refresh_cw);
             restart.setKey(INTERNAL_RESTART);
             restart.setOnPreferenceClickListener(preference -> {
                 host().restartOrOpenZaloAppInfo();
@@ -385,10 +385,18 @@ public final class StatusActivity extends ZpSettingsActivity {
             PreferenceCategory category = PreferenceUi.category(screen,
                     getString(R.string.zp_section_interface));
             ZpSection section = ZpSection.in(category);
-            addSection(section, Tweaks.SECTION_NAVIGATION, getString(R.string.zp_tabs_title), null);
-            addSection(section, Tweaks.SECTION_INBOX, getString(R.string.zp_inbox_title), null);
-            addSection(section, Tweaks.SECTION_CHAT, getString(R.string.zp_chats_title), null);
-            addSection(section, Tweaks.SECTION_ME, getString(R.string.zp_me_title), null);
+            addSection(section, Tweaks.SECTION_NAVIGATION,
+                    getString(R.string.zp_tabs_title), null,
+                    R.drawable.ic_zp_panel_bottom);
+            addSection(section, Tweaks.SECTION_INBOX,
+                    getString(R.string.zp_inbox_title), null,
+                    R.drawable.ic_zp_inbox);
+            addSection(section, Tweaks.SECTION_CHAT,
+                    getString(R.string.zp_chats_title), null,
+                    R.drawable.ic_zp_messages_square);
+            addSection(section, Tweaks.SECTION_ME,
+                    getString(R.string.zp_me_title), null,
+                    R.drawable.ic_zp_circle_user_round);
         }
 
         private void addAdsAndNotifications(PreferenceScreen screen) {
@@ -396,9 +404,11 @@ public final class StatusActivity extends ZpSettingsActivity {
             PreferenceCategory category = PreferenceUi.category(screen,
                     getString(R.string.zp_section_ads_notifications));
             ZpSection section = ZpSection.in(category);
-            addSection(section, Tweaks.SECTION_ADS, getString(R.string.zp_ads_title), null);
+            addSection(section, Tweaks.SECTION_ADS, getString(R.string.zp_ads_title), null,
+                    R.drawable.ic_zp_ad);
             filter = PreferenceUi.nav(context, getString(R.string.zp_notification_filter_title),
                     null);
+            filter.setIcon(R.drawable.ic_zp_funnel);
             filter.setOnPreferenceClickListener(preference -> {
                 host().openPage(new NotificationFilterActivity.FilterFragment(),
                         getString(R.string.zp_notification_filter_title));
@@ -413,10 +423,13 @@ public final class StatusActivity extends ZpSettingsActivity {
                     getString(R.string.zp_section_privacy));
             ZpSection section = ZpSection.in(category);
             section.add(navigationRow(Tweaks.SECTION_TELEMETRY,
-                    getString(R.string.zp_telemetry_title), null));
-            addSection(section, Tweaks.SECTION_CALLS, getString(R.string.zp_calls_title), null);
+                    getString(R.string.zp_telemetry_title), null,
+                    R.drawable.ic_zp_eye_off));
+            addSection(section, Tweaks.SECTION_CALLS, getString(R.string.zp_calls_title), null,
+                    R.drawable.ic_zp_phone);
             addSection(section, Tweaks.SECTION_BACKUP,
-                    getString(R.string.zp_backup_push_title), null);
+                    getString(R.string.zp_backup_push_title), null,
+                    R.drawable.ic_zp_database_backup);
         }
 
         private void addModule(PreferenceScreen screen) {
@@ -427,6 +440,7 @@ public final class StatusActivity extends ZpSettingsActivity {
             ZpListPreference language = new ZpListPreference(context);
             language.setKey(UiSettings.KEY_LANGUAGE);
             language.setTitle(R.string.zp_language_title);
+            language.setIcon(R.drawable.ic_zp_languages);
             language.setEntries(R.array.zp_language_entries);
             language.setEntryValues(R.array.zp_language_values);
             language.setValue(UiSettings.language(context));
@@ -442,6 +456,7 @@ public final class StatusActivity extends ZpSettingsActivity {
 
             ZpRowPreference backup = PreferenceUi.nav(context,
                     getString(R.string.zp_backup_title), null);
+            backup.setIcon(R.drawable.ic_zp_save);
             backup.setOnPreferenceClickListener(preference -> {
                 host().openPage(new SettingsBackupActivity.BackupFragment(),
                         getString(R.string.zp_backup_title));
@@ -450,15 +465,21 @@ public final class StatusActivity extends ZpSettingsActivity {
             section.add(backup);
             section.add(navigationRow(Tweaks.SECTION_DEVELOPER,
                     getString(R.string.zp_developer_tools_title),
-                    getString(R.string.zp_developer_tools_summary)));
+                    getString(R.string.zp_developer_tools_summary),
+                    R.drawable.ic_zp_square_terminal));
         }
 
-        private void addSection(ZpSection section, String sectionKey, String title, String summary) {
-            section.add(navigationRow(sectionKey, title, summary));
+        private void addSection(ZpSection section, String sectionKey, String title, String summary,
+                int iconRes) {
+            section.add(navigationRow(sectionKey, title, summary, iconRes));
         }
 
-        private ZpRowPreference navigationRow(String sectionKey, String title, String summary) {
+        private ZpRowPreference navigationRow(String sectionKey, String title, String summary,
+                int iconRes) {
             ZpRowPreference preference = PreferenceUi.nav(requireContext(), title, summary);
+            if (iconRes != 0) {
+                preference.setIcon(iconRes);
+            }
             preference.setOnPreferenceClickListener(clicked -> {
                 host().openPage(SectionActivity.SettingsFragment.forSection(sectionKey), title);
                 return true;
@@ -476,8 +497,19 @@ public final class StatusActivity extends ZpSettingsActivity {
                     ? null : getString(R.string.zp_restart_manual_fallback_summary));
             restart.refreshStyle();
             if (filter != null) {
-                filter.value(ruleCountValue(NotificationRuleStore.load(context).total()));
-                filter.refreshStyle();
+                // The custom-rule total needs a JSON parse off the main thread; the value is
+                // posted back to the row like the other async page loads.
+                Context appContext = context.getApplicationContext();
+                new Thread(() -> {
+                    int total = NotificationRuleStore.load(appContext).total();
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        if (!isAdded() || filter == null) {
+                            return;
+                        }
+                        filter.value(ruleCountValue(total));
+                        filter.refreshStyle();
+                    });
+                }, "dashboard-rule-count").start();
             }
         }
 

@@ -23,6 +23,7 @@ public final class SettingsBackupActivity {
 
             ZpRowPreference export = PreferenceUi.action(context,
                     getString(R.string.zp_backup_export));
+            export.setIcon(R.drawable.ic_zp_upload);
             export.setOnPreferenceClickListener(preference -> {
                 ((StatusActivity) requireActivity()).exportSettings();
                 return true;
@@ -31,6 +32,7 @@ public final class SettingsBackupActivity {
 
             ZpRowPreference importSettings = PreferenceUi.action(context,
                     getString(R.string.zp_backup_import));
+            importSettings.setIcon(R.drawable.ic_zp_download);
             importSettings.setOnPreferenceClickListener(preference -> {
                 confirmImport();
                 return true;

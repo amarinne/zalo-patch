@@ -36,6 +36,20 @@ final class ZpRowStyle {
             this.text = text;
             this.colorRes = colorRes;
         }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof Chip)) {
+                return false;
+            }
+            Chip chip = (Chip) other;
+            return colorRes == chip.colorRes && text.equals(chip.text);
+        }
+
+        @Override
+        public int hashCode() {
+            return text.hashCode() * 31 + colorRes;
+        }
     }
 
     private Shape shape = Shape.SINGLE;
@@ -81,6 +95,14 @@ final class ZpRowStyle {
         if (newChips != null) {
             chips.addAll(newChips);
         }
+    }
+
+    /** Whether the bound chips already match, so a row refresh can be skipped entirely. */
+    boolean hasChips(Chip... expected) {
+        if (expected == null || expected.length == 0) {
+            return chips.isEmpty();
+        }
+        return chips.equals(java.util.Arrays.asList(expected));
     }
 
     void bind(PreferenceViewHolder holder) {
