@@ -41,3 +41,5 @@ Requires JDK 21 and Android SDK 34 or newer.
 [MIT](LICENSE)
 
 Zalo Patch is unofficial and not affiliated with or endorsed by Zalo or VNG.
+
+[![Telegram](https://img.shields.io/badge/Telegram-Zalo%20Patch-26A5E4?logo=telegram&logoColor=white)](https://t.me/Zalopatch)
