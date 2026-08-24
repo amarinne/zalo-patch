@@ -49,6 +49,9 @@ public final class Settings {
                 java.util.Arrays.asList(0, 1, 2, 3, 4), true, true));
         settings.add(intSetting(Tweaks.KEY_BACKUP_PUSH_INTERVAL, Tweaks.SECTION_BACKUP,
                 6, java.util.Arrays.asList(1, 3, 6, 12), true, true));
+        settings.add(intSetting(Tweaks.KEY_PASSCODE_GRACE_MS, Tweaks.SECTION_SECURITY,
+                30000, java.util.Arrays.asList(30000, 60000, 120000, 300000, 600000, 900000,
+                        1800000, 3600000), true, true));
         for (Tweaks.Item item : Tweaks.ITEMS) {
             settings.add(boolSetting(item.key, item.section, item.defaultEnabled, item.implemented, true));
         }

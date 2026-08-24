@@ -58,6 +58,19 @@ public final class SettingsModelTest {
     }
 
     @Test
+    public void passcodeGraceDefaultsToNativeMaximumAndRejectsUnsupportedValues() {
+        assertEquals(30000, Settings.defaultInt(Tweaks.KEY_PASSCODE_GRACE_MS));
+        assertEquals(30000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 30000));
+        assertEquals(60000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 60000));
+        assertEquals(120000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 120000));
+        assertEquals(300000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 300000));
+        assertEquals(600000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 600000));
+        assertEquals(3600000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 3600000));
+        assertEquals(30000, Settings.coerceInt(Tweaks.KEY_PASSCODE_GRACE_MS, 90000));
+        assertFalse(Settings.defaultBoolean(Tweaks.KEY_PASSCODE_GRACE));
+    }
+
+    @Test
     public void callProbeRemainsDefaultOff() {
         assertFalse(Settings.defaultBoolean(Tweaks.KEY_CALL_RECORDING_PROBE));
     }
@@ -98,6 +111,7 @@ public final class SettingsModelTest {
                 Tweaks.SECTION_TELEMETRY,
                 Tweaks.SECTION_CALLS,
                 Tweaks.SECTION_BACKUP,
+                Tweaks.SECTION_SECURITY,
                 Tweaks.SECTION_DEVELOPER);
         for (String section : sections) {
             for (Tweaks.Group group : Tweaks.groups(section)) {
@@ -112,6 +126,7 @@ public final class SettingsModelTest {
         }
         assertTrue(rendered.remove(Tweaks.KEY_DEFAULT_INBOX_FILTER));
         assertTrue(rendered.remove(Tweaks.KEY_BACKUP_PUSH_INTERVAL));
+        assertTrue(rendered.remove(Tweaks.KEY_PASSCODE_GRACE_MS));
         assertEquals(expected, rendered);
     }
 
@@ -122,6 +137,7 @@ public final class SettingsModelTest {
                 Tweaks.SECTION_ME, Tweaks.SECTION_ADS, Tweaks.SECTION_NOTIFICATIONS,
                 Tweaks.SECTION_TELEMETRY, Tweaks.SECTION_CALLS,
                 Tweaks.SECTION_BACKUP,
+                Tweaks.SECTION_SECURITY,
                 Tweaks.SECTION_DEVELOPER)) {
             assertEquals(section, section.toLowerCase(java.util.Locale.US));
             assertFalse(section.contains(" "));

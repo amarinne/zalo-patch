@@ -40,6 +40,8 @@
     <string name="zp_ads_title">Quảng cáo và khuyến mãi</string>
     <string name="zp_calls_title">Cuộc gọi</string>
     <string name="zp_backup_push_title">Sao lưu tin nhắn</string>
+    <string name="zp_security_title">Khóa ứng dụng</string>
+    <string name="zp_security_summary">Thời gian miễn nhập mã</string>
     <string name="zp_language_title">Ngôn ngữ</string>
     <string name="zp_language_english">English</string>
     <string name="zp_language_vietnamese">Tiếng Việt</string>
@@ -79,6 +81,9 @@
     <string name="zp_tweak_backup_frequent">Sao lưu định kỳ thường xuyên</string>
     <string name="zp_tweak_backup_frequent_summary">Rút ngắn chu kỳ sao lưu tin nhắn của Zalo. Phải bật sao lưu tự động trong Zalo. Mỗi lần chạy xuất toàn bộ cơ sở dữ liệu tin nhắn và hiển thị thông báo bình thường của Zalo; media trên Drive vẫn theo chu kỳ gốc.</string>
     <string name="zp_backup_interval_title">Chu kỳ định kỳ</string>
+    <string name="zp_tweak_passcode_grace">Kéo dài thời gian miễn nhập mã</string>
+    <string name="zp_tweak_passcode_grace_summary">Giữ Zalo mở khóa trong khoảng thời gian bên dưới thay vì mức tối đa 30 giây của Zalo.</string>
+    <string name="zp_passcode_grace_title">Thời gian miễn nhập mã ứng dụng</string>
     <string name="zp_tweak_hide_message_ads">Ẩn quảng cáo trong Tin nhắn</string>
     <string name="zp_tweak_hide_message_ads_summary">Ẩn quảng cáo Zinstant trong Tin nhắn.</string>
     <string name="zp_tweak_hide_feed_ads">Ẩn quảng cáo trong Nhật ký</string>
@@ -100,6 +105,7 @@
     <string name="zp_group_status_privacy">Quyền riêng tư trạng thái</string>
     <string name="zp_group_call_recording">Ghi âm cuộc gọi</string>
     <string name="zp_group_backup_schedule">Sao lưu tin nhắn định kỳ</string>
+    <string name="zp_group_security">Khóa ứng dụng</string>
     <string name="zp_backup_title">Sao lưu cài đặt</string>
 
     <string name="zp_filter_scope_notice">Chỉ lọc thông báo Android, không ẩn hoặc xóa tin nhắn trong Zalo.</string>

@@ -28,6 +28,8 @@ final class SymbolPreflight {
                 schema, classLoader, result.zinstantFeedErrors);
         result.statusPrivacy = checkStatusPrivacy(
                 schema, classLoader, result.statusPrivacyErrors);
+        result.passcodeGrace = checkPasscodeGrace(
+                schema, classLoader, result.passcodeGraceErrors);
         result.backupScheduled = checkBackupScheduled(
                 schema, classLoader, result.backupScheduledErrors);
         result.webviewExternalize = checkWebviewExternalize(
@@ -193,6 +195,31 @@ final class SymbolPreflight {
         return errors.isEmpty();
     }
 
+    private static boolean checkPasscodeGrace(SymbolSchema.Active schema, ClassLoader loader,
+                                              List<String> errors) {
+        // Version drift rule: resolve the reader per profile as the static (I,String,Z)I invoked
+        // immediately after const-string "SaveActiveTimePasscodeSetting", not by remembered name.
+        String prefKey = schema.string("symbols.passcode.active_time_pref_key", "");
+        if (!"SaveActiveTimePasscodeSetting".equals(prefKey)) {
+            errors.add("passcode preference key changed");
+        }
+        Class<?> reader = load(schema.string("symbols.passcode.prefs_int_reader_class", ""),
+                loader, errors);
+        Class<?> setter = load(schema.string("symbols.passcode.active_time_setter_class", ""),
+                loader, errors);
+        if (reader != null) {
+            staticMethodExact(reader,
+                    schema.string("symbols.passcode.prefs_int_reader_method", ""),
+                    Integer.TYPE, errors, Integer.TYPE, String.class, Boolean.TYPE);
+        }
+        if (setter != null) {
+            methodExact(setter,
+                    schema.string("symbols.passcode.active_time_setter_method", ""),
+                    Void.TYPE, errors, Integer.TYPE);
+        }
+        return errors.isEmpty();
+    }
+
     private static boolean checkBackupScheduled(SymbolSchema.Active schema, ClassLoader loader,
                                                 List<String> errors) {
         Class<?> owner = load(schema.string("symbols.backup.interval_reader_class", ""),
@@ -339,6 +366,23 @@ final class SymbolPreflight {
         }
     }
 
+    private static void staticMethodExact(Class<?> owner, String name, Class<?> returnType,
+                                          List<String> errors, Class<?>... parameterTypes) {
+        if (name.isEmpty()) {
+            errors.add(owner.getName() + " method name missing");
+            return;
+        }
+        try {
+            Method method = owner.getDeclaredMethod(name, parameterTypes);
+            if (method.getReturnType() != returnType
+                    || !Modifier.isStatic(method.getModifiers())) {
+                errors.add(owner.getName() + "#" + name + " static signature changed");
+            }
+        } catch (Throwable throwable) {
+            errors.add(owner.getName() + "#" + name + " signature changed");
+        }
+    }
+
     static final class Result {
         boolean inboxMedia;
         boolean inboxCategories;
@@ -347,6 +391,7 @@ final class SymbolPreflight {
         boolean zinstantMessage;
         boolean zinstantFeed;
         boolean statusPrivacy;
+        boolean passcodeGrace;
         boolean backupScheduled;
         boolean webviewExternalize;
         final List<String> inboxMediaErrors = new ArrayList<>();
@@ -356,6 +401,7 @@ final class SymbolPreflight {
         final List<String> zinstantMessageErrors = new ArrayList<>();
         final List<String> zinstantFeedErrors = new ArrayList<>();
         final List<String> statusPrivacyErrors = new ArrayList<>();
+        final List<String> passcodeGraceErrors = new ArrayList<>();
         final List<String> backupScheduledErrors = new ArrayList<>();
         final List<String> webviewErrors = new ArrayList<>();
 
@@ -373,13 +419,14 @@ final class SymbolPreflight {
             if (zinstantMessage) count++;
             if (zinstantFeed) count++;
             if (statusPrivacy) count++;
+            if (passcodeGrace) count++;
             if (backupScheduled) count++;
             if (webviewExternalize) count++;
             return count;
         }
 
         int total() {
-            return 9;
+            return 10;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -392,6 +439,7 @@ final class SymbolPreflight {
             append(value, "zinstant_message", zinstantMessage);
             append(value, "zinstant_feed", zinstantFeed);
             append(value, "status_privacy", statusPrivacy);
+            append(value, "passcode_grace", passcodeGrace);
             append(value, "backup_scheduled", backupScheduled);
             append(value, "webview_externalize", webviewExternalize);
             return value.toString();

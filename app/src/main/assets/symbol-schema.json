@@ -1,11 +1,11 @@
 {
   "bundle_version": 1,
-  "bundle_revision": 4,
+  "bundle_revision": 5,
   "zalo_package": "com.zing.zalo",
   "profiles": [
     {
       "schema_version": 1,
-      "schema_revision": 18,
+      "schema_revision": 21,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260602901,
@@ -150,6 +150,13 @@
         }
       },
       "symbols": {
+        "passcode": {
+          "prefs_int_reader_class": "g40.r0",
+          "prefs_int_reader_method": "j",
+          "active_time_setter_class": "lz.j",
+          "active_time_setter_method": "B3",
+          "active_time_pref_key": "SaveActiveTimePasscodeSetting"
+        },
         "webview": {
           "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
           "companion_class": "com.zing.zalo.ui.zviews.ss",
@@ -399,7 +406,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 19,
+      "schema_revision": 22,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260701901,
@@ -544,6 +551,13 @@
         }
       },
       "symbols": {
+        "passcode": {
+          "prefs_int_reader_class": "k40.q0",
+          "prefs_int_reader_method": "k",
+          "active_time_setter_class": "pz.j",
+          "active_time_setter_method": "B3",
+          "active_time_pref_key": "SaveActiveTimePasscodeSetting"
+        },
         "webview": {
           "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
           "companion_class": "com.zing.zalo.ui.zviews.xs",
@@ -762,7 +776,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 20,
+      "schema_revision": 23,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 260801903,
@@ -907,6 +921,13 @@
         }
       },
       "symbols": {
+        "passcode": {
+          "prefs_int_reader_class": "u40.p0",
+          "prefs_int_reader_method": "X",
+          "active_time_setter_class": "yz.j",
+          "active_time_setter_method": "A3",
+          "active_time_pref_key": "SaveActiveTimePasscodeSetting"
+        },
         "webview": {
           "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
           "companion_class": "com.zing.zalo.ui.zviews.xs",

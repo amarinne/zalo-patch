@@ -322,6 +322,13 @@ public final class SectionActivity {
                         Tweaks.KEY_BACKUP_FREQUENT_PUSH);
                 return;
             }
+            if (Tweaks.KEY_PASSCODE_GRACE_MS.equals(key)) {
+                section.add(backupIntPreference(context, key,
+                        R.string.zp_passcode_grace_title,
+                        R.array.zp_passcode_grace_entries,
+                        R.array.zp_passcode_grace_values));
+                return;
+            }
             Tweaks.Item item = itemFor(key);
             if (item == null) {
                 return;

@@ -30,6 +30,12 @@ public final class SettingsUiSmokeTest
         assertNotNull(backup.findPreference(Tweaks.KEY_BACKUP_FREQUENT_PUSH));
         assertNotNull(backup.findPreference(Tweaks.KEY_BACKUP_PUSH_INTERVAL));
 
+        SectionActivity.SettingsFragment security =
+                SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_SECURITY);
+        open(activity, security);
+        assertNotNull(security.findPreference(Tweaks.KEY_PASSCODE_GRACE));
+        assertNotNull(security.findPreference(Tweaks.KEY_PASSCODE_GRACE_MS));
+
         SectionActivity.SettingsFragment developer =
                 SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_DEVELOPER);
         open(activity, developer);

@@ -17,6 +17,7 @@ import com.ez.zalopatch.xposed.features.InboxFeature;
 import com.ez.zalopatch.xposed.features.InteractionTraceFeature;
 import com.ez.zalopatch.xposed.features.MeCleanupFeature;
 import com.ez.zalopatch.xposed.features.NotificationFeature;
+import com.ez.zalopatch.xposed.features.PasscodeGraceFeature;
 import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
 import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
 import com.ez.zalopatch.xposed.features.SymbolSchemaHealthFeature;
@@ -91,6 +92,7 @@ public final class MainFeatures {
                     preflight.zinstantMessage, preflight.reason(preflight.zinstantMessageErrors),
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
+            addPasscodeGrace(features, classLoader, preflight);
             addStatusPrivacy(features, classLoader, preflight);
             addWebLinkExternalize(features, classLoader, preflight);
             if (mainProcess) {
@@ -135,6 +137,17 @@ public final class MainFeatures {
         } else {
             SelfCheckRegistry.markDisabled(Tweaks.KEY_BLOCK_TYPING_STATUS, "typing indicator send");
         }
+    }
+
+    private static void addPasscodeGrace(List<Feature> features, ClassLoader classLoader,
+                                         SymbolPreflight.Result preflight) {
+        boolean enabled = HookConfig.isEnabled(Tweaks.KEY_PASSCODE_GRACE);
+        if (preflight.passcodeGrace || !enabled) {
+            features.add(new PasscodeGraceFeature(classLoader));
+            return;
+        }
+        SelfCheckRegistry.markStale(Tweaks.KEY_PASSCODE_GRACE_MS,
+                "structural preflight", preflight.reason(preflight.passcodeGraceErrors));
     }
 
     private static void addWebLinkExternalize(List<Feature> features, ClassLoader classLoader,

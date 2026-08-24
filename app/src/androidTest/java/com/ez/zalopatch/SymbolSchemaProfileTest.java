@@ -36,7 +36,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 260602901L);
 
         assertTrue(active.valid);
-        assertEquals(18, active.schemaRevision);
+        assertEquals(21, active.schemaRevision);
         assertEquals(260602901, active.minCode);
         assertEquals("je1.c1", active.string("symbols.inbox.message_adapter_class", ""));
         assertEquals("a55d59581d4e4d038a28bc17a3d12237f519566ecfb7140eb445a6fa045eef34",
@@ -44,6 +44,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("device-verified", active.string("artifact.verification", ""));
         assertEquals("vd0.f0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("yz.p", active.string("symbols.chat.message_repository_class", ""));
+        assertPasscodeSymbols(active, "g40.r0", "j", "lz.j", "B3");
         assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.ss", "A8");
         assertHookIdentities(active);
     }
@@ -52,7 +53,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 260701901L);
 
         assertTrue(active.valid);
-        assertEquals(19, active.schemaRevision);
+        assertEquals(22, active.schemaRevision);
         assertEquals(260701901, active.minCode);
         assertEquals("se1.g1", active.string("symbols.inbox.message_adapter_class", ""));
         assertEquals("z", active.string("symbols.telemetry.analytics_event_accessor", ""));
@@ -66,6 +67,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("device-smoke-tested", active.string("artifact.verification", ""));
         assertEquals("yd0.h0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("c00.q", active.string("symbols.chat.message_repository_class", ""));
+        assertPasscodeSymbols(active, "k40.q0", "k", "pz.j", "B3");
         assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "z8");
 
         assertHookIdentities(active);
@@ -79,7 +81,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 260801903L);
 
         assertTrue(active.valid);
-        assertEquals(20, active.schemaRevision);
+        assertEquals(23, active.schemaRevision);
         assertEquals(260801903, active.minCode);
         assertEquals("of1.h1", active.string("symbols.inbox.message_adapter_class", ""));
         assertEquals("q00.c", active.string("symbols.inbox.normal_item_class", ""));
@@ -92,6 +94,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("static-verified", active.string("artifact.verification", ""));
         assertEquals("je0.k0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("l00.r", active.string("symbols.chat.message_repository_class", ""));
+        assertPasscodeSymbols(active, "u40.p0", "X", "yz.j", "A3");
         assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "z8");
         assertHookIdentities(active);
     }
@@ -132,7 +135,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertNotNull(remote);
         assertTrue(remote.valid);
         assertEquals("Remote catalog 14", remote.source);
-        assertEquals(20, remote.schemaRevision);
+        assertEquals(23, remote.schemaRevision);
         assertEquals("of1.h1", remote.string("symbols.inbox.message_adapter_class", ""));
 
         SymbolSchema.Active selected = bundled.valid ? bundled : remote;
@@ -344,5 +347,23 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                         info.path.contains(symbol));
             }
         }
+    }
+
+    private void assertPasscodeSymbols(SymbolSchema.Active active, String readerClass,
+                                       String readerMethod, String setterClass,
+                                       String setterMethod) {
+        assertEquals(readerClass,
+                active.string("symbols.passcode.prefs_int_reader_class", ""));
+        assertEquals(readerMethod,
+                active.string("symbols.passcode.prefs_int_reader_method", ""));
+        assertEquals(setterClass,
+                active.string("symbols.passcode.active_time_setter_class", ""));
+        assertEquals(setterMethod,
+                active.string("symbols.passcode.active_time_setter_method", ""));
+        assertEquals("SaveActiveTimePasscodeSetting",
+                active.string("symbols.passcode.active_time_pref_key", ""));
+        TweakHookInfo.Info info = TweakHookInfo.forKey(Tweaks.KEY_PASSCODE_GRACE_MS, active);
+        assertTrue(info.path.contains(readerClass + "#" + readerMethod + "(I,String,Z)I"));
+        assertTrue(info.driftProne);
     }
 }

@@ -50,6 +50,8 @@
     <string name="zp_ads_title">Ads and promotions</string>
     <string name="zp_calls_title">Calls</string>
     <string name="zp_backup_push_title">Message backup</string>
+    <string name="zp_security_title">App lock</string>
+    <string name="zp_security_summary">Passcode grace period</string>
     <string name="zp_developer_tools_title">Developer tools</string>
     <string name="zp_developer_tools_summary">Runtime status, version maps, diagnostics, and compatibility remap.</string>
     <string name="zp_telemetry_title">Telemetry</string>
@@ -124,6 +126,9 @@
     <string name="zp_tweak_backup_frequent">Frequent scheduled backup</string>
     <string name="zp_tweak_backup_frequent_summary">Shortens Zalo’s message-backup interval. Zalo automatic backup must be enabled. Each run exports the full message database and shows Zalo’s normal notification; Drive media keeps its native schedule.</string>
     <string name="zp_backup_interval_title">Scheduled interval</string>
+    <string name="zp_tweak_passcode_grace">Extend app-lock grace period</string>
+    <string name="zp_tweak_passcode_grace_summary">Keep Zalo unlocked for the duration below instead of Zalo\'s 30 second maximum.</string>
+    <string name="zp_passcode_grace_title">App-lock grace period</string>
     <string name="zp_tweak_call_recording_probe">Call recording probe</string>
     <string name="zp_tweak_call_recording_probe_summary">Collects call state only. No audio is stored.</string>
     <string name="zp_tweak_hide_message_ads">Hide message ads</string>
@@ -152,6 +157,7 @@
     <string name="zp_group_status_privacy">Status privacy</string>
     <string name="zp_group_call_recording">Call recording</string>
     <string name="zp_group_backup_schedule">Scheduled message backup</string>
+    <string name="zp_group_security">App lock</string>
     <string name="zp_group_call_diagnostics">Call diagnostics</string>
     <string name="zp_group_developer_tools">Tools</string>
 

@@ -430,6 +430,10 @@ public final class StatusActivity extends ZpSettingsActivity {
             addSection(section, Tweaks.SECTION_BACKUP,
                     getString(R.string.zp_backup_push_title), null,
                     R.drawable.ic_zp_database_backup);
+            addSection(section, Tweaks.SECTION_SECURITY,
+                    getString(R.string.zp_security_title),
+                    getString(R.string.zp_security_summary),
+                    R.drawable.ic_zp_key_round);
         }
 
         private void addModule(PreferenceScreen screen) {

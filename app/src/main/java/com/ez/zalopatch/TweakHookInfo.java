@@ -133,6 +133,13 @@ final class TweakHookInfo {
                         "<Zalo preference helper>",
                         "symbols.backup.interval_reader_method", "<long read>");
                 break;
+            case Tweaks.KEY_PASSCODE_GRACE:
+            case Tweaks.KEY_PASSCODE_GRACE_MS:
+                path = schema.string("symbols.passcode.prefs_int_reader_class",
+                        "<Zalo int preference reader>") + "#"
+                        + schema.string("symbols.passcode.prefs_int_reader_method",
+                        "<int read>") + "(I,String,Z)I";
+                break;
             case Tweaks.KEY_HIDE_MESSAGE_ADS:
                 path = method(schema, "symbols.zinstant.ad_item_view_class",
                         "com.zing.zalo.ui.widget.ZinstantAdItemView",
@@ -284,6 +291,13 @@ final class TweakHookInfo {
                                 "<Zalo preference helper>"),
                         "#" + schema.string("symbols.backup.interval_reader_method",
                                 "<long read>") + "()");
+            case Tweaks.KEY_PASSCODE_GRACE:
+            case Tweaks.KEY_PASSCODE_GRACE_MS:
+                return Arrays.asList(
+                        schema.string("symbols.passcode.prefs_int_reader_class",
+                                "<Zalo int preference reader>"),
+                        "#" + schema.string("symbols.passcode.prefs_int_reader_method",
+                                "<int read>") + "(I,String,Z)I");
             default:
                 return Collections.emptyList();
         }
