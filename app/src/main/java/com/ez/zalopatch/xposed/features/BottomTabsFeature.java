@@ -22,9 +22,8 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class BottomTabsFeature extends Feature {
     private static final String FEATURE_STATE = "bottom_tabs.state";
@@ -37,9 +36,17 @@ public final class BottomTabsFeature extends Feature {
     private final AtomicBoolean installComplete = new AtomicBoolean(false);
     private final AtomicBoolean retryScheduled = new AtomicBoolean(false);
     private final AtomicBoolean classLoadWatchInstalled = new AtomicBoolean(false);
+    // Set by the old generation in onHotReloading. Pending retry and class-load
+    // callbacks must not install hooks after the framework froze old code.
+    private static volatile boolean retiredForHotReload;
+
+    /** Stops pending retry and watch callbacks from arming hooks after reload. */
+    public static void retireForHotReload() {
+        retiredForHotReload = true;
+    }
     private final AtomicBoolean loggedOnce = new AtomicBoolean(false);
     private final AtomicBoolean currentConsumersLoggedOnce = new AtomicBoolean(false);
-    private final CopyOnWriteArrayList<XC_MethodHook.Unhook> classLoadUnhooks = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<XpHooks.Handle> classLoadUnhooks = new CopyOnWriteArrayList<>();
     private static final java.util.Set<String> schemaSourceChecks = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> schemaFallbackPaths = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> symbolFailuresLogged = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
@@ -132,7 +139,16 @@ public final class BottomTabsFeature extends Feature {
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (installMatchingHooks()) {
+                if (retiredForHotReload) {
+                    return;
+                }
+                try {
+                    if (installMatchingHooks()) {
+                        return;
+                    }
+                } catch (Throwable retryFailure) {
+                    log("Bottom tab retry failed: "
+                            + retryFailure.getClass().getSimpleName());
                     return;
                 }
                 SelfCheckRegistry.markStale(FEATURE_STATE, "symbol schema bottom_tabs.current_tab_symbols", "retry found no matching class");
@@ -161,9 +177,12 @@ public final class BottomTabsFeature extends Feature {
         if (watched.isEmpty()) {
             return;
         }
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_STATE, ClassLoader.class, "loadClass", new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
+                if (retiredForHotReload) {
+                    return;
+                }
                 if (installComplete.get() || !(param.getResult() instanceof Class<?>)) {
                     return;
                 }
@@ -181,7 +200,7 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void unhookClassLoadWatch() {
-        for (XC_MethodHook.Unhook unhook : classLoadUnhooks) {
+        for (XpHooks.Handle unhook : classLoadUnhooks) {
             try {
                 unhook.unhook();
             } catch (Throwable ignored) {
@@ -214,7 +233,7 @@ public final class BottomTabsFeature extends Feature {
             if (loader == null) {
                 continue;
             }
-            Class<?> clazz = XposedHelpers.findClassIfExists(className, loader);
+            Class<?> clazz = XpReflect.findClassIfExists(className, loader);
             if (clazz != null) {
                 return clazz;
             }
@@ -233,14 +252,15 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing rebuild method");
             return;
         }
-        XposedBridge.hookAllMethods(mainTabClass, rebuildMethod, new XC_MethodHook() {
+        XpHooks.Before legacyRebuildBefore = new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 TAB_REBUILD_DEPTH.set(TAB_REBUILD_DEPTH.get() + 1);
             }
-
+        };
+        XpHooks.After legacyRebuildAfter = new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 try {
                     Object mainTabState = param.thisObject;
                     List<Object> originalTabs = getOriginalTabs(mainTabState);
@@ -252,7 +272,9 @@ public final class BottomTabsFeature extends Feature {
                     TAB_REBUILD_DEPTH.set(Math.max(0, TAB_REBUILD_DEPTH.get() - 1));
                 }
             }
-        });
+        };
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, rebuildMethod,
+                legacyRebuildBefore, legacyRebuildAfter);
 
         hookBooleanFlag(mainTabClass, schemaString("symbols.bottom_tabs.legacy_hide_discovery_method", ""), hideDiscovery);
         hookBooleanFlag(mainTabClass, schemaString("symbols.bottom_tabs.legacy_hide_timeline_method", ""), hideTimeline);
@@ -270,32 +292,37 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentBottomTabs(Class<?> mainTabClass) {
-        XposedBridge.hookAllMethods(mainTabClass, currentMethod("rebuild"), new XC_MethodHook() {
+        XpHooks.Before rebuildBefore = new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 TAB_REBUILD_DEPTH.set(TAB_REBUILD_DEPTH.get() + 1);
             }
-
+        };
+        XpHooks.After rebuildAfter = new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 try {
                     applyCurrentTabState(param.thisObject);
                 } finally {
                     TAB_REBUILD_DEPTH.set(Math.max(0, TAB_REBUILD_DEPTH.get() - 1));
                 }
             }
-        });
+        };
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("rebuild"),
+                rebuildBefore, rebuildAfter);
 
-        XposedBridge.hookAllMethods(mainTabClass, currentMethod("refresh"), new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("refresh"),
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 applyCurrentTabState(param.thisObject);
             }
         });
 
-        XposedBridge.hookAllMethods(mainTabClass, currentMethod("singleton"), new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("singleton"),
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 Object state = param.getResult();
                 if (state != null) {
                     applyCurrentTabState(state);
@@ -320,20 +347,23 @@ public final class BottomTabsFeature extends Feature {
     private void hookCurrentTabConsumers(Class<?> mainTabClass) {
         Class<?> customMainTabClass = findClassIfExists(CURRENT_CUSTOM_MAIN_TAB_CLASS);
         if (customMainTabClass != null) {
-            XposedBridge.hookAllConstructors(customMainTabClass, new XC_MethodHook() {
+            XpHooks.Before customTabBefore = new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     applyCurrentSingletonState(mainTabClass);
                 }
-
+            };
+            XpHooks.After customTabAfter = new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     applyCurrentSingletonState(mainTabClass);
                     if (HookConfig.isDebugEnabled()) {
                         logCurrentTabArrays("CustomMainTab init", mainTabClass);
                     }
                 }
-            });
+            };
+            XpHooks.hookAllConstructors(FEATURE_CONSUMERS, customMainTabClass,
+                    customTabBefore, customTabAfter);
         }
 
         for (String adapterClass : SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
@@ -358,9 +388,9 @@ public final class BottomTabsFeature extends Feature {
                     "missing home lifecycle method");
             return;
         }
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(mainTabViewClass, lifecycleMethod, new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, mainTabViewClass, lifecycleMethod, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 try {
                     Object state = applyCurrentSingletonState(mainTabClass);
                     if (state == null) {
@@ -384,7 +414,7 @@ public final class BottomTabsFeature extends Feature {
                                 mainTabViewClass.getName() + "#" + lifecycleMethod, "pager unavailable");
                         return;
                     }
-                    XposedHelpers.callMethod(pager, "setCurrentItem", messageIndex, false);
+                    XpReflect.callMethod(pager, "setCurrentItem", messageIndex, false);
                     SelfCheckRegistry.markSuppressed(FEATURE_FORCE_HOME,
                             mainTabViewClass.getName() + "#" + lifecycleMethod,
                             "from=" + currentItem + " to=" + messageIndex);
@@ -411,7 +441,7 @@ public final class BottomTabsFeature extends Feature {
         int failedMethods = 0;
         for (String methodName : methodNames) {
             try {
-                Object value = XposedHelpers.callMethod(mainTabView, methodName);
+                Object value = XpReflect.callMethod(mainTabView, methodName);
                 if (value instanceof Integer) {
                     return (Integer) value;
                 }
@@ -430,7 +460,7 @@ public final class BottomTabsFeature extends Feature {
 
     private Object getObjectFieldOrFirstMatching(Object object, String preferredFieldName, String methodName) {
         try {
-            Object value = XposedHelpers.getObjectField(object, preferredFieldName);
+            Object value = XpReflect.getObjectField(object, preferredFieldName);
             if (value != null) {
                 return value;
             }
@@ -470,14 +500,15 @@ public final class BottomTabsFeature extends Feature {
         if (adapterClass == null) {
             return;
         }
-        XposedBridge.hookAllConstructors(adapterClass, new XC_MethodHook() {
+        XpHooks.Before pagerBefore = new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 applyCurrentSingletonState(mainTabClass);
             }
-
+        };
+        XpHooks.After pagerAfter = new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 try {
                     Object state = applyCurrentSingletonState(mainTabClass);
                     if (state == null) {
@@ -504,7 +535,8 @@ public final class BottomTabsFeature extends Feature {
                     log("Current pager adapter refresh failed: " + throwable.getClass().getSimpleName());
                 }
             }
-        });
+        };
+        XpHooks.hookAllConstructors(FEATURE_CONSUMERS, adapterClass, pagerBefore, pagerAfter);
     }
 
     private boolean setFirstArrayField(Object object, Class<?> arrayType, Object value) {
@@ -527,7 +559,7 @@ public final class BottomTabsFeature extends Feature {
 
     private Object getObjectFieldOrFirstArray(Object object, String fieldName, Class<?> arrayType) {
         try {
-            return XposedHelpers.getObjectField(object, fieldName);
+            return XpReflect.getObjectField(object, fieldName);
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(object) + "#" + fieldName, throwable);
         }
@@ -549,7 +581,7 @@ public final class BottomTabsFeature extends Feature {
 
     private Object applyCurrentSingletonState(Class<?> mainTabClass) {
         try {
-            Object state = XposedHelpers.callStaticMethod(
+            Object state = XpReflect.callStaticMethod(
                     mainTabClass, currentMethod("singleton"));
             if (state != null) {
                 applyCurrentTabState(state);
@@ -566,7 +598,7 @@ public final class BottomTabsFeature extends Feature {
 
     private void logCurrentTabArrays(String source, Class<?> mainTabClass) {
         try {
-            Object state = XposedHelpers.callStaticMethod(
+            Object state = XpReflect.callStaticMethod(
                     mainTabClass, currentMethod("singleton"));
             if (state == null) {
                 return;
@@ -588,7 +620,7 @@ public final class BottomTabsFeature extends Feature {
 
     private int getIntFieldOr(Object object, String fieldName, int fallback) {
         try {
-            return XposedHelpers.getIntField(object, fieldName);
+            return XpReflect.getIntField(object, fieldName);
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(object) + "#" + fieldName, throwable);
             return fallback;
@@ -636,9 +668,9 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentBooleanFlag(Class<?> mainTabClass, String methodName, boolean hidden) {
-        XposedBridge.hookAllMethods(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!isRebuilding()) {
                     param.setResult(!hidden);
                 }
@@ -647,9 +679,9 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentIndexMethod(Class<?> mainTabClass, String methodName, String tabName) {
-        XposedBridge.hookAllMethods(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     param.setResult(indexOf(getFilteredTabs(param.thisObject), tabName));
                 }
@@ -658,9 +690,9 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentSizeMethod(Class<?> mainTabClass, String methodName) {
-        XposedBridge.hookAllMethods(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     param.setResult(getFilteredTabs(param.thisObject).size());
                 }
@@ -750,7 +782,7 @@ public final class BottomTabsFeature extends Feature {
     private Object getCurrentTab(String fieldName) {
         try {
             Class<?> tabClass = findClassIfExists(currentSymbols.enumClassName);
-            return tabClass == null ? null : XposedHelpers.getStaticObjectField(tabClass, fieldName);
+            return tabClass == null ? null : XpReflect.getStaticObjectField(tabClass, fieldName);
         } catch (Throwable throwable) {
             logSymbolFailure("field", currentSymbols.enumClassName + "#" + fieldName, throwable);
             return null;
@@ -761,7 +793,7 @@ public final class BottomTabsFeature extends Feature {
         int[] result = new int[tabs.size()];
         for (int i = 0; i < tabs.size(); i++) {
             try {
-                result[i] = (Integer) XposedHelpers.callStaticMethod(
+                result[i] = (Integer) XpReflect.callStaticMethod(
                         mainTabState.getClass(), currentMethod("icon_resolver"), tabs.get(i));
             } catch (Throwable throwable) {
                 logSymbolFailure("method", mainTabState.getClass().getName() + "#" + currentMethod("icon_resolver"), throwable);
@@ -794,7 +826,7 @@ public final class BottomTabsFeature extends Feature {
 
     private boolean setIntFieldIfExists(Object object, String fieldName, int value) {
         try {
-            XposedHelpers.setIntField(object, fieldName, value);
+            XpReflect.setIntField(object, fieldName, value);
             return true;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(object) + "#" + fieldName, throwable);
@@ -804,7 +836,7 @@ public final class BottomTabsFeature extends Feature {
 
     private boolean setBooleanFieldIfExists(Object object, String fieldName, boolean value) {
         try {
-            XposedHelpers.setBooleanField(object, fieldName, value);
+            XpReflect.setBooleanField(object, fieldName, value);
             return true;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(object) + "#" + fieldName, throwable);
@@ -814,7 +846,7 @@ public final class BottomTabsFeature extends Feature {
 
     private boolean setObjectFieldIfExists(Object object, String fieldName, Object value) {
         try {
-            XposedHelpers.setObjectField(object, fieldName, value);
+            XpReflect.setObjectField(object, fieldName, value);
             return true;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(object) + "#" + fieldName, throwable);
@@ -847,9 +879,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing boolean flag method");
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!isRebuilding()) {
                     param.setResult(!hidden);
                 }
@@ -862,9 +894,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing index method for " + tabName);
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     List<Object> filteredTabs = getFilteredTabs(param.thisObject);
                     param.setResult(indexOf(filteredTabs, tabName));
@@ -878,9 +910,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing tab list method");
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     param.setResult(getFilteredTabs(param.thisObject));
                 }
@@ -893,9 +925,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing tab size method");
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     param.setResult(getFilteredTabs(param.thisObject).size());
                 }
@@ -908,9 +940,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing int array method");
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     int[] original = (int[]) param.getResult();
                     if (original == null) {
@@ -927,9 +959,9 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing boolean array method");
             return;
         }
-        XposedHelpers.findAndHookMethod(mainTabClass, methodName, new XC_MethodHook() {
+        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+            public void after(XpHooks.HookParam param) throws Throwable {
                 if (!isRebuilding()) {
                     boolean[] original = (boolean[]) param.getResult();
                     if (original == null) {

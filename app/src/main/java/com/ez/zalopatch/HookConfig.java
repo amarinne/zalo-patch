@@ -4,11 +4,10 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 
+import com.ez.zalopatch.xposed.core.XpLog;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-
-import de.robv.android.xposed.XSharedPreferences;
-import de.robv.android.xposed.XposedBridge;
 
 public final class HookConfig {
     private static final Uri PROVIDER_URI = Uri.parse("content://com.ez.zalopatch.config/prefs");
@@ -17,7 +16,6 @@ public final class HookConfig {
     private static volatile Context appContext;
     private static volatile Context moduleContext;
     private static volatile boolean moduleContextUnavailable;
-    private static volatile XSharedPreferences xPrefs;
     private static volatile NotificationRuleStore.RuleSet notificationRules;
     private static volatile Boolean hookDebugEnabled;
 
@@ -46,7 +44,6 @@ public final class HookConfig {
 
     public static void reload() {
         cache.clear();
-        xPrefs = null;
         notificationRules = null;
     }
 
@@ -69,17 +66,35 @@ public final class HookConfig {
         return cached;
     }
 
-    private static XSharedPreferences getXPrefs() {
-        if (xPrefs == null) {
-            synchronized (HookConfig.class) {
-                if (xPrefs == null) {
-                    xPrefs = new XSharedPreferences(MODULE_PACKAGE, Tweaks.PREFS_NAME);
-                    xPrefs.makeWorldReadable();
+    public static void logStartupSnapshot() {
+        Context context = appContext;
+        if (context == null) {
+            XpLog.i("ZaloPatch: HookConfig snapshot source=none appContext=false");
+            return;
+        }
+        int count = 0;
+        try {
+            Context providerContext = resolveModuleContext(context);
+            String source = providerContext != null ? "module-provider" : "target-provider";
+            if (providerContext == null) {
+                providerContext = context;
+            }
+            Cursor cursor = providerContext.getContentResolver().query(
+                    PROVIDER_URI, null, null, null, null);
+            if (cursor != null) {
+                try {
+                    while (cursor.moveToNext()) {
+                        count++;
+                    }
+                } finally {
+                    cursor.close();
                 }
             }
+            XpLog.i("ZaloPatch: HookConfig snapshot source=" + source + " keys=" + count);
+        } catch (Throwable throwable) {
+            XpLog.i("ZaloPatch: HookConfig snapshot provider failed: "
+                    + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
         }
-        xPrefs.reload();
-        return xPrefs;
     }
 
     public static boolean isEnabled(String key) {
@@ -161,21 +176,21 @@ public final class HookConfig {
             cache.put(key, propertyValue);
             return propertyValue;
         }
+        // LibXposed API 102 modules cannot use XSharedPreferences: the world-readable
+        // prefs fallback is gone. Reads before any application context exists use the
+        // fail-safe defaults at the call site; once a context exists the module
+        // provider is the structured fallback after the property mirror.
         if (context == null) {
             context = resolveFallbackContext();
         }
         if (context == null) {
-            return readFromXPrefs(key);
+            return null;
         }
         String value = readFromProvider(resolveModuleContext(context), key, "module");
         if (value != null) {
             return value;
         }
-        value = readFromProvider(context, key, "target");
-        if (value != null) {
-            return value;
-        }
-        return readFromXPrefs(key);
+        return readFromProvider(context, key, "target");
     }
 
     private static String readFromProvider(Context context, String key, String source) {
@@ -231,28 +246,6 @@ public final class HookConfig {
         }
     }
 
-    private static String readFromXPrefs(String key) {
-        try {
-            XSharedPreferences prefs = getXPrefs();
-            prefs.reload();
-            Object value = prefs.getAll().get(key);
-            String str = value != null ? String.valueOf(value) : null;
-            if (isDebugEnabled()) {
-                android.util.Log.i("ZaloPatch", "XPrefs read key=" + key + " value=" + str);
-            }
-            if (str != null) {
-                cache.put(key, str);
-            }
-            return str;
-        } catch (Throwable t) {
-            if (isDebugEnabled()) {
-                android.util.Log.i("ZaloPatch", "XPrefs read failed: "
-                        + t.getClass().getSimpleName());
-            }
-            return null;
-        }
-    }
-
     /**
      * Dev debug toggle, backed by an Android system property (readable by any app at any time,
      * unlike the prefs/ContentProvider path which is SELinux-blocked / unreliable cross-process).
@@ -275,36 +268,6 @@ public final class HookConfig {
             return "1".equals(value) || "true".equalsIgnoreCase(value);
         } catch (Throwable ignored) {
             return false;
-        }
-    }
-
-    public static void logStartupSnapshot() {
-        Context context = appContext;
-        if (context == null) {
-            XposedBridge.log("ZaloPatch: HookConfig snapshot source=none appContext=false");
-            return;
-        }
-        int count = 0;
-        try {
-            Context providerContext = resolveModuleContext(context);
-            String source = providerContext != null ? "module-provider" : "target-provider";
-            if (providerContext == null) {
-                providerContext = context;
-            }
-            Cursor cursor = providerContext.getContentResolver().query(PROVIDER_URI, null, null, null, null);
-            if (cursor != null) {
-                try {
-                    while (cursor.moveToNext()) {
-                        count++;
-                    }
-                } finally {
-                    cursor.close();
-                }
-            }
-            XposedBridge.log("ZaloPatch: HookConfig snapshot source=" + source + " keys=" + count);
-        } catch (Throwable throwable) {
-            XposedBridge.log("ZaloPatch: HookConfig snapshot provider failed: "
-                    + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
         }
     }
 

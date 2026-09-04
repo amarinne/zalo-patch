@@ -80,6 +80,46 @@ public final class SettingsUiSmokeTest
                 container.isDuplicateParentStateEnabled());
     }
 
+    public void testTrailingValueStacksBelowTitleOnCompactWidth() {
+        StatusActivity activity = getActivity();
+        android.content.res.Configuration configuration =
+                new android.content.res.Configuration(
+                        activity.getResources().getConfiguration());
+        configuration.screenWidthDp = 360;
+        Context configured = activity.createConfigurationContext(configuration);
+        Context compact = new android.view.ContextThemeWrapper(
+                configured, R.style.Theme_ZaloPatch);
+        android.view.View row = android.view.LayoutInflater.from(compact)
+                .inflate(R.layout.zp_preference_row, null, false);
+        androidx.preference.PreferenceViewHolder holder =
+                androidx.preference.PreferenceViewHolder.createInstanceForTests(row);
+        ZpRowPreference preference = PreferenceUi.info(
+                compact, "Runtime environment", null).value(
+                        "LSPosed · Resource hooks: observed");
+
+        preference.onBindViewHolder(holder);
+
+        android.widget.LinearLayout titleValue = row.findViewById(R.id.zp_row_title_value);
+        android.view.View title = row.findViewById(android.R.id.title);
+        android.view.View value = row.findViewById(R.id.zp_row_value);
+        assertEquals(android.widget.LinearLayout.VERTICAL, titleValue.getOrientation());
+        assertEquals(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                title.getLayoutParams().width);
+        assertEquals(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                value.getLayoutParams().width);
+        assertEquals(0, ((android.view.ViewGroup.MarginLayoutParams)
+                value.getLayoutParams()).getMarginStart());
+    }
+
+    public void testTrailingValueStaysInlineAtRegularWidth() {
+        android.content.res.Configuration configuration =
+                new android.content.res.Configuration();
+        configuration.screenWidthDp = 400;
+        assertFalse(ZpRowStyle.shouldStackValue(configuration));
+        configuration.screenWidthDp = 399;
+        assertTrue(ZpRowStyle.shouldStackValue(configuration));
+    }
+
     public void testRecycledRowClearsMissingSummary() {
         StatusActivity activity = getActivity();
         android.view.View row = android.view.LayoutInflater.from(activity)

@@ -73,7 +73,7 @@ final class TweakHookInfo {
                 path = inboxListSetter(schema);
                 break;
             case Tweaks.KEY_HIDE_ZCLOUD_BANNER:
-                path = "XResources#hookLayout(messageslist/fixed_banner_container)";
+                path = "LayoutInflater#inflate(messageslist/fixed_banner_container)";
                 break;
             case Tweaks.KEY_FILTER_POPOVER_CATEGORIES:
                 path = "RecyclerView#setAdapter() + " + inboxListSetter(schema);

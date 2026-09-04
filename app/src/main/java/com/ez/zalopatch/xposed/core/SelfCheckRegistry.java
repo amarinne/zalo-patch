@@ -15,8 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.UUID;
 
-import de.robv.android.xposed.XposedBridge;
-
 public final class SelfCheckRegistry {
     private static final Uri SELF_CHECK_URI = Uri.parse(
             "content://com.ez.zalopatch.config/self_check");
@@ -211,7 +209,7 @@ public final class SelfCheckRegistry {
 
     private static void logForHooks(String message) {
         try {
-            XposedBridge.log(message);
+            XpLog.i(message);
         } catch (Throwable ignored) {
         }
     }

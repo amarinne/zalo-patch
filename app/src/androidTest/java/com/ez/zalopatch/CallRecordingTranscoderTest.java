@@ -114,6 +114,34 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         }
     }
 
+    public void testFailedRawWaveRemainsInCatalogAndCanBeDeleted() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        File directory = new File(context.getFilesDir(), "call_recordings");
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        File raw = new File(directory,
+                "zalo-call-1785150000000-incoming-deadbeef.processing.wav");
+        raw.delete();
+        try (FileOutputStream output = new FileOutputStream(raw)) {
+            output.write(new byte[]{'R', 'I', 'F', 'F'});
+        }
+        try {
+            CallRecordingStore.Entry found = null;
+            for (CallRecordingStore.Entry entry : CallRecordingStore.list(context)) {
+                if (entry.raw && entry.uri.equals(android.net.Uri.fromFile(raw))) {
+                    found = entry;
+                    break;
+                }
+            }
+            assertNotNull("Retained raw WAV missing from recording catalog", found);
+            assertFalse(CallRecordingStore.retry(context, found));
+            assertTrue("Failed retry deleted retained raw WAV", raw.isFile());
+            assertTrue(CallRecordingStore.delete(context, found));
+            assertFalse(raw.exists());
+        } finally {
+            raw.delete();
+        }
+    }
+
     public void testIdentityAttestationCapturesSourceUid() throws Exception {
         assertEquals(Process.myUid(),
                 CallRecordingImportProtocol.attest(CallRecordingImportProtocol.identity()));

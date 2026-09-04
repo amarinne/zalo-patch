@@ -7,23 +7,26 @@ import org.junit.Test;
 
 public final class CallRecordingLifecycleTest {
     @Test
-    public void acceptedVoiceOrVideoCallStartsFromAudioConnection() {
-        assertTrue(CallRecordingLifecycle.shouldStartAudio("onCallConfirmed",
-                CallRecordingLifecycle.UNKNOWN_STATE));
-        assertTrue(CallRecordingLifecycle.shouldStartAudio("onCallAudioState", 32));
+    public void confirmationArmsButAudioConnectionStartsCapture() {
+        assertTrue(CallRecordingLifecycle.confirmsCall("onCallConfirmed"));
+        assertTrue(CallRecordingLifecycle.confirmsCall("onPreConnectSuccessful"));
+        assertTrue(CallRecordingLifecycle.connectsAudio("onCallAudioState", 32));
+        assertFalse(CallRecordingLifecycle.shouldStartAudio(true, false));
+        assertFalse(CallRecordingLifecycle.shouldStartAudio(false, true));
+        assertTrue(CallRecordingLifecycle.shouldStartAudio(true, true));
     }
 
     @Test
     public void videoStateNeverStartsOrStopsAudioRecording() {
         for (int state = 0; state <= 20; state++) {
-            assertFalse(CallRecordingLifecycle.shouldStartAudio("onCallVideoState", state));
+            assertFalse(CallRecordingLifecycle.connectsAudio("onCallVideoState", state));
             assertFalse(CallRecordingLifecycle.shouldStopAudio("onCallVideoState", state));
         }
     }
 
     @Test
     public void holdAndUnholdKeepOneAudioRecordingSession() {
-        assertFalse(CallRecordingLifecycle.shouldStartAudio("onCallAudioState", 0));
+        assertFalse(CallRecordingLifecycle.connectsAudio("onCallAudioState", 0));
         assertFalse(CallRecordingLifecycle.shouldStopAudio("onCallAudioState", 0));
         assertFalse(CallRecordingLifecycle.shouldStopAudio("onCallAudioState", 1));
         assertFalse(CallRecordingLifecycle.shouldStopAudio("onCallAudioState", 2));

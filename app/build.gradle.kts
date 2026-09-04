@@ -99,10 +99,12 @@ android {
 
     defaultConfig {
         applicationId = "com.ez.zalopatch"
-        minSdk = 24
+        // LibXposed API 102 declares API 26 as its minimum; the API 24/25 range
+        // supported by the legacy API 82 entry ends with this migration.
+        minSdk = 26
         targetSdk = 34
-        versionCode = 173
-        versionName = "0.4.169-passcode-grace+B173-20260824T0803Z"
+        versionCode = 200
+        versionName = "0.4.196-libxposed-merge-fixes+B200-20260904T2048Z"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -135,6 +137,10 @@ android {
     buildTypes {
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -287,7 +293,7 @@ dependencies {
     implementation("androidx.preference:preference:1.2.1")
     implementation("com.google.android.material:material:1.12.0")
 
-    compileOnly("de.robv.android.xposed:api:82")
+    compileOnly("io.github.libxposed:api:102.0.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

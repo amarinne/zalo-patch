@@ -54,6 +54,7 @@
             android:orientation="vertical">
 
             <LinearLayout
+                android:id="@+id/zp_row_title_value"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:baselineAligned="true"
@@ -72,7 +73,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="@dimen/zp_row_padding_vertical"
                     android:ellipsize="end"
-                    android:maxWidth="190dp"
+                    android:maxWidth="@dimen/zp_row_value_max_width"
                     android:singleLine="true"
                     android:textAppearance="?attr/textAppearanceBodySmall"
                     android:textColor="@color/zp_text_secondary"

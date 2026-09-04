@@ -7,12 +7,11 @@ import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedHelpers;
 
 /** Blocks only outbound seen and typing signals; incoming status rendering stays native. */
 public final class StatusPrivacyFeature extends Feature {
@@ -54,13 +53,14 @@ public final class StatusPrivacyFeature extends Feature {
                 + managerClass + "#" + singleMethod + "/" + batchMethod
                 + " + " + repositoryClass + "#" + directMethod;
         runGuarded("seen-status block", FEATURE_SEEN, target, () -> {
-            Class<?> ackType = XposedHelpers.findClass(ackClass, classLoader);
-            XposedHelpers.findAndHookMethod(managerClass, classLoader, singleMethod, ackType,
-                    new XC_MethodHook() {
+            Class<?> ackType = XpReflect.findClass(ackClass, classLoader);
+            XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, singleMethod,
+                    new Class<?>[]{ackType},
+                    new XpHooks.Before() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
+                        public void before(XpHooks.HookParam param) {
                             try {
-                                if (XposedHelpers.getIntField(param.args[0], typeField)
+                                if (XpReflect.getIntField(param.args[0], typeField)
                                         != SEEN_ACK_TYPE) {
                                     return;
                                 }
@@ -71,16 +71,17 @@ public final class StatusPrivacyFeature extends Feature {
                             } catch (Throwable ignored) {
                             }
                         }
-                    });
-            XposedHelpers.findAndHookMethod(managerClass, classLoader, batchMethod, ArrayList.class,
-                    new XC_MethodHook() {
+                    }, null);
+            XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, batchMethod,
+                    new Class<?>[]{ArrayList.class},
+                    new XpHooks.Before() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
+                        public void before(XpHooks.HookParam param) {
                             @SuppressWarnings("unchecked")
                             List<Object> batch = (List<Object>) param.args[0];
                             StatusPrivacyAckFilter.Result filtered =
                                     StatusPrivacyAckFilter.filterSeen(batch, SEEN_ACK_TYPE,
-                                            entry -> XposedHelpers.getIntField(entry, typeField));
+                                            entry -> XpReflect.getIntField(entry, typeField));
                             if (filtered.dropped == 0) {
                                 return;
                             }
@@ -93,12 +94,12 @@ public final class StatusPrivacyFeature extends Feature {
                                 param.args[0] = filtered.kept;
                             }
                         }
-                    });
-            XposedHelpers.findAndHookMethod(repositoryClass, classLoader, directMethod,
-                    List.class, boolean.class, boolean.class, boolean.class,
-                    new XC_MethodHook() {
+                    }, null);
+            XpHooks.findAndHookMethod(FEATURE_SEEN, repositoryClass, classLoader, directMethod,
+                    new Class<?>[]{List.class, boolean.class, boolean.class, boolean.class},
+                    new XpHooks.Before() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
+                        public void before(XpHooks.HookParam param) {
                             if (!StatusPrivacyAckFilter.shouldBlockDirectAck(
                                     (Boolean) param.args[3])) {
                                 return;
@@ -108,7 +109,7 @@ public final class StatusPrivacyFeature extends Feature {
                                     repositoryClass + "#" + directMethod,
                                     "blocked direct seen acknowledgement");
                         }
-                    });
+                    }, null);
         });
     }
 
@@ -124,17 +125,19 @@ public final class StatusPrivacyFeature extends Feature {
         String method = schema.string("symbols.chat.send_typing_method", "");
         runGuarded("typing-status block", FEATURE_TYPING,
                 "source=" + schema.source + " " + repositoryClass + "#" + method, () ->
-                        XposedHelpers.findAndHookMethod(repositoryClass, classLoader, method,
-                                String.class, int.class, boolean.class, boolean.class,
-                                new XC_MethodHook() {
+                        XpHooks.findAndHookMethod(FEATURE_TYPING, repositoryClass, classLoader,
+                                method,
+                                new Class<?>[]{String.class, int.class, boolean.class,
+                                        boolean.class},
+                                new XpHooks.Before() {
                                     @Override
-                                    protected void beforeHookedMethod(MethodHookParam param) {
+                                    public void before(XpHooks.HookParam param) {
                                         param.setResult(null);
                                         SelfCheckRegistry.incrementHit(
                                                 FEATURE_TYPING,
                                                 repositoryClass + "#" + method,
                                                 "blocked typing indicator send");
                                     }
-                                }));
+                                }, null));
     }
 }

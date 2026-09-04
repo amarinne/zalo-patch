@@ -184,8 +184,12 @@
     <string name="zp_call_recordings_storage">%1$d bản ghi âm · %2$s</string>
     <string name="zp_call_recording_open_failed">Không tìm thấy ứng dụng phát âm thanh</string>
     <string name="zp_call_recording_delete_title">Xóa bản ghi âm?</string>
+    <string name="zp_call_recording_delete_raw_title">Xóa file WAV thô?</string>
     <string name="zp_call_recording_delete_message">Thao tác này xóa file M4A khỏi bộ nhớ dùng chung.</string>
     <string name="zp_call_recording_delete_failed">Không thể xóa bản ghi âm</string>
+    <string name="zp_call_recording_raw_summary">%1$s · Đã giữ file WAV thô · %2$s · Nhấn để thử chuyển đổi M4A</string>
+    <string name="zp_call_recording_retry_started">Đã bắt đầu chuyển đổi M4A</string>
+    <string name="zp_call_recording_retry_failed">File WAV thô không tồn tại hoặc không hợp lệ</string>
     <string name="zp_call_recording_notification_status_channel">Trạng thái ghi âm cuộc gọi</string>
     <string name="zp_call_recording_notification_status_channel_summary">Hiển thị khi Zalo đang ghi âm cuộc gọi.</string>
     <string name="zp_call_recording_notification_result_channel">Kết quả ghi âm cuộc gọi</string>

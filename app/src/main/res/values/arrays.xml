@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string-array name="xposed_scope">
-        <item>com.zing.zalo</item>
-    </string-array>
     <string-array name="zp_history_retention_entries">
         <item>100 notifications</item>
         <item>250 notifications</item>

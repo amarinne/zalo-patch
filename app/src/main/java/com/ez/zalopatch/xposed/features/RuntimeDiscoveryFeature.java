@@ -23,9 +23,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 /**
  * Runtime symbol-discovery tool for re-mapping obfuscated Zalo targets after an app update.
@@ -102,7 +101,7 @@ public final class RuntimeDiscoveryFeature extends Feature {
         StringBuilder builder = new StringBuilder("loadable classes:");
         for (String className : LOADABLE_CLASSES) {
             builder.append('\n').append("  ").append(className).append('=');
-            builder.append(XposedHelpers.findClassIfExists(className, classLoader) != null ? "yes" : "no");
+            builder.append(XpReflect.findClassIfExists(className, classLoader) != null ? "yes" : "no");
         }
         log(builder.toString());
     }
@@ -112,16 +111,17 @@ public final class RuntimeDiscoveryFeature extends Feature {
      * method, so hooking it once captures every adapter + its data without any obfuscated name.
      */
     private void hookRecyclerViewSetAdapter() {
-        Class<?> recyclerViewClass = XposedHelpers.findClassIfExists(
+        Class<?> recyclerViewClass = XpReflect.findClassIfExists(
                 "androidx.recyclerview.widget.RecyclerView", classLoader);
         if (recyclerViewClass == null) {
             log("RecyclerView class unavailable; cannot anchor on setAdapter");
             SelfCheckRegistry.markStale(FEATURE_DISCOVERY, "RecyclerView.setAdapter", "RecyclerView unavailable");
             return;
         }
-        XposedBridge.hookAllMethods(recyclerViewClass, "setAdapter", new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_DISCOVERY, recyclerViewClass, "setAdapter",
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (param.args.length < 1 || param.args[0] == null) {
                     return;
                 }
@@ -258,14 +258,15 @@ public final class RuntimeDiscoveryFeature extends Feature {
     }
 
     private void hookZaloViewPagerSetAdapter() {
-        Class<?> viewPagerClass = XposedHelpers.findClassIfExists("com.zing.v4.view.ViewPager", classLoader);
+        Class<?> viewPagerClass = XpReflect.findClassIfExists("com.zing.v4.view.ViewPager", classLoader);
         if (viewPagerClass == null) {
             log("Zalo ViewPager unavailable; static bottom-tab shape scan remains available");
             return;
         }
-        XposedBridge.hookAllMethods(viewPagerClass, "setAdapter", new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_DISCOVERY, viewPagerClass, "setAdapter",
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (param.args.length < 1 || param.args[0] == null) {
                     return;
                 }
@@ -469,15 +470,15 @@ public final class RuntimeDiscoveryFeature extends Feature {
     }
 
     private void hookViewConstructor(String className) {
-        Class<?> clazz = XposedHelpers.findClassIfExists(className, classLoader);
+        Class<?> clazz = XpReflect.findClassIfExists(className, classLoader);
         if (clazz == null) {
             log("surface unavailable " + className);
             SelfCheckRegistry.markStale(FEATURE_DISCOVERY, className, "surface unavailable");
             return;
         }
-        XposedBridge.hookAllConstructors(clazz, new XC_MethodHook() {
+        XpHooks.hookAllConstructors(FEATURE_DISCOVERY, clazz, null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!dumpedViews.add(className)) {
                     return;
                 }

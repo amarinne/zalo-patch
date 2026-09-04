@@ -4,6 +4,7 @@ import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.LayoutInflater;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.ColorRes;
@@ -21,6 +22,8 @@ import java.util.List;
  * dot, and status chips.
  */
 final class ZpRowStyle {
+    private static final int COMPACT_VALUE_BREAKPOINT_DP = 400;
+
     enum Shape {
         SINGLE,
         FIRST,
@@ -135,6 +138,7 @@ final class ZpRowStyle {
         TextView valueView = (TextView) holder.findViewById(R.id.zp_row_value);
         if (valueView != null) {
             boolean hasValue = value != null && !value.isEmpty();
+            bindTitleValueLayout(holder, context, hasValue, title, valueView);
             valueView.setVisibility(hasValue ? View.VISIBLE : View.GONE);
             valueView.setText(hasValue ? value : "");
         }
@@ -165,6 +169,45 @@ final class ZpRowStyle {
         if (chipContainer instanceof ViewGroup) {
             bindChips(context, (ViewGroup) chipContainer);
         }
+    }
+
+    private static void bindTitleValueLayout(PreferenceViewHolder holder, Context context,
+            boolean hasValue, TextView title, TextView valueView) {
+        View titleValue = holder.findViewById(R.id.zp_row_title_value);
+        if (!(titleValue instanceof LinearLayout) || title == null) {
+            return;
+        }
+        boolean stacked = hasValue && shouldStackValue(
+                context.getResources().getConfiguration());
+        LinearLayout container = (LinearLayout) titleValue;
+        container.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        container.setBaselineAligned(!stacked);
+
+        LinearLayout.LayoutParams titleParams =
+                (LinearLayout.LayoutParams) title.getLayoutParams();
+        titleParams.width = stacked ? ViewGroup.LayoutParams.MATCH_PARENT : 0;
+        titleParams.weight = stacked ? 0f : 1f;
+        title.setLayoutParams(titleParams);
+
+        LinearLayout.LayoutParams valueParams =
+                (LinearLayout.LayoutParams) valueView.getLayoutParams();
+        valueParams.width = stacked
+                ? ViewGroup.LayoutParams.MATCH_PARENT
+                : ViewGroup.LayoutParams.WRAP_CONTENT;
+        valueParams.weight = 0f;
+        valueParams.setMarginStart(stacked ? 0 : context.getResources()
+                .getDimensionPixelSize(R.dimen.zp_row_padding_vertical));
+        valueParams.topMargin = stacked ? context.getResources()
+                .getDimensionPixelSize(R.dimen.zp_row_value_stacked_margin_top) : 0;
+        valueView.setLayoutParams(valueParams);
+        valueView.setMaxWidth(stacked ? Integer.MAX_VALUE : context.getResources()
+                .getDimensionPixelSize(R.dimen.zp_row_value_max_width));
+    }
+
+    static boolean shouldStackValue(android.content.res.Configuration configuration) {
+        int widthDp = configuration.screenWidthDp;
+        return widthDp != android.content.res.Configuration.SCREEN_WIDTH_DP_UNDEFINED
+                && widthDp < COMPACT_VALUE_BREAKPOINT_DP;
     }
 
     private void bindChips(Context context, ViewGroup container) {

@@ -38,7 +38,12 @@ final class ZaloRestart {
             }
             Process process = new ProcessBuilder(
                     "su", "-c",
-                    "am force-stop com.zing.zalo && monkey -p com.zing.zalo -c android.intent.category.LAUNCHER 1")
+                    "launcher=$(cmd package resolve-activity --brief "
+                            + "-a android.intent.action.MAIN "
+                            + "-c android.intent.category.LAUNCHER com.zing.zalo | tail -n 1) "
+                            + "&& [ \"${launcher#com.zing.zalo/}\" != \"$launcher\" ] "
+                            + "&& am force-stop com.zing.zalo "
+                            + "&& am start -n \"$launcher\"")
                     .redirectErrorStream(true)
                     .start();
             StringBuilder output = new StringBuilder();

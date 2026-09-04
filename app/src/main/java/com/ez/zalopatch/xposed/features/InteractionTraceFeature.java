@@ -11,9 +11,8 @@ import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class InteractionTraceFeature extends Feature {
     private static final String TAG = "ZaloPatch";
@@ -43,9 +42,9 @@ public final class InteractionTraceFeature extends Feature {
     }
 
     private void hookDispatchTouch() {
-        XposedBridge.hookAllMethods(View.class, "dispatchTouchEvent", new XC_MethodHook() {
+        XpHooks.hookAllMethods("trace", View.class, "dispatchTouchEvent", new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof View) || param.args.length == 0
                         || !(param.args[0] instanceof MotionEvent)) {
                     return;
@@ -66,17 +65,17 @@ public final class InteractionTraceFeature extends Feature {
     }
 
     private void hookClickMethods() {
-        XposedBridge.hookAllMethods(View.class, "performClick", new XC_MethodHook() {
+        XpHooks.hookAllMethods("trace", View.class, "performClick", new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (param.thisObject instanceof View) {
                     trace("performClick " + describe((View) param.thisObject));
                 }
             }
         });
-        XposedBridge.hookAllMethods(View.class, "performLongClick", new XC_MethodHook() {
+        XpHooks.hookAllMethods("trace", View.class, "performLongClick", new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (param.thisObject instanceof View) {
                     trace("performLongClick " + describe((View) param.thisObject));
                 }
@@ -85,9 +84,9 @@ public final class InteractionTraceFeature extends Feature {
     }
 
     private void hookAddView() {
-        XposedBridge.hookAllMethods(ViewGroup.class, "addView", new XC_MethodHook() {
+        XpHooks.hookAllMethods("trace", ViewGroup.class, "addView", new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof ViewGroup) || param.args.length == 0
                         || !(param.args[0] instanceof View)) {
                     return;
@@ -99,7 +98,7 @@ public final class InteractionTraceFeature extends Feature {
     }
 
     private void hookWindowManagerAddView() {
-        Class<?> impl = XposedHelpers.findClassIfExists("android.view.WindowManagerImpl", classLoader);
+        Class<?> impl = XpReflect.findClassIfExists("android.view.WindowManagerImpl", classLoader);
         if (impl == null) {
             trace("WindowManagerImpl unavailable");
             return;
@@ -111,9 +110,9 @@ public final class InteractionTraceFeature extends Feature {
             }
             try {
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod("trace", method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.args.length > 0 && param.args[0] instanceof View) {
                             trace("WindowManager.addView " + describe((View) param.args[0]));
                         }

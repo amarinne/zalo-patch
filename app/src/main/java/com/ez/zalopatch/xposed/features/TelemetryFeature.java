@@ -18,9 +18,8 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class TelemetryFeature extends Feature {
     private static final String FEATURE_AD_ID = "telemetry.ad_id";
@@ -75,31 +74,34 @@ public final class TelemetryFeature extends Feature {
             return;
         }
         try {
-            Class<?> advertisingClientClass = XposedHelpers.findClass("com.google.android.gms.ads.identifier.AdvertisingIdClient", classLoader);
-            Class<?> infoClass = XposedHelpers.findClass(AD_ID_INFO_CLASS, classLoader);
+            Class<?> advertisingClientClass = XpReflect.findClass("com.google.android.gms.ads.identifier.AdvertisingIdClient", classLoader);
+            Class<?> infoClass = XpReflect.findClass(AD_ID_INFO_CLASS, classLoader);
 
-            XposedHelpers.findAndHookMethod(advertisingClientClass, "getAdvertisingIdInfo", android.content.Context.class, new XC_MethodHook() {
+            XpHooks.findAndHookMethod(FEATURE_AD_ID, advertisingClientClass, "getAdvertisingIdInfo",
+                    new Class<?>[]{android.content.Context.class}, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                public void before(XpHooks.HookParam param) throws Throwable {
                     param.setResult(newAdInfo(infoClass));
                     SelfCheckRegistry.markSuppressed(FEATURE_AD_ID, "getAdvertisingIdInfo", FAKE_AD_ID);
                 }
-            });
+            }, null);
 
-            XposedHelpers.findAndHookMethod(advertisingClientClass, "getInfo", new XC_MethodHook() {
+            XpHooks.findAndHookMethod(FEATURE_AD_ID, advertisingClientClass, "getInfo",
+                    new Class<?>[0], new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                public void before(XpHooks.HookParam param) throws Throwable {
                     param.setResult(newAdInfo(infoClass));
                     SelfCheckRegistry.markSuppressed(FEATURE_AD_ID, "getInfo", FAKE_AD_ID);
                 }
-            });
+            }, null);
 
-            XposedHelpers.findAndHookMethod(advertisingClientClass, "getIsAdIdFakeForDebugLogging", android.content.Context.class, new XC_MethodHook() {
+            XpHooks.findAndHookMethod(FEATURE_AD_ID, advertisingClientClass, "getIsAdIdFakeForDebugLogging",
+                    new Class<?>[]{android.content.Context.class}, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     param.setResult(Boolean.TRUE);
                 }
-            });
+            }, null);
 
             SelfCheckRegistry.markInstalled(FEATURE_AD_ID, "AdvertisingIdClient", 3);
             log("Advertising ID suppression installed");
@@ -116,14 +118,14 @@ public final class TelemetryFeature extends Feature {
             SelfCheckRegistry.markDisabled(FEATURE_FIREBASE, "FirebaseAnalytics");
         }
         try {
-            int hooked = hookMeasurementServiceMethods(XposedHelpers.findClass("android.app.ContextImpl", null), "ContextImpl", enabled);
+            int hooked = hookMeasurementServiceMethods(XpReflect.findClass("android.app.ContextImpl", null), "ContextImpl", enabled);
             hooked += hookMeasurementServiceMethods(ContextWrapper.class, "ContextWrapper", enabled);
             if (hooked == 0 && enabled) {
                 SelfCheckRegistry.markStale(FEATURE_MEASUREMENT_BIND, "framework bind service", "no matching methods");
             }
 
             try {
-                Class<?> firebaseAnalyticsClass = XposedHelpers.findClass("com.google.firebase.analytics.FirebaseAnalytics", classLoader);
+                Class<?> firebaseAnalyticsClass = XpReflect.findClass("com.google.firebase.analytics.FirebaseAnalytics", classLoader);
                 int firebaseHooked = 0;
                 for (Method method : firebaseAnalyticsClass.getDeclaredMethods()) {
                     if (method.getReturnType() != Void.TYPE) {
@@ -132,9 +134,9 @@ public final class TelemetryFeature extends Feature {
                     Class<?>[] types = method.getParameterTypes();
                     if (types.length == 2 && types[0] == String.class && types[1] == Bundle.class) {
                         method.setAccessible(true);
-                        XposedBridge.hookMethod(method, new XC_MethodHook() {
+                        XpHooks.hookMethod(FEATURE_FIREBASE, method, new XpHooks.Before() {
                             @Override
-                            protected void beforeHookedMethod(MethodHookParam param) {
+                            public void before(XpHooks.HookParam param) {
                                 if (enabled) {
                                     param.setResult(null);
                                     SelfCheckRegistry.markSuppressed(FEATURE_FIREBASE, "FirebaseAnalytics", String.valueOf(param.args[0]));
@@ -175,7 +177,7 @@ public final class TelemetryFeature extends Feature {
             SelfCheckRegistry.markDisabled(FEATURE_ANALYTICS_DB, "AnalyticsRoomDatabase_Impl");
         }
         try {
-            Class<?> databaseClass = XposedHelpers.findClass(schemaString("symbols.telemetry.analytics_db_class",
+            Class<?> databaseClass = XpReflect.findClass(schemaString("symbols.telemetry.analytics_db_class",
                     "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl"), classLoader);
             int hooked = 0;
             Set<String> expectedEnabled = enabledAnalyticsAccessors();
@@ -189,9 +191,9 @@ public final class TelemetryFeature extends Feature {
                 if (expectedEnabled.contains(method.getName())) {
                     foundEnabled.add(method.getName());
                 }
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(FEATURE_ANALYTICS_DB, method, new XpHooks.After() {
                     @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
+                    public void after(XpHooks.HookParam param) {
                         hookDaoObject(param.getResult(), method.getName());
                     }
                 });
@@ -225,9 +227,9 @@ public final class TelemetryFeature extends Feature {
                 continue;
             }
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE_MEASUREMENT_BIND, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     Intent intent = firstIntentArg(param);
                     if (!enabled || !isMeasurementBrokerIntent(intent)) {
                         return;
@@ -259,7 +261,7 @@ public final class TelemetryFeature extends Feature {
         return -1;
     }
 
-    private static Intent firstIntentArg(XC_MethodHook.MethodHookParam param) {
+    private static Intent firstIntentArg(XpHooks.HookParam param) {
         if (param.args == null) {
             return null;
         }
@@ -321,9 +323,9 @@ public final class TelemetryFeature extends Feature {
                 continue;
             }
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE_MEASUREMENT_BIND, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (!enabled || firstArgIsList(param)) {
                         return;
                     }
@@ -442,7 +444,7 @@ public final class TelemetryFeature extends Feature {
         return TelemetryDaoShape.isWriteMethod(method);
     }
 
-    private static boolean firstArgIsList(XC_MethodHook.MethodHookParam param) {
+    private static boolean firstArgIsList(XpHooks.HookParam param) {
         return param.args != null && param.args.length > 0 && param.args[0] instanceof java.util.List;
     }
 
@@ -463,16 +465,16 @@ public final class TelemetryFeature extends Feature {
             return;
         }
         try {
-            Class<?> clazz = XposedHelpers.findClass(className, classLoader);
+            Class<?> clazz = XpReflect.findClass(className, classLoader);
             int hooked = 0;
             for (Method method : clazz.getDeclaredMethods()) {
                 if (!names.contains(method.getName()) || method.getReturnType() != Void.TYPE) {
                     continue;
                 }
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(feature, method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         param.setResult(null);
                         SelfCheckRegistry.markSuppressed(feature, className + "#" + method.getName(), label);
                     }
@@ -492,7 +494,7 @@ public final class TelemetryFeature extends Feature {
     }
 
     private static Object newAdInfo(Class<?> infoClass) throws Throwable {
-        return XposedHelpers.newInstance(infoClass, FAKE_AD_ID, Boolean.TRUE);
+        return XpReflect.newInstance(infoClass, FAKE_AD_ID, Boolean.TRUE);
     }
 
     private static String schemaString(String path, String fallback) {

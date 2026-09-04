@@ -13,6 +13,7 @@ import com.ez.zalopatch.CallRecordingNotificationReceiver;
 import com.ez.zalopatch.CallRecordingStore;
 import com.ez.zalopatch.CallRecordingMetadata;
 import com.ez.zalopatch.HookConfig;
+import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZaloContactResolver;
 import com.ez.zalopatch.xposed.core.Feature;
@@ -25,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,10 +34,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 /** Default-off native ZRTC audio recorder for one-to-one voice and video calls. */
 public final class CallRecordingFeature extends Feature {
@@ -77,6 +79,37 @@ public final class CallRecordingFeature extends Feature {
             });
     private static volatile Method recordMethod;
     private static volatile Method isInCallMethod;
+    private static final AtomicInteger FINALIZER_ACTIVE = new AtomicInteger();
+
+    /**
+     * Hot reload guard: true while a recording is capturing or a finalization is
+     * queued or running. The entry rejects reload while this returns true because
+     * native recorder state and temp files cannot transfer generations safely.
+     */
+    public static boolean blocksHotReload() {
+        if (FINALIZER_ACTIVE.get() > 0) {
+            return true;
+        }
+        synchronized (SESSIONS) {
+            for (Session session : SESSIONS.values()) {
+                if (session != null && session.started) {
+                    return true;
+                }
+            }
+        }
+        for (Session session : SESSIONS_BY_PEER.values()) {
+            if (session != null && session.started) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Stops module-owned executors before the old generation retires. */
+    public static void prepareHotReload() {
+        STOP_SCHEDULER.shutdownNow();
+        FINALIZER.shutdownNow();
+    }
 
     public CallRecordingFeature(ClassLoader classLoader) {
         super(classLoader);
@@ -99,7 +132,7 @@ public final class CallRecordingFeature extends Feature {
             return;
         }
 
-        Class<?> peerClass = XposedHelpers.findClassIfExists(PEER_JNI, classLoader);
+        Class<?> peerClass = XpReflect.findClassIfExists(PEER_JNI, classLoader);
         if (peerClass == null) {
             markStale("PeerJNI missing");
             return;
@@ -117,9 +150,11 @@ public final class CallRecordingFeature extends Feature {
         }
 
         int hooks = hookPeerMetadata(peerClass);
+        hooks += hookAudioStreamRegistration(peerClass);
         hooks += hookPeerTermination(peerClass);
         hooks += hookCallbackRegistration(peerClass);
         hooks += hookCallbackBase();
+        hooks += hookCurrentCallback();
         hooks += hookActivities();
         if (hooks == 0) {
             markStale("No call lifecycle hooks installed");
@@ -146,10 +181,10 @@ public final class CallRecordingFeature extends Feature {
     }
 
     private int hookCallbackRegistration(Class<?> peerClass) {
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(peerClass,
-                "zrtc_peer_register_callback", new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass,
+                "zrtc_peer_register_callback", new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.args == null || param.args.length < 2
                                 || !(param.args[0] instanceof Long) || param.args[1] == null) {
                             return;
@@ -160,7 +195,10 @@ public final class CallRecordingFeature extends Feature {
                         }
                         hookCallbackClass(callback.getClass());
                         long peerHandle = (Long) param.args[0];
-                        Session session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
+                        Session session = SESSIONS_BY_PEER.get(peerHandle);
+                        if (session == null) {
+                            session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
+                        }
                         SESSIONS.put(callback, session);
                         SESSIONS_BY_PEER.put(peerHandle, session);
                     }
@@ -173,9 +211,10 @@ public final class CallRecordingFeature extends Feature {
         for (String methodName : new String[]{
                 "zrtc_peer_end_call", "zrtc_peer_force_stop", "zrtc_peer_delete"
         }) {
-            count += XposedBridge.hookAllMethods(peerClass, methodName, new XC_MethodHook() {
+            count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass, methodName,
+                    new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (param.args == null || param.args.length == 0
                             || !(param.args[0] instanceof Long)) {
                         return;
@@ -189,10 +228,10 @@ public final class CallRecordingFeature extends Feature {
 
     private int hookPeerMetadata(Class<?> peerClass) {
         int count = 0;
-        count += XposedBridge.hookAllMethods(peerClass,
-                "zrtc_call_config_set_partner_id", new XC_MethodHook() {
+        count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass,
+                "zrtc_call_config_set_partner_id", new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.args != null && param.args.length >= 2
                                 && param.args[0] instanceof Long
                                 && param.args[1] instanceof Integer) {
@@ -203,9 +242,9 @@ public final class CallRecordingFeature extends Feature {
                         }
                     }
                 }).size();
-        XC_MethodHook bindPeer = new XC_MethodHook() {
+        XpHooks.Before bindPeer = new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (param.args == null || param.args.length < 2
                         || !(param.args[0] instanceof Long) || !(param.args[1] instanceof Long)) {
                     return;
@@ -214,15 +253,63 @@ public final class CallRecordingFeature extends Feature {
                 if (partner != null && !partner.isEmpty()) {
                     PEER_PARTNERS.put((Long) param.args[0], partner);
                 }
+                long peerHandle = (Long) param.args[0];
+                Session session = SESSIONS_BY_PEER.get(peerHandle);
+                if (session == null) {
+                    session = new Session(peerHandle, partner);
+                    SESSIONS_BY_PEER.put(peerHandle, session);
+                }
+                session.direction = "zrtc_peer_make_call".equals(param.method.getName())
+                        ? "outgoing" : "incoming";
             }
         };
-        count += XposedBridge.hookAllMethods(peerClass, "zrtc_peer_make_call", bindPeer).size();
-        count += XposedBridge.hookAllMethods(peerClass, "zrtc_peer_incoming_call", bindPeer).size();
+        count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass, "zrtc_peer_make_call", bindPeer).size();
+        count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass, "zrtc_peer_incoming_call", bindPeer).size();
+        return count;
+    }
+
+    private int hookAudioStreamRegistration(Class<?> peerClass) {
+        int count = 0;
+        for (String methodName : new String[]{
+                "zrtc_peer_register_in_audio_stream",
+                "zrtc_peer_register_out_audio_stream"
+        }) {
+            count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass, methodName,
+                    new XpHooks.After() {
+                @Override
+                public void after(XpHooks.HookParam param) {
+                    if (param.args == null || param.args.length == 0
+                            || !(param.args[0] instanceof Long)) {
+                        return;
+                    }
+                    long peerHandle = (Long) param.args[0];
+                    Session session = SESSIONS_BY_PEER.get(peerHandle);
+                    if (session == null) {
+                        session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
+                        SESSIONS_BY_PEER.put(peerHandle, session);
+                    }
+                    synchronized (session) {
+                        session.confirmed = true;
+                        session.audioConnected = true;
+                    }
+                    start(session, methodName);
+                }
+            }).size();
+        }
         return count;
     }
 
     private int hookCallbackBase() {
-        Class<?> callbackClass = XposedHelpers.findClassIfExists(CALL_CALLBACK, classLoader);
+        Class<?> callbackClass = XpReflect.findClassIfExists(CALL_CALLBACK, classLoader);
+        return callbackClass == null ? 0 : hookCallbackClass(callbackClass);
+    }
+
+    private int hookCurrentCallback() {
+        String className = SymbolSchema.stringForHooks(
+                HookConfig.resolveModuleContextForHooks(),
+                "symbols.call_recording.callback_class", "").value;
+        if (className.isEmpty()) return 0;
+        Class<?> callbackClass = XpReflect.findClassIfExists(className, classLoader);
         return callbackClass == null ? 0 : hookCallbackClass(callbackClass);
     }
 
@@ -242,7 +329,7 @@ public final class CallRecordingFeature extends Feature {
                 }
                 try {
                     method.setAccessible(true);
-                    XposedBridge.hookMethod(method, callbackHook(method));
+                    XpHooks.hookMethod(FEATURE_HOOKS, method, callbackHook(method));
                     count++;
                 } catch (Throwable throwable) {
                     HOOKED_CALLBACKS.remove(signature);
@@ -254,13 +341,14 @@ public final class CallRecordingFeature extends Feature {
         return count;
     }
 
-    private XC_MethodHook callbackHook(final Method method) {
-        return new XC_MethodHook() {
+    private XpHooks.Before callbackHook(final Method method) {
+        return new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 Session session = SESSIONS.get(param.thisObject);
                 if (session == null) {
-                    return;
+                    session = resolveCurrentSession(param.thisObject);
+                    if (session == null) return;
                 }
                 String methodName = method.getName();
                 if ("onIncomingCall".equals(methodName)) {
@@ -285,33 +373,121 @@ public final class CallRecordingFeature extends Feature {
                     stop(session, methodName);
                     return;
                 }
-                if (CallRecordingLifecycle.shouldStartAudio(methodName, state)) {
+                boolean shouldStart;
+                synchronized (session) {
+                    if (CallRecordingLifecycle.confirmsCall(methodName)) {
+                        session.confirmed = true;
+                    }
+                    if (CallRecordingLifecycle.connectsAudio(methodName, state)) {
+                        session.audioConnected = true;
+                    }
+                    shouldStart = CallRecordingLifecycle.shouldStartAudio(
+                            session.confirmed, session.audioConnected);
+                }
+                if (shouldStart) {
                     start(session, methodName);
                 }
             }
         };
     }
 
+    private static Session resolveCurrentSession(Object callback) {
+        Context context = HookConfig.resolveModuleContextForHooks();
+        String managerClassName = SymbolSchema.stringForHooks(context,
+                "symbols.call_recording.peer_manager_class", "").value;
+        String instanceMethod = SymbolSchema.stringForHooks(context,
+                "symbols.call_recording.peer_manager_instance_method", "").value;
+        String containerField = SymbolSchema.stringForHooks(context,
+                "symbols.call_recording.peer_container_field", "").value;
+        String handleField = SymbolSchema.stringForHooks(context,
+                "symbols.call_recording.peer_handle_field", "").value;
+        if (managerClassName.isEmpty() || instanceMethod.isEmpty()
+                || containerField.isEmpty() || handleField.isEmpty()) return null;
+        try {
+            Class<?> managerClass = XpReflect.findClass(managerClassName,
+                    callback.getClass().getClassLoader());
+            Object manager = XpReflect.callStaticMethod(managerClass, instanceMethod);
+            Object container = XpReflect.getObjectField(manager, containerField);
+            if (container == null) return null;
+            long peerHandle = XpReflect.getLongField(container, handleField);
+            if (peerHandle == 0L) return null;
+            Session session = SESSIONS_BY_PEER.get(peerHandle);
+            if (session == null) {
+                session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
+                SESSIONS_BY_PEER.put(peerHandle, session);
+            }
+            SESSIONS.put(callback, session);
+            SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
+                    managerClassName + "#" + instanceMethod,
+                    "callback bound to current peer");
+            return session;
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markFailed(FEATURE_HOOKS,
+                    managerClassName + " peer handle", throwable);
+            return null;
+        }
+    }
+
     private int hookActivities() {
         int count = 0;
+        String readyMethod = SymbolSchema.stringForHooks(
+                HookConfig.resolveModuleContextForHooks(),
+                "symbols.call_recording.activity_ready_method", "").value;
         for (String className : CALL_ACTIVITIES) {
-            Class<?> activityClass = XposedHelpers.findClassIfExists(className, classLoader);
+            Class<?> activityClass = XpReflect.findClassIfExists(className, classLoader);
             if (activityClass == null || !Activity.class.isAssignableFrom(activityClass)) {
                 continue;
             }
-            count += XposedBridge.hookAllMethods(activityClass, "onDestroy", new XC_MethodHook() {
+            if (!readyMethod.isEmpty()) {
+                count += XpHooks.hookAllMethods(FEATURE_HOOKS, activityClass, readyMethod,
+                        new XpHooks.After() {
+                            @Override
+                            public void after(XpHooks.HookParam param) throws Throwable {
+                                String stateField = SymbolSchema.stringForHooks(
+                                        HookConfig.resolveModuleContextForHooks(),
+                                        "symbols.call_recording.activity_call_state_field", "").value;
+                                String connectedMethod = SymbolSchema.stringForHooks(
+                                        HookConfig.resolveModuleContextForHooks(),
+                                        "symbols.call_recording.activity_connected_method", "").value;
+                                if (stateField.isEmpty() || connectedMethod.isEmpty()) return;
+                                Object callState = XpReflect.getObjectField(
+                                        param.thisObject, stateField);
+                                Object connected = callState == null ? null
+                                        : XpReflect.callMethod(callState, connectedMethod);
+                                if (!(connected instanceof Boolean) || !(Boolean) connected) return;
+                                Session session = resolveCurrentSession(param.thisObject);
+                                if (session == null) return;
+                                synchronized (session) {
+                                    session.confirmed = true;
+                                    session.audioConnected = true;
+                                }
+                                SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
+                                        className + "#" + readyMethod,
+                                        "connected call controls ready");
+                                start(session, "activity_ready");
+                            }
+                        }).size();
+            }
+            count += XpHooks.hookAllMethods(FEATURE_HOOKS, activityClass, "onDestroy",
+                    new XpHooks.Before() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    scheduleActivityFallback(1);
+                public void before(XpHooks.HookParam param) {
+                    Session session = resolveCurrentSession(param.thisObject);
+                    if (session != null) stop(session, "activity_destroy");
                 }
             }).size();
         }
         return count;
     }
 
+    // Native ZRTC may keep the file at zero bytes while its audio pipeline warms up.
+    // Do not stop and restart capture from a timer; terminal lifecycle owns finalization.
     private static void start(Session session, String trigger) {
+        int attempt;
         synchronized (session) {
-            if (session.started) {
+            if (session.started
+                    || !CallRecordingLifecycle.shouldStartAudio(
+                    session.confirmed, session.audioConnected)) {
                 return;
             }
             Context application = HookConfig.resolveFallbackContextForHooks();
@@ -322,32 +498,39 @@ public final class CallRecordingFeature extends Feature {
                         "Application or native method unavailable");
                 return;
             }
-            session.startedAt = System.currentTimeMillis();
-            session.pendingName = CallRecordingStore.newPendingName(
-                    session.startedAt, session.direction);
+            if (session.tempFile == null) {
+                session.startedAt = System.currentTimeMillis();
+                session.pendingName = CallRecordingStore.newPendingName(
+                        session.startedAt, session.direction);
+            }
             try {
                 File directory = new File(application.getCacheDir(), TEMP_DIRECTORY);
                 if (!directory.exists() && !directory.mkdirs()) {
                     throw new IllegalStateException("Could not create temporary recording directory");
                 }
-                session.tempFile = new File(directory, session.pendingName);
+                if (session.tempFile == null) {
+                    session.tempFile = new File(directory, session.pendingName);
+                }
+                attempt = ++session.startAttempts;
                 nativeRecord.invoke(null, session.peerHandle, true,
                         session.tempFile.getAbsolutePath());
                 session.started = true;
-                if (HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
+                if (attempt == 1
+                        && HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
                     sendRecordingNotification(application,
                             CallRecordingNotificationReceiver.STATE_RUNNING);
                 }
                 SelfCheckRegistry.incrementHit(FEATURE_NATIVE,
                         "PeerJNI#zrtc_peer_start_record_audio",
                         "start direction=" + session.direction + " trigger=" + trigger
-                                + " media=audio_only");
+                                + " media=audio_only attempt=" + attempt);
             } catch (Throwable throwable) {
                 if (session.tempFile != null) {
                     session.tempFile.delete();
                 }
                 SelfCheckRegistry.markFailed(FEATURE_NATIVE,
                         "PeerJNI#zrtc_peer_start_record_audio", unwrap(throwable));
+                return;
             }
         }
     }
@@ -390,14 +573,30 @@ public final class CallRecordingFeature extends Feature {
             tempFile = session.tempFile;
             pendingName = session.pendingName;
             CallRecordingMetadata.clear();
+            // A ZRTC peer handle can survive across calls. Clear per-call state before
+            // the next callback reuses this Session; finalizer already owns captured values.
+            session.confirmed = false;
+            session.audioConnected = false;
+            session.tempFile = null;
+            session.pendingName = null;
+            session.startedAt = 0L;
+            session.startAttempts = 0;
+            session.direction = "unknown";
         }
         final Context finalApplication = application;
         final File finalTempFile = tempFile;
         final String finalPendingName = pendingName;
         final String finalPeerUid = effectivePeerUid;
         final CallRecordingMetadata.Snapshot finalObserved = observed;
-        FINALIZER.execute(() -> finalizeRecording(finalApplication, finalTempFile,
-                finalPendingName, finalPeerUid, finalObserved, trigger));
+        FINALIZER_ACTIVE.incrementAndGet();
+        FINALIZER.execute(() -> {
+            try {
+                finalizeRecording(finalApplication, finalTempFile,
+                        finalPendingName, finalPeerUid, finalObserved, trigger);
+            } finally {
+                FINALIZER_ACTIVE.decrementAndGet();
+            }
+        });
     }
 
     private static void finalizeRecording(
@@ -547,7 +746,10 @@ public final class CallRecordingFeature extends Feature {
                 enqueueImport(application, file, file.getName(),
                         "Zalo contact", "", "startup_recovery");
             } else {
-                SelfCheckRegistry.markStatus(FEATURE_STORAGE, "failed",
+                // Keep the incomplete source for recovery, but do not make one historical
+                // zero-byte native file report the currently installed recorder hook as failed
+                // on every Zalo startup.
+                SelfCheckRegistry.markStatus(FEATURE_STORAGE, "installed_no_hits",
                         "ZRTC native WAV recovery", "size=" + file.length(),
                         "Preserved native WAV is still incomplete");
             }
@@ -643,7 +845,10 @@ public final class CallRecordingFeature extends Feature {
         long startedAt;
         String pendingName;
         File tempFile;
+        boolean confirmed;
+        boolean audioConnected;
         boolean started;
+        int startAttempts;
         volatile boolean deleted;
 
         Session(long peerHandle, String peerUid) {

@@ -11,12 +11,12 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 /**
  * Metadata-only prerequisite probe for call recording.
@@ -102,7 +102,7 @@ public final class CallRecordingProbeFeature extends Feature {
     private int hookActivities() {
         int count = 0;
         for (String className : CALL_ACTIVITIES) {
-            Class<?> activityClass = XposedHelpers.findClassIfExists(className, classLoader);
+            Class<?> activityClass = XpReflect.findClassIfExists(className, classLoader);
             if (activityClass == null || !Activity.class.isAssignableFrom(activityClass)) {
                 continue;
             }
@@ -113,10 +113,10 @@ public final class CallRecordingProbeFeature extends Feature {
     }
 
     private int hookActivityMethod(final Class<?> activityClass, final String methodName) {
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(activityClass, methodName,
-                new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_LIFECYCLE, activityClass,
+                methodName, new XpHooks.After() {
                     @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
+                    public void after(XpHooks.HookParam param) {
                         SelfCheckRegistry.incrementHit(FEATURE_LIFECYCLE,
                                 activityClass.getName() + "#" + methodName,
                                 "event=" + methodName);
@@ -126,14 +126,14 @@ public final class CallRecordingProbeFeature extends Feature {
     }
 
     private int hookCallbackRegistration(final String peerClassName, final String methodName) {
-        Class<?> peerClass = XposedHelpers.findClassIfExists(peerClassName, classLoader);
+        Class<?> peerClass = XpReflect.findClassIfExists(peerClassName, classLoader);
         if (peerClass == null) {
             return 0;
         }
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(peerClass,
-                methodName, new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_LIFECYCLE, peerClass,
+                methodName, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.args == null) {
                             return;
                         }
@@ -156,7 +156,7 @@ public final class CallRecordingProbeFeature extends Feature {
     }
 
     private int hookStreamRegistration() {
-        Class<?> peerClass = XposedHelpers.findClassIfExists(PEER_JNI, classLoader);
+        Class<?> peerClass = XpReflect.findClassIfExists(PEER_JNI, classLoader);
         if (peerClass == null) {
             return 0;
         }
@@ -167,10 +167,10 @@ public final class CallRecordingProbeFeature extends Feature {
     }
 
     private int hookStreamRegistrationMethod(final Class<?> peerClass, final String methodName) {
-        Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(peerClass, methodName,
-                new XC_MethodHook() {
+        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_STREAM_REGISTRATION,
+                peerClass, methodName, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         SelfCheckRegistry.incrementHit(FEATURE_STREAM_REGISTRATION,
                                 peerClass.getName() + "#" + methodName,
                                 streamRegistrationDetail(methodName, param.args));
@@ -180,7 +180,7 @@ public final class CallRecordingProbeFeature extends Feature {
     }
 
     private int hookCallbackBase(String className) {
-        Class<?> callbackClass = XposedHelpers.findClassIfExists(className, classLoader);
+        Class<?> callbackClass = XpReflect.findClassIfExists(className, classLoader);
         return callbackClass == null ? 0 : hookCallbackClass(callbackClass);
     }
 
@@ -202,7 +202,7 @@ public final class CallRecordingProbeFeature extends Feature {
                 }
                 try {
                     method.setAccessible(true);
-                    XposedBridge.hookMethod(method, callbackHook(method));
+                    XpHooks.hookMethod(FEATURE_LIFECYCLE, method, callbackHook(method));
                     count++;
                 } catch (Throwable throwable) {
                     HOOKED_METHODS.remove(signature);
@@ -215,10 +215,10 @@ public final class CallRecordingProbeFeature extends Feature {
         return count;
     }
 
-    private XC_MethodHook callbackHook(final Method method) {
-        return new XC_MethodHook() {
+    private XpHooks.Before callbackHook(final Method method) {
+        return new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 String methodName = method.getName();
                 String target = method.getDeclaringClass().getName() + "#" + methodName;
                 if (AUDIO_METHODS.contains(methodName)) {

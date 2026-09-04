@@ -13,9 +13,8 @@ import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 import java.lang.reflect.Method;
 import java.util.List;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class ZinstantFeature extends Feature {
     private static final String FEATURE_FEED_AD = "zinstant.feed_ad";
@@ -93,10 +92,10 @@ public final class ZinstantFeature extends Feature {
     private void hookZinstantAdViews() {
         if (messageViewCompatible) {
         try {
-            Class<?> adViewClass = XposedHelpers.findClass(ZINSTANT_AD_ITEM_VIEW_CLASS, classLoader);
-            XposedBridge.hookAllConstructors(adViewClass, new XC_MethodHook() {
+            Class<?> adViewClass = XpReflect.findClass(ZINSTANT_AD_ITEM_VIEW_CLASS, classLoader);
+            XpHooks.hookAllConstructors(FEATURE_MESSAGE_AD, adViewClass, null, new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     if (shouldHideMessageAds()) {
                         collapseView((View) param.thisObject);
                         SelfCheckRegistry.markSuppressed(FEATURE_MESSAGE_AD, ZINSTANT_AD_ITEM_VIEW_CLASS, "constructor collapse");
@@ -118,10 +117,10 @@ public final class ZinstantFeature extends Feature {
 
         if (feedViewCompatible) {
         try {
-            Class<?> feedAdsClass = XposedHelpers.findClass(ZINSTANT_FEED_ADS_CLASS, classLoader);
-            XposedBridge.hookAllConstructors(feedAdsClass, new XC_MethodHook() {
+            Class<?> feedAdsClass = XpReflect.findClass(ZINSTANT_FEED_ADS_CLASS, classLoader);
+            XpHooks.hookAllConstructors(FEATURE_FEED_AD, feedAdsClass, null, new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     if (shouldHideFeedAds()) {
                         collapseView((View) param.thisObject);
                         SelfCheckRegistry.markSuppressed(FEATURE_FEED_AD, ZINSTANT_FEED_ADS_CLASS, "constructor collapse");
@@ -153,9 +152,9 @@ public final class ZinstantFeature extends Feature {
                 continue;
             }
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(feature, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (enabled.getAsBoolean() && param.thisObject instanceof View) {
                         collapseView((View) param.thisObject);
                         param.setResult(null);
@@ -170,16 +169,16 @@ public final class ZinstantFeature extends Feature {
 
     private void hookZinstantNetwork() {
         try {
-            Class<?> communicatorClass = XposedHelpers.findClass(ZINSTANT_COMMUNICATOR_CLASS, classLoader);
+            Class<?> communicatorClass = XpReflect.findClass(ZINSTANT_COMMUNICATOR_CLASS, classLoader);
             int hooked = 0;
             for (Method method : communicatorClass.getDeclaredMethods()) {
                 if (!networkMethods().contains(method.getName())) {
                     continue;
                 }
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(FEATURE_NETWORK, method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (shouldHidePromoServices()) {
                             param.setResult(fallbackFor(method.getReturnType()));
                             SelfCheckRegistry.markSuppressed(FEATURE_NETWORK, ZINSTANT_COMMUNICATOR_CLASS + "#" + method.getName(), firstStringArg(param));
@@ -204,7 +203,7 @@ public final class ZinstantFeature extends Feature {
         }
 
         try {
-            Class<?> scriptHelperClass = XposedHelpers.findClass(ZINSTANT_SCRIPT_HELPER_CLASS, classLoader);
+            Class<?> scriptHelperClass = XpReflect.findClass(ZINSTANT_SCRIPT_HELPER_CLASS, classLoader);
             java.util.List<String> missing = new java.util.ArrayList<>();
             int hooked = 0;
             for (String method : scriptVoidMethods()) {
@@ -243,9 +242,9 @@ public final class ZinstantFeature extends Feature {
                 continue;
             }
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE_SCRIPT, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (shouldHidePromoServices()) {
                         param.setResult(null);
                         SelfCheckRegistry.markSuppressed(FEATURE_SCRIPT, label, firstStringArg(param));
@@ -266,9 +265,9 @@ public final class ZinstantFeature extends Feature {
                 continue;
             }
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE_SCRIPT, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (shouldHidePromoServices()) {
                         param.setResult(fallbackValue);
                         SelfCheckRegistry.markSuppressed(FEATURE_SCRIPT, label, firstStringArg(param));
@@ -282,9 +281,9 @@ public final class ZinstantFeature extends Feature {
     }
 
     private void hookActivityViewScan() {
-        XposedBridge.hookAllMethods(Activity.class, "onResume", new XC_MethodHook() {
+        XpHooks.hookAllMethods("zinstant", Activity.class, "onResume", null, new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof Activity)) {
                     return;
                 }
@@ -326,7 +325,7 @@ public final class ZinstantFeature extends Feature {
         }
     }
 
-    private static String firstStringArg(XC_MethodHook.MethodHookParam param) {
+    private static String firstStringArg(XpHooks.HookParam param) {
         if (param.args == null) {
             return "";
         }

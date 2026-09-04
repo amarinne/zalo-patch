@@ -13,6 +13,7 @@ final class CallRecordingLifecycle {
         return "onIncomingCall".equals(methodName)
                 || "onMakeCall".equals(methodName)
                 || "onCallConfirmed".equals(methodName)
+                || "onPreConnectSuccessful".equals(methodName)
                 || "onCallAudioState".equals(methodName)
                 || "onCallVideoState".equals(methodName)
                 || "onCallState".equals(methodName)
@@ -21,10 +22,19 @@ final class CallRecordingLifecycle {
                 || "onCallAutoHangup".equals(methodName);
     }
 
-    static boolean shouldStartAudio(String methodName, int state) {
+    static boolean confirmsCall(String methodName) {
+        // Current ZRTC callback has no onCallConfirmed method. Its confirmed-call edge is
+        // onPreConnectSuccessful; retain the older name for versions that still expose it.
         return "onCallConfirmed".equals(methodName)
-                || ("onCallAudioState".equals(methodName)
-                && state == CONNECTED_AUDIO_STATE);
+                || "onPreConnectSuccessful".equals(methodName);
+    }
+
+    static boolean connectsAudio(String methodName, int state) {
+        return "onCallAudioState".equals(methodName) && state == CONNECTED_AUDIO_STATE;
+    }
+
+    static boolean shouldStartAudio(boolean confirmed, boolean audioConnected) {
+        return confirmed && audioConnected;
     }
 
     static boolean shouldStopAudio(String methodName, int state) {

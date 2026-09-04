@@ -11,7 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 
-import de.robv.android.xposed.XposedBridge;
+import com.ez.zalopatch.xposed.core.XpHooks;
 
 /** Hook-process detector and bounded transport for runtime capability evidence. */
 public final class RuntimeEnvironmentReporter {
@@ -94,11 +94,7 @@ public final class RuntimeEnvironmentReporter {
     }
 
     private static int xposedApiVersion() {
-        try {
-            return Math.max(0, XposedBridge.getXposedVersion());
-        } catch (Throwable ignored) {
-            return 0;
-        }
+        return XpHooks.apiVersion();
     }
 
     private static boolean hasAnyClass(String[] names, Context context) {
@@ -134,7 +130,7 @@ public final class RuntimeEnvironmentReporter {
 
     private static ClassLoader[] runtimeClassLoaders(Context context) {
         return new ClassLoader[]{
-                XposedBridge.class.getClassLoader(),
+                io.github.libxposed.api.XposedModule.class.getClassLoader(),
                 RuntimeEnvironmentReporter.class.getClassLoader(),
                 context == null ? null : context.getClassLoader(),
                 Thread.currentThread().getContextClassLoader(),

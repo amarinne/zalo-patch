@@ -14,9 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 /**
  * Inbox conversation-list filtering + filter-popover categories.
@@ -47,7 +46,6 @@ public final class InboxFeature extends Feature {
     private volatile String sessionSelectedCategory = CATEGORY_FOCUSED;
     private volatile Object lastInboxAdapter;
     private volatile List<Object> lastUnfilteredItems;
-    private volatile boolean isOurReentrantCall;
     private volatile Object deletedGroupRepository;
     private volatile boolean deletedGroupCheckUnavailable;
     private volatile boolean deletedGroupCheckInstalled;
@@ -110,7 +108,7 @@ public final class InboxFeature extends Feature {
         }
         boolean debugEnabled = HookConfig.isDebugEnabled();
         if (!debugEnabled) {
-            SelfCheckRegistry.markDisabled(FEATURE_TAP_DIAGNOSTICS, clickHandlerClass());
+            SelfCheckRegistry.markDisabled(FEATURE_TAP_DIAGNOSTICS, "debug diagnostics off");
         }
 
         if (hideMediaEnabled || categoriesEnabled) {
@@ -134,7 +132,7 @@ public final class InboxFeature extends Feature {
     private volatile Method listSetterMethod;
 
     private void hookMessageListFiltering() throws Throwable {
-        Class<?> adapterClass = XposedHelpers.findClass(messageAdapterClass(), classLoader);
+        Class<?> adapterClass = XpReflect.findClass(messageAdapterClass(), classLoader);
         int hooked = 0;
         for (Method method : adapterClass.getDeclaredMethods()) {
             Class<?>[] params = method.getParameterTypes();
@@ -142,18 +140,16 @@ public final class InboxFeature extends Feature {
                 continue;
             }
             listSetterMethod = method;
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE_FILTER, method, new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     if (param.args.length < 1 || !(param.args[0] instanceof List)) {
                         return;
                     }
                     lastInboxAdapter = param.thisObject;
                     List<?> incoming = (List<?>) param.args[0];
                     // Cache the unfiltered list so a later category switch can re-filter from source.
-                    if (!isOurReentrantCall) {
-                        lastUnfilteredItems = new ArrayList<>(incoming);
-                    }
+                    lastUnfilteredItems = new ArrayList<>(incoming);
                     param.args[0] = filterInboxItems(incoming);
                 }
             });
@@ -225,11 +221,12 @@ public final class InboxFeature extends Feature {
      * the inbox adapter class; placed in the RecyclerView's parent.
      */
     private void hookInboxFilterBar() throws Throwable {
-        Class<?> recyclerViewClass = XposedHelpers.findClass(
+        Class<?> recyclerViewClass = XpReflect.findClass(
                 "androidx.recyclerview.widget.RecyclerView", classLoader);
-        XposedBridge.hookAllMethods(recyclerViewClass, "setAdapter", new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_FILTER_BAR, recyclerViewClass, "setAdapter",
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!shouldShowInboxLab()) {
                     return;
                 }
@@ -509,10 +506,11 @@ public final class InboxFeature extends Feature {
     // ---------------------------------------------------------------- classification
 
     private void hookInboxTapDiagnostics() throws Throwable {
-        Class<?> clickHandlerClass = XposedHelpers.findClass(clickHandlerClass(), classLoader);
-        XposedBridge.hookAllMethods(clickHandlerClass, clickMethod(), new XC_MethodHook() {
+        Class<?> clickHandlerClass = XpReflect.findClass(clickHandlerClass(), classLoader);
+        XpHooks.hookAllMethods(FEATURE_TAP_DIAGNOSTICS, clickHandlerClass, clickMethod(),
+                new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 if (!HookConfig.isDebugEnabled() || param.args.length < 2 || !(param.args[1] instanceof Integer)) {
                     return;
                 }
@@ -530,8 +528,8 @@ public final class InboxFeature extends Feature {
     private Object itemFromClickHandler(Object handler, int position) {
         try {
             Object messagesView = HookReflect.findFieldValueByClassName(handler, messageViewClass());
-            Object adapter = XposedHelpers.getObjectField(messagesView, messagesViewAdapterField());
-            return XposedHelpers.callMethod(adapter, adapterItemMethod(), position);
+            Object adapter = XpReflect.getObjectField(messagesView, messagesViewAdapterField());
+            return XpReflect.callMethod(adapter, adapterItemMethod(), position);
         } catch (Throwable throwable) {
             log("Tap row lookup failed-soft: "
                     + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
@@ -569,7 +567,7 @@ public final class InboxFeature extends Feature {
 
     private String readUid(Object item) {
         try {
-            return String.valueOf(XposedHelpers.callMethod(item, rowUidMethod()));
+            return String.valueOf(XpReflect.callMethod(item, rowUidMethod()));
         } catch (Throwable t) {
             return "?";
         }
@@ -603,7 +601,7 @@ public final class InboxFeature extends Feature {
     private String readTitle(Object item) {
         for (String f : SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(), "symbols.inbox.row_title_fields")) {
             try {
-                Object v = XposedHelpers.getObjectField(item, f);
+                Object v = XpReflect.getObjectField(item, f);
                 if (v != null && v.toString().trim().length() > 0) {
                     String s = v.toString();
                     return s.length() > 24 ? s.substring(0, 24) : s;
@@ -639,7 +637,7 @@ public final class InboxFeature extends Feature {
     private String firstNonEmptyString(Object obj, String prefix, List<String> fields) {
         for (String f : fields) {
             try {
-                Object v = XposedHelpers.getObjectField(obj, f);
+                Object v = XpReflect.getObjectField(obj, f);
                 if (v instanceof String && ((String) v).length() > 0) {
                     String s = (String) v;
                     return prefix + (s.length() > 20 ? s.substring(0, 20) : s);
@@ -656,11 +654,11 @@ public final class InboxFeature extends Feature {
             return -1;
         }
         try {
-            Object conversation = XposedHelpers.getObjectField(item, conversationField());
+            Object conversation = XpReflect.getObjectField(item, conversationField());
             if (conversation == null) {
                 return -1;
             }
-            Object value = XposedHelpers.getObjectField(conversation, categoryIntField());
+            Object value = XpReflect.getObjectField(conversation, categoryIntField());
             return value instanceof Integer ? (Integer) value : -1;
         } catch (Throwable throwable) {
             logSymbolFailure("field-chain", classNameOf(item) + "#" + conversationField()
@@ -715,7 +713,7 @@ public final class InboxFeature extends Feature {
         } catch (Throwable ignored) {
         }
         try {
-            return Boolean.TRUE.equals(XposedHelpers.callMethod(item, groupFlagMethod()));
+            return Boolean.TRUE.equals(XpReflect.callMethod(item, groupFlagMethod()));
         } catch (Throwable throwable) {
             logSymbolFailure("method", classNameOf(item) + "#" + groupFlagMethod(), throwable);
             return false;
@@ -729,11 +727,11 @@ public final class InboxFeature extends Feature {
         try {
             Object repository = deletedGroupRepository;
             if (repository == null) {
-                Class<?> repositoryClass = XposedHelpers.findClass(deletedGroupRepositoryClass(), classLoader);
-                repository = XposedHelpers.getStaticObjectField(repositoryClass, deletedGroupRepositoryField());
+                Class<?> repositoryClass = XpReflect.findClass(deletedGroupRepositoryClass(), classLoader);
+                repository = XpReflect.getStaticObjectField(repositoryClass, deletedGroupRepositoryField());
                 deletedGroupRepository = repository;
             }
-            boolean deleted = Boolean.TRUE.equals(XposedHelpers.callMethod(repository, deletedGroupCheckMethod(), uid));
+            boolean deleted = Boolean.TRUE.equals(XpReflect.callMethod(repository, deletedGroupCheckMethod(), uid));
             if (!deletedGroupCheckInstalled) {
                 deletedGroupCheckInstalled = true;
                 SelfCheckRegistry.markInstalled(FEATURE_DELETED_GROUP,
@@ -785,8 +783,8 @@ public final class InboxFeature extends Feature {
         try {
             Object manager = friendManager;
             if (manager == null) {
-                Class<?> managerClass = XposedHelpers.findClass(friendManagerClass(), classLoader);
-                manager = XposedHelpers.callStaticMethod(managerClass, friendManagerInstanceMethod());
+                Class<?> managerClass = XpReflect.findClass(friendManagerClass(), classLoader);
+                manager = XpReflect.callStaticMethod(managerClass, friendManagerInstanceMethod());
                 friendManager = manager;
             }
             result = friendManagerFlag(uid, friendManagerFollowMethod(0))
@@ -808,11 +806,11 @@ public final class InboxFeature extends Feature {
         try {
             Object manager = friendManager;
             if (manager == null) {
-                Class<?> managerClass = XposedHelpers.findClass(friendManagerClass(), classLoader);
-                manager = XposedHelpers.callStaticMethod(managerClass, friendManagerInstanceMethod());
+                Class<?> managerClass = XpReflect.findClass(friendManagerClass(), classLoader);
+                manager = XpReflect.callStaticMethod(managerClass, friendManagerInstanceMethod());
                 friendManager = manager;
             }
-            return Boolean.TRUE.equals(XposedHelpers.callMethod(manager, methodName, uid));
+            return Boolean.TRUE.equals(XpReflect.callMethod(manager, methodName, uid));
         } catch (Throwable throwable) {
             logSymbolFailure("method-chain", friendManagerClass() + "#" + friendManagerInstanceMethod()
                     + " -> " + methodName, throwable);
@@ -825,7 +823,7 @@ public final class InboxFeature extends Feature {
             return null;
         }
         try {
-            return XposedHelpers.getObjectField(item, conversationField());
+            return XpReflect.getObjectField(item, conversationField());
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(item) + "#" + conversationField(), throwable);
             return null;
@@ -834,11 +832,11 @@ public final class InboxFeature extends Feature {
 
     private int topOutOf(Object conversation) {
         try {
-            Object topOutInfo = XposedHelpers.getObjectField(conversation, topOutField());
+            Object topOutInfo = XpReflect.getObjectField(conversation, topOutField());
             if (topOutInfo == null) {
                 return -1;
             }
-            Object value = XposedHelpers.getObjectField(topOutInfo, topOutValueField());
+            Object value = XpReflect.getObjectField(topOutInfo, topOutValueField());
             return value instanceof Integer ? (Integer) value : -1;
         } catch (Throwable throwable) {
             logSymbolFailure("field-chain", classNameOf(conversation) + "#" + topOutField()
@@ -849,7 +847,7 @@ public final class InboxFeature extends Feature {
 
     private String stringField(Object target, String fieldName) {
         try {
-            Object value = XposedHelpers.getObjectField(target, fieldName);
+            Object value = XpReflect.getObjectField(target, fieldName);
             return value instanceof String ? (String) value : null;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(target) + "#" + fieldName, throwable);
@@ -859,7 +857,7 @@ public final class InboxFeature extends Feature {
 
     private int intField(Object target, String fieldName, int fallback) {
         try {
-            Object value = XposedHelpers.getObjectField(target, fieldName);
+            Object value = XpReflect.getObjectField(target, fieldName);
             return value instanceof Integer ? (Integer) value : fallback;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(target) + "#" + fieldName, throwable);
@@ -898,13 +896,13 @@ public final class InboxFeature extends Feature {
             return;
         }
         try {
-            isOurReentrantCall = true;
             setter.setAccessible(true);
-            setter.invoke(adapter, new ArrayList<>(source));
+            // Origin invoker: the filtered list goes straight to the original setter
+            // without re-firing this feature's own hook, so no reentrancy guard is needed.
+            XpHooks.invokeOriginal(setter, adapter,
+                    filterInboxItems(new ArrayList<>(source)));
         } catch (Throwable throwable) {
             log("refreshInbox failed: " + throwable.getClass().getSimpleName());
-        } finally {
-            isOurReentrantCall = false;
         }
     }
 

@@ -85,6 +85,21 @@ public final class TweakStore {
                         setting.key, SettingsStore.getInt(context, setting.key));
             }
         }
+        // Hook authorization runs inside Zalo, where the module provider and shared preferences
+        // may both be unavailable. Mirror the small artifact identity state needed to authorize
+        // the bundled schema through the same root-readable property channel.
+        String[] artifactKeys = {
+                ZaloArtifactState.KEY_STATUS,
+                ZaloArtifactState.KEY_LIGHTWEIGHT,
+                ZaloArtifactState.KEY_GENERATION,
+                ZaloArtifactState.KEY_PROFILE_SHA256,
+                ZaloArtifactState.KEY_EVIDENCE,
+                ZaloArtifactState.KEY_ERROR
+        };
+        for (String key : artifactKeys) {
+            success &= SettingsPropertyMirror.writeString(key,
+                    preferences(context).getString(key, ""));
+        }
         try {
             success &= SettingsPropertyMirror.writeBlob(NotificationRuleStore.MIRROR_KEY,
                     NotificationRuleStore.encode(NotificationRuleStore.load(context)));

@@ -120,7 +120,15 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     }
 
     protected final void restartZalo() {
-        if (restartInFlight || RootAccess.cached(this) != RootAccess.State.GRANTED) {
+        if (restartInFlight) {
+            return;
+        }
+        if (RootAccess.cached(this) != RootAccess.State.GRANTED) {
+            // Cached denial can outlive a Magisk grant. Re-probe before refusing the action.
+            RootAccess.recheck(this, state -> {
+                if (state == RootAccess.State.GRANTED) restartZalo();
+                else Toast.makeText(this, R.string.zp_restart_root_denied, Toast.LENGTH_SHORT).show();
+            });
             return;
         }
         restartInFlight = true;

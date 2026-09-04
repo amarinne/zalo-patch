@@ -105,7 +105,7 @@ public final class ZaloArtifactState {
         }
     }
 
-    static Result reconcile(Context context) {
+    static synchronized Result reconcile(Context context) {
         TweakStore.initialize(context);
         SharedPreferences preferences = TweakStore.preferences(context);
         try {
@@ -212,6 +212,31 @@ public final class ZaloArtifactState {
             HookConfig.reload();
             return new Result("failed", "", "", error, EVIDENCE_NONE);
         }
+    }
+
+    /** Runs an explicit foreground compatibility check without deferring to JobScheduler. */
+    static ManualCheckResult checkNow(Context context) {
+        if (context == null) {
+            return new ManualCheckResult("failed", "Context unavailable", -1L);
+        }
+        Context applicationContext = context.getApplicationContext();
+        if (instrumentationInstalled(applicationContext)) {
+            return new ManualCheckResult("suppressed",
+                    "com.ez.zalopatch.test is installed", -1L);
+        }
+        JobScheduler scheduler = applicationContext.getSystemService(JobScheduler.class);
+        if (scheduler != null) scheduler.cancel(JOB_ID);
+        SharedPreferences preferences = TweakStore.preferences(applicationContext);
+        preferences.edit().putLong(KEY_CATALOG_CHECKED_AT, 0L).commit();
+        Result result = reconcile(applicationContext);
+        String catalogStatus = preferences.getString(KEY_CATALOG_STATUS, "missing");
+        String catalogError = preferences.getString(KEY_CATALOG_ERROR, "");
+        if ("failed".equals(result.status) && catalogError.isEmpty()) {
+            catalogStatus = "failed";
+            catalogError = result.error;
+        }
+        return new ManualCheckResult(catalogStatus, catalogError,
+                preferences.getLong(KEY_VERSION_CODE, -1L));
     }
 
     /**
@@ -347,14 +372,12 @@ public final class ZaloArtifactState {
         String status = preferences.getString(KEY_STATUS, "pending");
         long versionCode = preferences.getLong(KEY_VERSION_CODE, -1L);
         String hash = preferences.getString(KEY_BASE_SHA256, "");
-        String verification = preferences.getString(KEY_VERIFICATION, "unverified");
         String source = preferences.getString(KEY_PROFILE_SOURCE, "unknown");
         String catalogStatus = preferences.getString(KEY_CATALOG_STATUS, "missing");
         String evidence = preferences.getString(KEY_EVIDENCE, EVIDENCE_UNKNOWN);
         String error = preferences.getString(KEY_ERROR, "");
         StringBuilder summary = new StringBuilder();
         summary.append(status).append(" | Zalo ").append(versionCode)
-                .append(" | ").append(verification)
                 .append(" | ").append(source)
                 .append(" | catalog ").append(catalogStatus)
                 .append(" | match ").append(evidence);
@@ -494,6 +517,18 @@ public final class ZaloArtifactState {
             this.generation = generation;
             this.error = error;
             this.evidence = evidence;
+        }
+    }
+
+    static final class ManualCheckResult {
+        final String catalogStatus;
+        final String error;
+        final long versionCode;
+
+        ManualCheckResult(String catalogStatus, String error, long versionCode) {
+            this.catalogStatus = catalogStatus;
+            this.error = error;
+            this.versionCode = versionCode;
         }
     }
 }

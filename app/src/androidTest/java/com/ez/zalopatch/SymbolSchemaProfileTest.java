@@ -45,7 +45,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("vd0.f0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("yz.p", active.string("symbols.chat.message_repository_class", ""));
         assertPasscodeSymbols(active, "g40.r0", "j", "lz.j", "B3");
-        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.ss", "A8");
+        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.ss", "j", "A8");
         assertHookIdentities(active);
     }
 
@@ -68,7 +68,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("yd0.h0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("c00.q", active.string("symbols.chat.message_repository_class", ""));
         assertPasscodeSymbols(active, "k40.q0", "k", "pz.j", "B3");
-        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "z8");
+        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "j", "z8");
 
         assertHookIdentities(active);
         assertTrue(TweakHookInfo.forKey(Tweaks.KEY_DISABLE_EVENT_ANALYTICS, active)
@@ -95,7 +95,32 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals("je0.k0", active.string("symbols.chat.send_seen_manager_class", ""));
         assertEquals("l00.r", active.string("symbols.chat.message_repository_class", ""));
         assertPasscodeSymbols(active, "u40.p0", "X", "yz.j", "A3");
-        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "z8");
+        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.xs", "j", "z8");
+        assertHookIdentities(active);
+    }
+
+    public void testSelectsAugustBetaExactProfile() throws Exception {
+        SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 260802903L);
+
+        assertTrue(active.valid);
+        assertEquals(25, active.schemaRevision);
+        assertEquals(260802903, active.minCode);
+        assertEquals("zf1.e1", active.string("symbols.inbox.message_adapter_class", ""));
+        assertEquals("r00.c", active.string("symbols.inbox.normal_item_class", ""));
+        assertEquals("tf1.w", active.strings(
+                "symbols.bottom_tabs.current_state_classes").get(0));
+        assertEquals("wf1.k", active.string("symbols.me.adapter_class", ""));
+        assertEquals("f70.n", active.string("symbols.inbox.friend_manager_class", ""));
+        assertEquals("n", active.string("symbols.inbox.friend_manager_instance_method", ""));
+        assertEquals(java.util.Arrays.asList("A", "C"),
+                active.strings("symbols.inbox.friend_manager_follow_methods"));
+        assertEquals("5736dd272918b73d689d11ff62e9399d80effaad85b30f2180b24ab8809a09ed",
+                active.string("artifact.base_apk_sha256", ""));
+        assertEquals("device-verified", active.string("artifact.verification", ""));
+        assertEquals("le0.m0", active.string("symbols.chat.send_seen_manager_class", ""));
+        assertEquals("m00.q", active.string("symbols.chat.message_repository_class", ""));
+        assertPasscodeSymbols(active, "v40.q0", "n", "zz.j", "B3");
+        assertWebviewSymbols(active, "com.zing.zalo.ui.zviews.vt", "k", "A8");
         assertHookIdentities(active);
     }
 
@@ -105,7 +130,8 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertFalse(active.valid);
         assertTrue(active.bundleValid);
         assertTrue(active.validation.contains("No exact bundled symbol profile"));
-        assertEquals("260602901, 260701901, 260801903", active.supportedVersionCodes);
+        assertEquals("260602901, 260701901, 260801903, 260802903",
+                active.supportedVersionCodes);
     }
 
     public void testRemoteProfileSelectedWhenBundledExactProfileMissing() throws Exception {
@@ -201,16 +227,40 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
     public void testCatalogRetainsEveryExactVersionAndSymbolCoverage() {
         java.util.List<SymbolSchema.ProfileInfo> catalog = SymbolSchema.catalog(getContext());
 
-        assertEquals(3, catalog.size());
-        assertEquals(260801903L, catalog.get(0).versionCode);
-        assertEquals(260701901L, catalog.get(1).versionCode);
-        assertEquals(260602901L, catalog.get(2).versionCode);
+        assertEquals(4, catalog.size());
+        assertEquals(260802903L, catalog.get(0).versionCode);
+        assertEquals(260801903L, catalog.get(1).versionCode);
+        assertEquals(260701901L, catalog.get(2).versionCode);
+        assertEquals(260602901L, catalog.get(3).versionCode);
         assertTrue(catalog.get(0).symbolPaths.contains(
-                "symbols.inbox.message_adapter_class = of1.h1"));
+                "symbols.inbox.message_adapter_class = zf1.e1"));
         assertTrue(catalog.get(1).symbolPaths.contains(
-                "symbols.inbox.message_adapter_class = se1.g1"));
+                "symbols.inbox.message_adapter_class = of1.h1"));
         assertTrue(catalog.get(2).symbolPaths.contains(
+                "symbols.inbox.message_adapter_class = se1.g1"));
+        assertTrue(catalog.get(3).symbolPaths.contains(
                 "symbols.inbox.message_adapter_class = je1.c1"));
+    }
+
+    public void testCatalogAddsRemoteOnlyProfileOnce() throws Exception {
+        java.util.ArrayList<SymbolSchema.ProfileInfo> catalog =
+                new java.util.ArrayList<>(SymbolSchema.catalog(getContext()));
+        JSONObject profile = new JSONObject(bundleJson).getJSONArray("profiles")
+                .getJSONObject(0);
+        JSONObject version = profile.getJSONObject("zalo_version");
+        version.put("min_code", 260902905);
+        version.put("max_code", 260902905);
+        SymbolSchema.Active remote = SymbolSchema.select(profile.toString(),
+                "Remote catalog 25", 260902905L);
+
+        int originalSize = catalog.size();
+        SymbolSchema.addRemoteProfileIfMissing(catalog, remote);
+        SymbolSchema.addRemoteProfileIfMissing(catalog, remote);
+
+        assertEquals(originalSize + 1, catalog.size());
+        SymbolSchema.ProfileInfo added = catalog.get(catalog.size() - 1);
+        assertEquals(260902905L, added.versionCode);
+        assertEquals("Remote catalog 25", added.source);
     }
 
     public void testInstalledZaloArtifactMatchesExactProfile() {
@@ -316,16 +366,16 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
     }
 
     private void assertWebviewSymbols(SymbolSchema.Active active, String companion,
-                                      String redirect) {
+                                      String dispatch, String redirect) {
         assertEquals("com.zing.zalo.ui.zviews.ZaloWebView",
                 active.string("symbols.webview.zalo_web_view_class", ""));
         assertEquals(companion, active.string("symbols.webview.companion_class", ""));
-        assertEquals("j", active.string("symbols.webview.open_dispatch_method", ""));
+        assertEquals(dispatch, active.string("symbols.webview.open_dispatch_method", ""));
         assertEquals(redirect, active.string("symbols.webview.redirect_transform_method", ""));
     }
 
     private void assertHookIdentities(SymbolSchema.Active active) {
-        boolean backupMapped = active.minCode == 260801903L;
+        boolean backupMapped = active.minCode >= 260801903L;
         assertEquals(backupMapped,
                 !active.string("symbols.backup.interval_reader_class", "").isEmpty());
         assertEquals(backupMapped,

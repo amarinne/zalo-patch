@@ -13,14 +13,27 @@ import androidx.preference.PreferenceScreen;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class CompatibilityCatalogActivity {
+    private static final ExecutorService CHECK_EXECUTOR =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "zp-compatibility-check");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     private CompatibilityCatalogActivity() {
     }
 
     public static final class CatalogFragment extends ZpPreferenceFragment {
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+            render();
+        }
+
+        private void render() {
             Context context = requireContext();
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
             long installed = SymbolSchema.installedZaloVersionCode(context);
@@ -37,11 +50,21 @@ public final class CompatibilityCatalogActivity {
                     getString(R.string.zp_compatibility_catalog_check),
                     ZaloArtifactState.summary(context));
             check.setOnPreferenceClickListener(preference -> {
-                boolean scheduled = ZaloArtifactState.schedule(context, true);
-                Toast.makeText(context, scheduled
-                                ? R.string.zp_compatibility_catalog_check_scheduled
-                                : R.string.zp_compatibility_catalog_check_failed,
-                        Toast.LENGTH_SHORT).show();
+                check.setEnabled(false);
+                check.setSummary(R.string.zp_compatibility_catalog_checking);
+                Context applicationContext = context.getApplicationContext();
+                CHECK_EXECUTOR.execute(() -> {
+                    ZaloArtifactState.ManualCheckResult result =
+                            ZaloArtifactState.checkNow(applicationContext);
+                    androidx.fragment.app.FragmentActivity activity = getActivity();
+                    if (activity == null) return;
+                    activity.runOnUiThread(() -> {
+                        if (!isAdded()) return;
+                        Toast.makeText(requireContext(), resultMessage(result),
+                                Toast.LENGTH_LONG).show();
+                        render();
+                    });
+                });
                 return true;
             });
             updateSection.add(check);
@@ -53,7 +76,9 @@ public final class CompatibilityCatalogActivity {
             for (SymbolSchema.ProfileInfo profile : catalog) {
                 String title = getString(R.string.zp_compatibility_catalog_version,
                         profile.versionCode);
-                ZpRowPreference row = PreferenceUi.action(context, title);
+                ZpRowPreference row = PreferenceUi.action(context, title,
+                        getString(R.string.zp_compatibility_catalog_profile_summary,
+                                profile.source, profile.schemaRevision));
                 if (profile.versionCode == installed) {
                     row.dot(R.color.zp_status_active);
                 }
@@ -66,6 +91,27 @@ public final class CompatibilityCatalogActivity {
             setPreferenceScreen(screen);
         }
 
+        private String resultMessage(ZaloArtifactState.ManualCheckResult result) {
+            switch (result.catalogStatus) {
+                case "updated":
+                    return getString(R.string.zp_compatibility_catalog_check_updated);
+                case "current":
+                    return getString(R.string.zp_compatibility_catalog_check_current);
+                case "pending":
+                    return getString(R.string.zp_compatibility_catalog_check_pending,
+                            result.versionCode);
+                case "unknown":
+                    return getString(R.string.zp_compatibility_catalog_check_unknown,
+                            result.versionCode);
+                case "suppressed":
+                    return getString(R.string.zp_compatibility_catalog_check_suppressed);
+                default:
+                    String detail = result.error.isEmpty()
+                            ? result.catalogStatus : result.error;
+                    return getString(R.string.zp_compatibility_catalog_check_failed, detail);
+            }
+        }
+
         private void showProfile(SymbolSchema.ProfileInfo profile) {
             TextView text = new TextView(requireContext());
             int padding = Math.round(16 * getResources().getDisplayMetrics().density);
@@ -73,6 +119,8 @@ public final class CompatibilityCatalogActivity {
             text.setTypeface(Typeface.MONOSPACE);
             text.setTextIsSelectable(true);
             StringBuilder value = new StringBuilder();
+            value.append(profile.source).append(" · schema v1.")
+                    .append(profile.schemaRevision).append("\n\n");
             if (!profile.notes.isEmpty()) value.append(profile.notes).append("\n\n");
             for (String path : profile.symbolPaths) value.append(path).append('\n');
             text.setText(value.toString());

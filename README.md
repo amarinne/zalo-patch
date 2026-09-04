@@ -17,10 +17,10 @@
 
 ## Requirements
 
-- Rooted Android device.
-- LSPosed.
+- Rooted device with Android 8.0 (API 26) or newer.
+- LSPosed or another framework that supports LibXposed API 102.
 - Zalo selected in the module scope.
-- Zalo 26.08.01 (`versionCode 260801903`).
+- Zalo 26.08.02 (`versionCode 260802903`).
 
 ## Build
 

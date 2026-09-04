@@ -316,25 +316,47 @@ public final class SymbolSchema {
             for (int index = 0; index < profiles.length(); index++) {
                 JSONObject profile = profiles.optJSONObject(index);
                 if (profile == null) continue;
-                JSONObject version = profile.optJSONObject("zalo_version");
-                JSONObject artifact = profile.optJSONObject("artifact");
-                JSONObject symbols = profile.optJSONObject("symbols");
-                ArrayList<String> paths = new ArrayList<>();
-                collectLeafPaths(symbols, "symbols", paths);
-                Collections.sort(paths);
-                result.add(new ProfileInfo(
-                        version == null ? -1L : version.optLong("min_code", -1L),
-                        profile.optInt("schema_revision", -1),
-                        artifact == null ? "unverified"
-                                : artifact.optString("verification", "unverified"),
-                        version == null ? "" : version.optString("notes", ""), paths));
+                result.add(profileInfo(profile, "Bundled"));
             }
+            long installedVersionCode = installedZaloVersionCode(context);
+            Active remote = remoteForModule(context, installedVersionCode);
+            addRemoteProfileIfMissing(result, remote);
             Collections.sort(result, (left, right) -> Long.compare(right.versionCode,
                     left.versionCode));
             return Collections.unmodifiableList(result);
         } catch (Throwable ignored) {
             return Collections.emptyList();
         }
+    }
+
+    private static ProfileInfo profileInfo(JSONObject profile, String source) {
+        JSONObject version = profile.optJSONObject("zalo_version");
+        JSONObject artifact = profile.optJSONObject("artifact");
+        JSONObject symbols = profile.optJSONObject("symbols");
+        ArrayList<String> paths = new ArrayList<>();
+        collectLeafPaths(symbols, "symbols", paths);
+        Collections.sort(paths);
+        return new ProfileInfo(
+                version == null ? -1L : version.optLong("min_code", -1L),
+                profile.optInt("schema_revision", -1),
+                artifact == null ? "unverified"
+                        : artifact.optString("verification", "unverified"),
+                version == null ? "" : version.optString("notes", ""), source, paths);
+    }
+
+    static void addRemoteProfileIfMissing(List<ProfileInfo> profiles, Active remote) {
+        if (profiles == null || remote == null || !remote.valid
+                || containsVersion(profiles, remote.minCode)) {
+            return;
+        }
+        profiles.add(profileInfo(remote.root, remote.source));
+    }
+
+    private static boolean containsVersion(List<ProfileInfo> profiles, long versionCode) {
+        for (ProfileInfo profile : profiles) {
+            if (profile.versionCode == versionCode) return true;
+        }
+        return false;
     }
 
     private static void collectLeafPaths(JSONObject object, String prefix, List<String> output) {
@@ -877,14 +899,16 @@ public final class SymbolSchema {
         public final int schemaRevision;
         public final String verification;
         public final String notes;
+        public final String source;
         public final List<String> symbolPaths;
 
         ProfileInfo(long versionCode, int schemaRevision, String verification, String notes,
-                    List<String> symbolPaths) {
+                    String source, List<String> symbolPaths) {
             this.versionCode = versionCode;
             this.schemaRevision = schemaRevision;
             this.verification = verification;
             this.notes = notes;
+            this.source = source;
             this.symbolPaths = Collections.unmodifiableList(new ArrayList<>(symbolPaths));
         }
     }

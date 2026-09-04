@@ -20,9 +20,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class ChatFeature extends Feature {
     private static final String FEATURE_REACTION_ROW = "messages.reaction_row";
@@ -80,12 +79,42 @@ public final class ChatFeature extends Feature {
 
     private int hookPopupSurfaceScans() {
         int hooked = 0;
+        XpHooks.Before popupBefore = new XpHooks.Before() {
+            @Override
+            public void before(XpHooks.HookParam param) {
+                if (param.thisObject instanceof PopupWindow) {
+                    scheduleScan(((PopupWindow) param.thisObject).getContentView(), "PopupWindow");
+                }
+            }
+        };
+        XpHooks.After popupAfter = new XpHooks.After() {
+            @Override
+            public void after(XpHooks.HookParam param) {
+                if (param.thisObject instanceof PopupWindow) {
+                    scheduleScan(((PopupWindow) param.thisObject).getContentView(), "PopupWindow");
+                }
+            }
+        };
+        XpHooks.After dialogAfter = new XpHooks.After() {
+            @Override
+            public void after(XpHooks.HookParam param) {
+                if (!(param.thisObject instanceof Dialog)) {
+                    return;
+                }
+                Dialog dialog = (Dialog) param.thisObject;
+                if (dialog.getWindow() != null) {
+                    scheduleScan(dialog.getWindow().getDecorView(), "Dialog");
+                }
+            }
+        };
         try {
-            XposedBridge.hookAllMethods(PopupWindow.class, "showAtLocation", popupHook());
+            XpHooks.hookAllMethods(FEATURE_REACTION_ROW, PopupWindow.class, "showAtLocation",
+                    popupBefore, popupAfter);
             hooked++;
-            XposedBridge.hookAllMethods(PopupWindow.class, "showAsDropDown", popupHook());
+            XpHooks.hookAllMethods(FEATURE_REACTION_ROW, PopupWindow.class, "showAsDropDown",
+                    popupBefore, popupAfter);
             hooked++;
-            XposedBridge.hookAllMethods(Dialog.class, "show", dialogHook());
+            XpHooks.hookAllMethods(FEATURE_REACTION_ROW, Dialog.class, "show", null, dialogAfter);
             hooked++;
         } catch (Throwable throwable) {
             SelfCheckRegistry.markFailed(FEATURE_REACTION_ROW, "PopupWindow/Dialog", throwable);
@@ -102,7 +131,7 @@ public final class ChatFeature extends Feature {
     }
 
     private int hookReactionGestureSuppression() {
-        Class<?> clazz = XposedHelpers.findClassIfExists(REACTION_PICKER_BASE_CLASS, classLoader);
+        Class<?> clazz = XpReflect.findClassIfExists(REACTION_PICKER_BASE_CLASS, classLoader);
         if (clazz == null) {
             return 0;
         }
@@ -115,9 +144,9 @@ public final class ChatFeature extends Feature {
             }
             try {
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(FEATURE_REACTION_ROW, method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.thisObject != null
                                 && REACTION_PICKER_CLASS.equals(param.thisObject.getClass().getName())) {
                             param.setResult(true);
@@ -148,7 +177,7 @@ public final class ChatFeature extends Feature {
         if (methodName.isEmpty() || armedField.isEmpty()) {
             return 0;
         }
-        Class<?> rowClass = XposedHelpers.findClassIfExists(CHAT_ROW_CLASS, classLoader);
+        Class<?> rowClass = XpReflect.findClassIfExists(CHAT_ROW_CLASS, classLoader);
         if (rowClass == null) {
             return 0;
         }
@@ -160,13 +189,13 @@ public final class ChatFeature extends Feature {
             }
             try {
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(FEATURE_REACTION_ROW, method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        if (!XposedHelpers.getBooleanField(param.thisObject, armedField)) {
+                    public void before(XpHooks.HookParam param) throws Throwable {
+                        if (!XpReflect.getBooleanField(param.thisObject, armedField)) {
                             return;
                         }
-                        XposedHelpers.setBooleanField(param.thisObject, armedField, false);
+                        XpReflect.setBooleanField(param.thisObject, armedField, false);
                         param.setResult(null);
                         SelfCheckRegistry.markSuppressed(FEATURE_REACTION_ROW,
                                 CHAT_ROW_CLASS + "#" + methodName,
@@ -183,14 +212,14 @@ public final class ChatFeature extends Feature {
     }
 
     private int hookReactionClass(String className) {
-        Class<?> clazz = XposedHelpers.findClassIfExists(className, classLoader);
+        Class<?> clazz = XpReflect.findClassIfExists(className, classLoader);
         if (clazz == null) {
             return 0;
         }
         try {
-            XposedBridge.hookAllConstructors(clazz, new XC_MethodHook() {
+            XpHooks.hookAllConstructors(FEATURE_REACTION_ROW, clazz, null, new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     if (param.thisObject instanceof View) {
                         removeReactionView((View) param.thisObject, "constructor");
                     }
@@ -205,17 +234,20 @@ public final class ChatFeature extends Feature {
 
     private int hookReactionAddView() {
         try {
-            XposedBridge.hookAllMethods(ViewGroup.class, "addView", new XC_MethodHook() {
+            XpHooks.Before removeBefore = new XpHooks.Before() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
+                public void before(XpHooks.HookParam param) {
                     removeReactionArgs(param);
                 }
-
+            };
+            XpHooks.After removeAfter = new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     removeReactionArgs(param);
                 }
-            });
+            };
+            XpHooks.hookAllMethods(FEATURE_REACTION_ROW, ViewGroup.class, "addView",
+                    removeBefore, removeAfter);
             return 1;
         } catch (Throwable throwable) {
             SelfCheckRegistry.markFailed(FEATURE_REACTION_ROW, "ViewGroup.addView reaction", throwable);
@@ -223,7 +255,7 @@ public final class ChatFeature extends Feature {
         }
     }
 
-    private void removeReactionArgs(XC_MethodHook.MethodHookParam param) {
+    private void removeReactionArgs(XpHooks.HookParam param) {
         if (param.thisObject instanceof View && isReactionContainer((View) param.thisObject)) {
             removeReactionView((View) param.thisObject, "ViewGroup.addView parent");
         }
@@ -237,41 +269,8 @@ public final class ChatFeature extends Feature {
         }
     }
 
-    private XC_MethodHook popupHook() {
-        return new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                if (param.thisObject instanceof PopupWindow) {
-                    scheduleScan(((PopupWindow) param.thisObject).getContentView(), "PopupWindow");
-                }
-            }
-
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                if (param.thisObject instanceof PopupWindow) {
-                    scheduleScan(((PopupWindow) param.thisObject).getContentView(), "PopupWindow");
-                }
-            }
-        };
-    }
-
-    private XC_MethodHook dialogHook() {
-        return new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                if (!(param.thisObject instanceof Dialog)) {
-                    return;
-                }
-                Dialog dialog = (Dialog) param.thisObject;
-                if (dialog.getWindow() != null) {
-                    scheduleScan(dialog.getWindow().getDecorView(), "Dialog");
-                }
-            }
-        };
-    }
-
     private int hookWindowManagerAddView() {
-        Class<?> impl = XposedHelpers.findClassIfExists("android.view.WindowManagerImpl", classLoader);
+        Class<?> impl = XpReflect.findClassIfExists("android.view.WindowManagerImpl", classLoader);
         if (impl == null) {
             return 0;
         }
@@ -283,21 +282,23 @@ public final class ChatFeature extends Feature {
             }
             try {
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.Before scanBefore = new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         if (param.args.length > 0 && param.args[0] instanceof View) {
                             scheduleScan((View) param.args[0], "WindowManager.addView");
                         }
                     }
-
+                };
+                XpHooks.After scanAfter = new XpHooks.After() {
                     @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
+                    public void after(XpHooks.HookParam param) {
                         if (param.args.length > 0 && param.args[0] instanceof View) {
                             scheduleScan((View) param.args[0], "WindowManager.addView");
                         }
                     }
-                });
+                };
+                XpHooks.hookMethod(FEATURE_REACTION_ROW, method, scanBefore, scanAfter);
                 hooked++;
             } catch (Throwable throwable) {
                 SelfCheckRegistry.markFailed(FEATURE_REACTION_ROW, "WindowManagerImpl#addView", throwable);

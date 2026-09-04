@@ -1,6 +1,5 @@
 package com.ez.zalopatch.xposed.features;
 
-import android.app.AndroidAppHelper;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
@@ -12,13 +11,11 @@ import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 
 /**
  * Opens tapped chat/feed http(s) links through the system browser instead of Zalo's in-app
@@ -62,14 +59,14 @@ public final class WebLinkExternalizeFeature extends Feature {
                 + webViewClass + "#" + transformMethod + "(Uri)";
         runGuarded("open-links externally", FEATURE_KEY, target, () -> {
             Method redirect = findRedirect(webViewClass, transformMethod);
-            Class<?> companion = XposedHelpers.findClass(companionClass, classLoader);
+            Class<?> companion = XpReflect.findClass(companionClass, classLoader);
             Method dispatch = findDispatch(companion, dispatchMethod);
             if (dispatch == null) {
                 throw new NoSuchMethodError(
                         companionClass + "#" + dispatchMethod
                                 + "(interface, String, Bundle, boolean, int, interface) not found");
             }
-            XC_MethodHook.Unhook dispatchHook = installExternalOpen(
+            XpHooks.Handle dispatchHook = installExternalOpen(
                     dispatch, companionClass, dispatchMethod);
             try {
                 installRedirectVoid(redirect, webViewClass, transformMethod);
@@ -86,9 +83,9 @@ public final class WebLinkExternalizeFeature extends Feature {
 
     /** Returns the original Uri so no tapped link gains a redirect/tracking hop. */
     private void installRedirectVoid(Method redirect, String webViewClass, String transformMethod) {
-        XposedBridge.hookMethod(redirect, new XC_MethodHook() {
+        XpHooks.hookMethod(FEATURE_KEY, redirect, new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 param.setResult(param.args[0]);
                 SelfCheckRegistry.incrementHit(FEATURE_KEY,
                         webViewClass + "#" + transformMethod,
@@ -97,11 +94,11 @@ public final class WebLinkExternalizeFeature extends Feature {
         });
     }
 
-    private XC_MethodHook.Unhook installExternalOpen(Method dispatch, String companionClass,
-                                                     String dispatchMethod) {
-        return XposedBridge.hookMethod(dispatch, new XC_MethodHook() {
+    private XpHooks.Handle installExternalOpen(Method dispatch, String companionClass,
+                                                String dispatchMethod) {
+        return XpHooks.hookMethod(FEATURE_KEY, dispatch, new XpHooks.Before() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            public void before(XpHooks.HookParam param) {
                 Object bundleArg = param.args.length > 2 ? param.args[2] : null;
                 if (!(bundleArg instanceof Bundle)) {
                     return;
@@ -141,8 +138,8 @@ public final class WebLinkExternalizeFeature extends Feature {
     }
 
     private Method findRedirect(String webViewClass, String transformMethod)
-            throws NoSuchMethodException {
-        Class<?> webView = XposedHelpers.findClass(webViewClass, classLoader);
+            throws NoSuchMethodException, ClassNotFoundException {
+        Class<?> webView = XpReflect.findClass(webViewClass, classLoader);
         Method redirect = webView.getDeclaredMethod(transformMethod, Uri.class);
         if (redirect.getReturnType() != Uri.class
                 || !Modifier.isStatic(redirect.getModifiers())) {
@@ -207,6 +204,6 @@ public final class WebLinkExternalizeFeature extends Feature {
                 current = current.getSuperclass();
             }
         }
-        return AndroidAppHelper.currentApplication();
+        return HookConfig.resolveFallbackContextForHooks();
     }
 }

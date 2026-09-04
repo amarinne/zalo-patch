@@ -114,7 +114,7 @@
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
     <string name="zp_tweak_open_links_externally">Open links in system browser</string>
-    <string name="zp_tweak_open_links_externally_summary">Tapped chat and feed links open in your default browser or app, skipping Zalo’s in-app browser and its redirect server. Zalo settings, login, and mini-app pages are unaffected.</string>
+    <string name="zp_tweak_open_links_externally_summary">Tapped chat and feed links open in your default browser or app, skipping Zalo’s in-app browser and its redirect server. Zalo-owned links, including payment and bank-card actions, stay in-app.</string>
     <string name="zp_tweak_block_seen_status">Block seen status</string>
     <string name="zp_tweak_block_seen_status_summary">Hides your read receipts while preserving delivered status. You still see other people’s receipts.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
@@ -170,9 +170,15 @@
     <string name="zp_compatibility_catalog_unmapped">Installed Zalo %1$d has no exact map. Check for compatibility updates, then submit a Compatibility report if it remains unavailable.</string>
     <string name="zp_compatibility_catalog_updates">Compatibility updates</string>
     <string name="zp_compatibility_catalog_check">Check for compatibility updates</string>
-    <string name="zp_compatibility_catalog_check_scheduled">Compatibility check scheduled.</string>
-    <string name="zp_compatibility_catalog_check_failed">Compatibility check could not be scheduled.</string>
-    <string name="zp_compatibility_catalog_profiles">Bundled fallback maps</string>
+    <string name="zp_compatibility_catalog_checking">Checking compatibility server…</string>
+    <string name="zp_compatibility_catalog_check_updated">Compatibility map updated. Restart Zalo to apply it.</string>
+    <string name="zp_compatibility_catalog_check_current">Compatibility maps are already current.</string>
+    <string name="zp_compatibility_catalog_check_pending">Server is preparing a map for Zalo %1$d.</string>
+    <string name="zp_compatibility_catalog_check_unknown">Server has no map for Zalo %1$d.</string>
+    <string name="zp_compatibility_catalog_check_suppressed">Check blocked while Zalo Patch test package is installed.</string>
+    <string name="zp_compatibility_catalog_check_failed">Compatibility check failed: %1$s</string>
+    <string name="zp_compatibility_catalog_profiles">Available compatibility maps</string>
+    <string name="zp_compatibility_catalog_profile_summary">%1$s · schema v1.%2$d</string>
     <string name="zp_compatibility_catalog_version">Zalo %1$d</string>
 
     <string name="zp_about_version">Zalo Patch %1$s</string>
@@ -401,8 +407,12 @@
     <string name="zp_call_recordings_storage">%1$d recordings · %2$s</string>
     <string name="zp_call_recording_open_failed">No audio player is available</string>
     <string name="zp_call_recording_delete_title">Delete recording?</string>
+    <string name="zp_call_recording_delete_raw_title">Delete raw WAV?</string>
     <string name="zp_call_recording_delete_message">This removes the shared M4A file.</string>
     <string name="zp_call_recording_delete_failed">Could not delete recording</string>
+    <string name="zp_call_recording_raw_summary">%1$s · Raw WAV retained · %2$s · Tap to retry M4A conversion</string>
+    <string name="zp_call_recording_retry_started">M4A conversion started</string>
+    <string name="zp_call_recording_retry_failed">Raw WAV is unavailable or invalid</string>
     <string name="zp_call_recording_notification_status_channel">Call recording status</string>
     <string name="zp_call_recording_notification_status_channel_summary">Shows when Zalo call recording is active.</string>
     <string name="zp_call_recording_notification_result_channel">Call recording results</string>

@@ -7,12 +7,10 @@ import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 import java.lang.reflect.Method;
-
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 
 /** Shortens only Zalo's native scheduled message-backup interval. */
 public final class BackupPushFeature extends Feature {
@@ -51,13 +49,13 @@ public final class BackupPushFeature extends Feature {
         String methodName = schema.string("symbols.backup.interval_reader_method", "");
         String target = "source=" + schema.source + " " + ownerName + "#" + methodName;
         try {
-            Class<?> owner = XposedHelpers.findClass(ownerName, classLoader);
+            Class<?> owner = XpReflect.findClass(ownerName, classLoader);
             Method method = owner.getDeclaredMethod(methodName,
                     long.class, boolean.class, String.class);
             method.setAccessible(true);
-            XposedBridge.hookMethod(method, new XC_MethodHook() {
+            XpHooks.hookMethod(FEATURE, method, new XpHooks.After() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
+                public void after(XpHooks.HookParam param) {
                     if (!HookConfig.isEnabled(Tweaks.KEY_BACKUP_FREQUENT_PUSH)
                             || param.hasThrowable()
                             || param.args.length < 3

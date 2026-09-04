@@ -39,6 +39,17 @@ public final class WebLinkExternalizeGateTest {
     }
 
     @Test
+    public void zaloOwnedActionsStayInApp() {
+        assertEquals(Decision.LEAVE_IN_APP,
+                WebLinkExternalizeGate.classify(true, false, false,
+                        "https://bankcard-action.zalo.me/?action=transfer&content=*"));
+        assertEquals(Decision.LEAVE_IN_APP,
+                WebLinkExternalizeGate.classify(true, false, false,
+                        "https://zalo.me/some-action"));
+        assertFalse(WebLinkExternalizeGate.isZaloOwnedUrl("https://evilzalo.me/action"));
+    }
+
+    @Test
     public void nonHttpSchemesNeverGoExternal() {
         assertEquals(Decision.LEAVE_IN_APP,
                 WebLinkExternalizeGate.classify(true, false, false, "javascript:alert(1)"));

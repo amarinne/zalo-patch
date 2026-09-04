@@ -16,9 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.ez.zalopatch.xposed.core.XpHooks;
+import com.ez.zalopatch.xposed.core.XpReflect;
 
 public final class MeCleanupFeature extends Feature {
     private static final String FEATURE_ITEMS = "me_cleanup.items";
@@ -82,11 +81,12 @@ public final class MeCleanupFeature extends Feature {
         }
     }
 
-    private void hookCurrentTabMeBuilder() {
-        Class<?> tabMeClass = XposedHelpers.findClass(tabMeClass(), classLoader);
-        int hooked = XposedBridge.hookAllMethods(tabMeClass, currentBuilderMethod(), new XC_MethodHook() {
+    private void hookCurrentTabMeBuilder() throws Throwable {
+        Class<?> tabMeClass = XpReflect.findClass(tabMeClass(), classLoader);
+        int hooked = XpHooks.hookAllMethods(FEATURE_ITEMS, tabMeClass, currentBuilderMethod(),
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 Object filtered = filterIfNeeded(param.getResult());
                 if (filtered != param.getResult()) {
                     param.setResult(filtered);
@@ -102,11 +102,12 @@ public final class MeCleanupFeature extends Feature {
         }
     }
 
-    private void hookLegacyTabMeBuilder() {
-        Class<?> tabMeClass = XposedHelpers.findClass(tabMeClass(), classLoader);
-        int hooked = XposedBridge.hookAllMethods(tabMeClass, legacyBuilderMethod(), new XC_MethodHook() {
+    private void hookLegacyTabMeBuilder() throws Throwable {
+        Class<?> tabMeClass = XpReflect.findClass(tabMeClass(), classLoader);
+        int hooked = XpHooks.hookAllMethods(FEATURE_ITEMS, tabMeClass, legacyBuilderMethod(),
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 Object filtered = filterIfNeeded(param.getResult());
                 if (filtered != param.getResult()) {
                     param.setResult(filtered);
@@ -119,9 +120,10 @@ public final class MeCleanupFeature extends Feature {
     }
 
     private void hookVisibleRowText() {
-        XposedBridge.hookAllMethods(TextView.class, "setText", new XC_MethodHook() {
+        XpHooks.hookAllMethods(FEATURE_VISIBLE_ROWS, TextView.class, "setText",
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof TextView)) {
                     return;
                 }
@@ -136,11 +138,12 @@ public final class MeCleanupFeature extends Feature {
         });
     }
 
-    private void hookZStyleView() {
-        Class<?> viewClass = XposedHelpers.findClass(zStyleViewClass(), classLoader);
-        int hooked = XposedBridge.hookAllConstructors(viewClass, new XC_MethodHook() {
+    private void hookZStyleView() throws Throwable {
+        Class<?> viewClass = XpReflect.findClass(zStyleViewClass(), classLoader);
+        int hooked = XpHooks.hookAllConstructors(FEATURE_ZSTYLE, viewClass, null,
+                new XpHooks.After() {
             @Override
-            protected void afterHookedMethod(MethodHookParam param) {
+            public void after(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof View)) {
                     return;
                 }

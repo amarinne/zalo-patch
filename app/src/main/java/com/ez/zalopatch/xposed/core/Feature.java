@@ -4,8 +4,6 @@ import android.util.Log;
 
 import com.ez.zalopatch.HookConfig;
 
-import de.robv.android.xposed.XposedBridge;
-
 public abstract class Feature {
     protected final ClassLoader classLoader;
 
@@ -37,7 +35,7 @@ public abstract class Feature {
 
     protected final void log(String message) {
         String fullMessage = "ZaloPatch: [" + getFeatureName() + "] " + message;
-        XposedBridge.log(fullMessage);
+        XpLog.i(fullMessage);
         if (HookConfig.isDebugEnabled()) {
             Log.i("ZaloPatch", fullMessage);
         }

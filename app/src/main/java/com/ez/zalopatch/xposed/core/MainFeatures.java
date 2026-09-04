@@ -23,12 +23,11 @@ import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
 import com.ez.zalopatch.xposed.features.SymbolSchemaHealthFeature;
 import com.ez.zalopatch.xposed.features.TelemetryFeature;
 import com.ez.zalopatch.xposed.features.WebLinkExternalizeFeature;
+import com.ez.zalopatch.xposed.features.ZcloudBannerFeature;
 import com.ez.zalopatch.xposed.features.ZinstantFeature;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import de.robv.android.xposed.XposedBridge;
 
 public final class MainFeatures {
     private static final String FEATURE_RUNTIME_DISCOVERY = "runtime_discovery";
@@ -92,6 +91,7 @@ public final class MainFeatures {
                     preflight.zinstantMessage, preflight.reason(preflight.zinstantMessageErrors),
                     preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
             features.add(new ChatFeature(classLoader));
+            features.add(new ZcloudBannerFeature(classLoader));
             addPasscodeGrace(features, classLoader, preflight);
             addStatusPrivacy(features, classLoader, preflight);
             addWebLinkExternalize(features, classLoader, preflight);
@@ -330,7 +330,7 @@ public final class MainFeatures {
         } catch (Throwable throwable) {
             SelfCheckRegistry.markFailed("feature." + feature.getFeatureName(),
                     feature.getFeatureName(), throwable);
-            XposedBridge.log("ZaloPatch: [" + feature.getFeatureName() + "] failed: " + throwable);
+            XpLog.e("ZaloPatch: [" + feature.getFeatureName() + "] failed", throwable);
         }
     }
 

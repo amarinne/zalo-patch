@@ -32,6 +32,15 @@ public final class SettingsPropertyMirror {
         return write(key, String.valueOf(value));
     }
 
+    public static boolean writeString(String key, String value) {
+        // Android setprop requires a value argument. Empty optional metadata must not turn an
+        // otherwise successful settings sync into a false root-denied result.
+        if (value == null || value.isEmpty()) {
+            return true;
+        }
+        return write(key, value);
+    }
+
     public static String readBlob(String key) {
         try {
             int count = Integer.parseInt(readProperty(propertyName(key) + ".n", "0"));

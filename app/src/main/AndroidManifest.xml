@@ -23,6 +23,10 @@
             android:authorities="com.ez.zalopatch.config"
             android:exported="true" />
 
+        <!-- LibXposed API 102 entry: META-INF/xposed/java_init.list declares
+            com.ez.zalopatch.ZaloPatchModule, scope.list pins com.zing.zalo.
+            The MODULE_SETTINGS shortcut is kept so the framework manager still
+            opens this app's settings surface. -->
         <activity
             android:name=".StatusActivity"
             android:exported="true">
@@ -76,22 +80,6 @@
             android:name=".ZaloArtifactJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
-
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="Lean Zalo UI module" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <meta-data
-            android:name="xposedsharedprefs"
-            android:value="true" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposed_scope" />
     </application>
 
 </manifest>

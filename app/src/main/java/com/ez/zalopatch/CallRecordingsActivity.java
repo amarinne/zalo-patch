@@ -55,7 +55,11 @@ public final class CallRecordingsActivity {
             adapter = new RecordingsAdapter(new RecordingsAdapter.Listener() {
                 @Override
                 public void onClick(CallRecordingStore.Entry entry) {
-                    openRecording(entry);
+                    if (entry.raw) {
+                        retryConversion(entry);
+                    } else {
+                        openRecording(entry);
+                    }
                 }
 
                 @Override
@@ -106,10 +110,29 @@ public final class CallRecordingsActivity {
             }
         }
 
+        private void retryConversion(CallRecordingStore.Entry entry) {
+            android.content.Context context = requireContext().getApplicationContext();
+            new Thread(() -> {
+                boolean queued = CallRecordingStore.retry(context, entry);
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    if (!isAdded()) return;
+                    Toast.makeText(requireContext(), queued
+                                    ? R.string.zp_call_recording_retry_started
+                                    : R.string.zp_call_recording_retry_failed,
+                            Toast.LENGTH_SHORT).show();
+                    if (queued) {
+                        new android.os.Handler(android.os.Looper.getMainLooper())
+                                .postDelayed(this::refreshAsync, 1500L);
+                    }
+                });
+            }, "call-recording-retry").start();
+        }
+
         private void confirmDelete(CallRecordingStore.Entry entry) {
-            new MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(R.string.zp_call_recording_delete_title)
-                    .setMessage(R.string.zp_call_recording_delete_message)
+            MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(entry.raw
+                            ? R.string.zp_call_recording_delete_raw_title
+                            : R.string.zp_call_recording_delete_title)
                     .setNegativeButton(R.string.zp_cancel, null)
                     .setPositiveButton(R.string.zp_delete, (dialog, which) -> {
                         if (!CallRecordingStore.delete(requireContext(), entry)) {
@@ -119,8 +142,11 @@ public final class CallRecordingsActivity {
                             return;
                         }
                         refreshAsync();
-                    })
-                    .show();
+                    });
+            if (!entry.raw) {
+                builder.setMessage(R.string.zp_call_recording_delete_message);
+            }
+            builder.show();
         }
     }
 
@@ -167,7 +193,7 @@ public final class CallRecordingsActivity {
         public void onBindViewHolder(@NonNull Holder holder, int position) {
             CallRecordingStore.Entry entry = getItem(position);
             holder.title.setText(entry.name);
-            holder.summary.setText(entrySummary(entry));
+            holder.summary.setText(entrySummary(holder.itemView, entry));
             holder.itemView.setOnClickListener(clicked -> listener.onClick(entry));
             holder.itemView.setOnLongClickListener(clicked -> {
                 listener.onLongClick(entry);
@@ -187,9 +213,13 @@ public final class CallRecordingsActivity {
         }
     }
 
-    private static String entrySummary(CallRecordingStore.Entry entry) {
+    private static String entrySummary(View view, CallRecordingStore.Entry entry) {
         String date = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                 .format(new Date(entry.startedAt));
+        if (entry.raw) {
+            return view.getContext().getString(R.string.zp_call_recording_raw_summary,
+                    date, formatBytes(entry.size));
+        }
         return date + " · " + formatDuration(entry.durationMs) + " · "
                 + formatBytes(entry.size);
     }

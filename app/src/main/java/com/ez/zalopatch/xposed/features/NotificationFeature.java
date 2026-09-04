@@ -14,8 +14,7 @@ import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 
 import java.lang.reflect.Method;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.ez.zalopatch.xposed.core.XpHooks;
 
 public final class NotificationFeature extends Feature {
     private static final String FEATURE = "notifications.promo";
@@ -50,9 +49,9 @@ public final class NotificationFeature extends Feature {
                     continue;
                 }
                 method.setAccessible(true);
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                XpHooks.hookMethod(FEATURE, method, new XpHooks.Before() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
+                    public void before(XpHooks.HookParam param) {
                         Notification notification = notificationArg(param, method);
                         if (notification == null) {
                             return;
@@ -106,7 +105,7 @@ public final class NotificationFeature extends Feature {
         }
     }
 
-    private void recordHistory(XC_MethodHook.MethodHookParam param, Method method, Notification notification, boolean promo, boolean cancelled, String metadata) {
+    private void recordHistory(XpHooks.HookParam param, Method method, Notification notification, boolean promo, boolean cancelled, String metadata) {
         try {
             Context context = HookConfig.resolveModuleContextForHooks();
             if (context == null) {
@@ -159,7 +158,7 @@ public final class NotificationFeature extends Feature {
         context.sendBroadcast(intent, null, options.toBundle());
     }
 
-    private static String notificationKey(XC_MethodHook.MethodHookParam param) {
+    private static String notificationKey(XpHooks.HookParam param) {
         if (param.args == null || param.args.length == 0) {
             return "";
         }
@@ -190,7 +189,7 @@ public final class NotificationFeature extends Feature {
         return -1;
     }
 
-    private static Notification notificationArg(XC_MethodHook.MethodHookParam param, Method method) {
+    private static Notification notificationArg(XpHooks.HookParam param, Method method) {
         int index = notificationArgIndex(method);
         if (index < 0 || param.args == null || index >= param.args.length || !(param.args[index] instanceof Notification)) {
             return null;

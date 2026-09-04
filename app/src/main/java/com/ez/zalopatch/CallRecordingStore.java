@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -44,6 +45,9 @@ public final class CallRecordingStore {
             "zalo-call-(\\d{13})-(incoming|outgoing|unknown)-([0-9a-f]{8})\\.part");
     private static final Pattern PROCESSING_NAME = Pattern.compile(
             "zalo-call-(\\d{13})-(incoming|outgoing|unknown)-([0-9a-f]{8})\\.processing\\.wav");
+    private static final Pattern RAW_NAME = Pattern.compile(
+            "zalo-call-(\\d{13})-(incoming|outgoing|unknown)-([0-9a-f]{8})"
+                    + "\\.processing\\.wav(?:\\.\\d+)?");
     private static final ExecutorService FINALIZER = Executors.newSingleThreadExecutor();
     private static final Set<String> QUEUED = Collections.synchronizedSet(new HashSet<String>());
 
@@ -53,13 +57,18 @@ public final class CallRecordingStore {
         public final long startedAt;
         public final long size;
         public final long durationMs;
+        public final boolean raw;
+        final File rawFile;
 
-        Entry(Uri uri, String name, long startedAt, long size, long durationMs) {
+        Entry(Uri uri, String name, long startedAt, long size, long durationMs,
+                boolean raw, File rawFile) {
             this.uri = uri;
             this.name = name;
             this.startedAt = startedAt;
             this.size = size;
             this.durationMs = durationMs;
+            this.raw = raw;
+            this.rawFile = rawFile;
         }
     }
 
@@ -100,6 +109,9 @@ public final class CallRecordingStore {
             if (!PROCESSING_NAME.matcher(file.getName()).matches()) {
                 continue;
             }
+            if (recoveryAttempts(context, file) >= MAX_RECOVERY_ATTEMPTS) {
+                continue;
+            }
             try {
                 queue(context.getApplicationContext(), file, readMetadata(metadataFile(file)), true);
             } catch (Exception exception) {
@@ -115,39 +127,40 @@ public final class CallRecordingStore {
     }
 
     public static List<Entry> list(Context context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return Collections.emptyList();
-        }
         ArrayList<Entry> entries = new ArrayList<>();
-        String[] projection = new String[]{
-                MediaStore.Audio.Media._ID,
-                MediaStore.Audio.Media.DISPLAY_NAME,
-                MediaStore.Audio.Media.SIZE,
-                MediaStore.Audio.Media.DURATION,
-                MediaStore.Audio.Media.DATE_ADDED
-        };
-        String selection = MediaStore.Audio.Media.RELATIVE_PATH + "=?";
-        String[] args = new String[]{SHARED_DIRECTORY + "/"};
-        try (Cursor cursor = context.getContentResolver().query(
-                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                projection, selection, args,
-                MediaStore.Audio.Media.DATE_ADDED + " DESC")) {
-            if (cursor == null) {
-                return Collections.emptyList();
-            }
-            int idIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
-            int nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);
-            int sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);
-            int durationIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
-            int dateIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
-            while (cursor.moveToNext()) {
-                long id = cursor.getLong(idIndex);
-                entries.add(new Entry(Uri.withAppendedPath(
-                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, String.valueOf(id)),
-                        cursor.getString(nameIndex), cursor.getLong(dateIndex) * 1000L,
-                        cursor.getLong(sizeIndex), cursor.getLong(durationIndex)));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            String[] projection = new String[]{
+                    MediaStore.Audio.Media._ID,
+                    MediaStore.Audio.Media.DISPLAY_NAME,
+                    MediaStore.Audio.Media.SIZE,
+                    MediaStore.Audio.Media.DURATION,
+                    MediaStore.Audio.Media.DATE_ADDED
+            };
+            String selection = MediaStore.Audio.Media.RELATIVE_PATH + "=?";
+            String[] args = new String[]{SHARED_DIRECTORY + "/"};
+            try (Cursor cursor = context.getContentResolver().query(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    projection, selection, args,
+                    MediaStore.Audio.Media.DATE_ADDED + " DESC")) {
+                if (cursor != null) {
+                    int idIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                    int nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);
+                    int sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);
+                    int durationIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+                    int dateIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
+                    while (cursor.moveToNext()) {
+                        long id = cursor.getLong(idIndex);
+                        entries.add(new Entry(Uri.withAppendedPath(
+                                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, String.valueOf(id)),
+                                cursor.getString(nameIndex), cursor.getLong(dateIndex) * 1000L,
+                                cursor.getLong(sizeIndex), cursor.getLong(durationIndex), false, null));
+                    }
+                }
             }
         }
+        addRawEntries(privateDirectory(context), entries);
+        addRawEntries(new File(privateDirectory(context), CORRUPT_DIRECTORY), entries);
+        entries.sort(Comparator.comparingLong((Entry entry) -> entry.startedAt).reversed());
         return Collections.unmodifiableList(entries);
     }
 
@@ -160,7 +173,31 @@ public final class CallRecordingStore {
     }
 
     public static boolean delete(Context context, Entry entry) {
+        if (entry.raw) {
+            if (entry.rawFile != null && QUEUED.contains(entry.rawFile.getAbsolutePath())) {
+                return false;
+            }
+            boolean deleted = entry.rawFile != null && entry.rawFile.delete();
+            if (deleted) {
+                metadataFile(entry.rawFile).delete();
+                clearRecoveryFailures(context, entry.rawFile);
+            }
+            return deleted;
+        }
         return context.getContentResolver().delete(entry.uri, null, null) > 0;
+    }
+
+    public static boolean retry(Context context, Entry entry) {
+        if (entry == null || !entry.raw || entry.rawFile == null || !entry.rawFile.isFile()) {
+            return false;
+        }
+        if (!isNativeImportReady(entry.rawFile) && !repairNativeImport(entry.rawFile)) {
+            updateSelfCheck(context, "failed", 0, "Raw WAV is not valid PCM audio");
+            return false;
+        }
+        Metadata metadata = metadataFor(entry.rawFile);
+        clearRecoveryFailures(context, entry.rawFile);
+        return queue(context.getApplicationContext(), entry.rawFile, metadata, false);
     }
 
     static boolean isPendingName(String name) {
@@ -175,11 +212,11 @@ public final class CallRecordingStore {
         return file != null && file.isFile() && CallRecordingTranscoder.repairHeader(file);
     }
 
-    private static void queue(
+    private static boolean queue(
             Context context, File processing, Metadata metadata, boolean recovery) {
         String key = processing.getAbsolutePath();
         if (!QUEUED.add(key)) {
-            return;
+            return false;
         }
         FINALIZER.execute(() -> {
             try {
@@ -192,6 +229,7 @@ public final class CallRecordingStore {
                 QUEUED.remove(key);
             }
         });
+        return true;
     }
 
     private static void queueImport(
@@ -209,28 +247,29 @@ public final class CallRecordingStore {
                  OutputStream output = new FileOutputStream(processing)) {
                 copy(input, output);
             } catch (Throwable throwable) {
-                processing.delete();
+                if (processing.length() <= 0L) {
+                    processing.delete();
+                }
                 updateSelfCheck(context, "failed", 0,
-                        "Recording import failed: " + throwable.getClass().getSimpleName());
+                        "Recording import failed; raw bytes preserved when available: "
+                                + throwable.getClass().getSimpleName());
                 CallRecordingNotifier.finishFailed(context);
                 QUEUED.remove(key);
                 return;
             }
             try {
                 if (!CallRecordingTranscoder.isPcmWave(processing)) {
-                    processing.delete();
                     updateSelfCheck(context, "failed", 0,
-                            "Native WAV invalid after transfer");
+                            "Native WAV invalid after transfer; raw file preserved");
                     CallRecordingNotifier.finishFailed(context);
                     return;
                 }
                 writeMetadata(metadataFile(processing), metadata);
                 finalizeNow(context, processing, metadata);
             } catch (Throwable throwable) {
-                processing.delete();
-                metadataFile(processing).delete();
                 updateSelfCheck(context, "failed", 0,
-                        "Recording metadata failed: " + throwable.getClass().getSimpleName());
+                        "Recording finalization failed; raw file preserved: "
+                                + throwable.getClass().getSimpleName());
                 CallRecordingNotifier.finishFailed(context);
             } finally {
                 QUEUED.remove(key);
@@ -268,15 +307,7 @@ public final class CallRecordingStore {
         android.content.SharedPreferences preferences = TweakStore.preferences(context);
         String key = RECOVERY_ATTEMPTS_PREFIX + processing.getName();
         int attempts = preferences.getInt(key, 0) + 1;
-        if (attempts < MAX_RECOVERY_ATTEMPTS) {
-            preferences.edit().putInt(key, attempts).apply();
-            return;
-        }
-        if (quarantine(context, processing)) {
-            preferences.edit().remove(key).apply();
-        } else {
-            preferences.edit().putInt(key, attempts).apply();
-        }
+        preferences.edit().putInt(key, attempts).apply();
     }
 
     private static void clearRecoveryFailures(Context context, File processing) {
@@ -284,30 +315,41 @@ public final class CallRecordingStore {
                 .remove(RECOVERY_ATTEMPTS_PREFIX + processing.getName()).apply();
     }
 
-    private static boolean quarantine(Context context, File processing) {
-        File directory = new File(privateDirectory(context), CORRUPT_DIRECTORY);
-        if (!directory.exists() && !directory.mkdirs()) {
-            return false;
-        }
-        File target = uniqueQuarantineFile(directory, processing.getName());
-        File metadata = metadataFile(processing);
-        File metadataTarget = metadataFile(target);
-        if (!processing.renameTo(target)) {
-            return false;
-        }
-        if (metadata.isFile() && !metadata.renameTo(metadataTarget)) {
-            target.renameTo(processing);
-            return false;
-        }
-        return true;
+    private static int recoveryAttempts(Context context, File processing) {
+        return TweakStore.preferences(context).getInt(
+                RECOVERY_ATTEMPTS_PREFIX + processing.getName(), 0);
     }
 
-    private static File uniqueQuarantineFile(File directory, String name) {
-        File candidate = new File(directory, name);
-        for (int suffix = 1; candidate.exists() || metadataFile(candidate).exists(); suffix++) {
-            candidate = new File(directory, name + "." + suffix);
+    private static void addRawEntries(File directory, List<Entry> entries) {
+        File[] files = directory.listFiles();
+        if (files == null) {
+            return;
         }
-        return candidate;
+        for (File file : files) {
+            Matcher matcher = RAW_NAME.matcher(file.getName());
+            if (!file.isFile() || !matcher.matches()) {
+                continue;
+            }
+            Metadata metadata = metadataFor(file);
+            long startedAt = metadata.startedAt > 0L
+                    ? metadata.startedAt : parseLong(matcher.group(1));
+            String name = buildDisplayName(startedAt,
+                    metadata.displayName, metadata.phoneNumber)
+                    .replace(".m4a", ".wav");
+            entries.add(new Entry(Uri.fromFile(file), name, startedAt,
+                    file.length(), 0L, true, file));
+        }
+    }
+
+    private static Metadata metadataFor(File processing) {
+        try {
+            return readMetadata(metadataFile(processing));
+        } catch (Exception ignored) {
+            Matcher matcher = RAW_NAME.matcher(processing.getName());
+            long startedAt = matcher.matches() ? parseLong(matcher.group(1)) : processing.lastModified();
+            String direction = matcher.matches() ? matcher.group(2) : "unknown";
+            return new Metadata(startedAt, direction, "Zalo contact", "");
+        }
     }
 
     private static Uri publish(Context context, File source, String displayName) throws IOException {
