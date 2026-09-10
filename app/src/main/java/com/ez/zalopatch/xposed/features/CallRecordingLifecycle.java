@@ -22,6 +22,10 @@ final class CallRecordingLifecycle {
                 || "onCallAutoHangup".equals(methodName);
     }
 
+    static boolean beginsCall(String methodName) {
+        return "onIncomingCall".equals(methodName) || "onMakeCall".equals(methodName);
+    }
+
     static boolean confirmsCall(String methodName) {
         // Current ZRTC callback has no onCallConfirmed method. Its confirmed-call edge is
         // onPreConnectSuccessful; retain the older name for versions that still expose it.

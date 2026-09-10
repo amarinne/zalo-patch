@@ -9,7 +9,7 @@ import org.json.JSONObject;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -164,27 +164,20 @@ public final class NotificationRuleStore {
     }
 
     public static List<String> sanitize(List<String> values) {
-        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        HashSet<String> identities = new HashSet<>();
+        ArrayList<String> unique = new ArrayList<>();
         if (values != null) {
             for (String value : values) {
                 String clean = value == null ? "" : value.trim();
                 if (clean.isEmpty()) {
                     continue;
                 }
-                String identity = identity(clean);
-                boolean exists = false;
-                for (String current : unique) {
-                    if (identity(current).equals(identity)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
+                if (identities.add(identity(clean))) {
                     unique.add(clean);
                 }
             }
         }
-        return new ArrayList<>(unique);
+        return unique;
     }
 
     private static String identity(String value) {
@@ -206,10 +199,10 @@ public final class NotificationRuleStore {
                 values.add((String) value);
             }
         }
-        return sanitize(values);
+        return values;
     }
 
     private static List<String> immutable(List<String> values) {
-        return Collections.unmodifiableList(new ArrayList<>(sanitize(values)));
+        return Collections.unmodifiableList(sanitize(values));
     }
 }

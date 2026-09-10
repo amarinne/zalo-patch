@@ -103,8 +103,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 200
-        versionName = "0.4.196-libxposed-merge-fixes+B200-20260904T2048Z"
+        versionCode = 203
+        versionName = "0.4.199"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -295,5 +295,6 @@ dependencies {
 
     compileOnly("io.github.libxposed:api:102.0.0")
     testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("io.github.libxposed:api:102.0.0")
     testImplementation("org.json:json:20240303")
 }

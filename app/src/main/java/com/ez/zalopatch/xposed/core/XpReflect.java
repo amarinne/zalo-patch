@@ -4,8 +4,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Reflection helpers for hook-side code.
@@ -110,21 +108,23 @@ public final class XpReflect {
 
     private static Method findMethod(Class<?> clazz, String methodName, boolean staticOnly,
                                      Object[] args) throws Throwable {
-        List<Method> candidates = new ArrayList<>();
+        Method selected = null;
+        // Complete the scan so a later superclass linkage failure still reaches the caller.
         for (Class<?> current = clazz; current != null; current = current.getSuperclass()) {
             for (Method method : current.getDeclaredMethods()) {
                 if (methodName.equals(method.getName())
                         && Modifier.isStatic(method.getModifiers()) == staticOnly
-                        && matches(method.getParameterTypes(), args)) {
-                    candidates.add(method);
+                        && matches(method.getParameterTypes(), args)
+                        && selected == null) {
+                    selected = method;
                 }
             }
         }
-        if (candidates.isEmpty()) {
+        if (selected == null) {
             throw new NoSuchMethodException(
                     clazz.getName() + "#" + methodName + "(" + args.length + " args) not found");
         }
-        return candidates.get(0);
+        return selected;
     }
 
     private static boolean matches(Class<?>[] parameterTypes, Object[] args) {

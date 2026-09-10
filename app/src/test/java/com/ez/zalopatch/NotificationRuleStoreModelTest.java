@@ -1,6 +1,7 @@
 package com.ez.zalopatch;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 
 import org.junit.Test;
 
@@ -68,6 +69,70 @@ public final class NotificationRuleStoreModelTest {
 
         assertEquals(20, rules.list(NotificationRuleStore.Type.KEYWORD_BLOCKLIST).size());
         assertEquals(100, rules.list(NotificationRuleStore.Type.KEYWORD_BLOCKLIST).get(0).length());
+    }
+
+    @Test
+    public void sanitizationPreservesFirstSpellingOrderAndDistinctHashCollisions() {
+        assertEquals(Arrays.asList("ĐẶC BIỆT", "an", "c0", "\u0301", "Sale"),
+                NotificationRuleStore.sanitize(Arrays.asList(null, " ", " ĐẶC BIỆT ",
+                        "dac biet", "an", "c0", "\u0301", "\u0300", "Sale", "sale")));
+    }
+
+    @Test
+    public void ruleSetsOwnTheirListsAndWithDoesNotChangeTheOriginal() {
+        List<String> input = new ArrayList<>(Arrays.asList("First", "second"));
+        NotificationRuleStore.RuleSet original = new NotificationRuleStore.RuleSet(
+                input, input, input, input);
+        input.clear();
+        for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+            assertEquals(Arrays.asList("First", "second"), original.list(type));
+            assertThrows(UnsupportedOperationException.class, () -> original.list(type).add("third"));
+            NotificationRuleStore.RuleSet changed = original.with(type, Arrays.asList(" New ", "new"));
+            for (NotificationRuleStore.Type other : NotificationRuleStore.Type.values()) {
+                assertEquals(other == type ? Arrays.asList("New") : Arrays.asList("First", "second"),
+                        changed.list(other));
+                assertEquals(Arrays.asList("First", "second"), original.list(other));
+            }
+        }
+    }
+
+    @Test
+    public void decodeSanitizesEveryListAndRoundTripsWithoutChangingDisplayText() throws Exception {
+        org.json.JSONObject json = new org.json.JSONObject().put("format_version", 1);
+        for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+            json.put(type.jsonKey, new org.json.JSONArray(Arrays.asList(
+                    "  Khuyến mãi ", "KHUYEN MAI", "", "Đặc biệt", "Dac bie\u0323t")));
+        }
+        NotificationRuleStore.RuleSet decoded = NotificationRuleStore.decode(json.toString());
+        NotificationRuleStore.RuleSet roundTrip = NotificationRuleStore.decode(NotificationRuleStore.encode(decoded));
+        for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+            assertEquals(Arrays.asList("Khuyến mãi", "Đặc biệt"), decoded.list(type));
+            assertEquals(decoded.list(type), roundTrip.list(type));
+        }
+    }
+
+    @Test
+    public void decodeRejectsNonStringItemsInEveryList() throws Exception {
+        for (NotificationRuleStore.Type type : NotificationRuleStore.Type.values()) {
+            for (Object invalid : Arrays.asList(42, true, org.json.JSONObject.NULL)) {
+                String json = new org.json.JSONObject().put("format_version", 1)
+                        .put(type.jsonKey, new org.json.JSONArray().put("valid").put(invalid)).toString();
+                assertThrows(IllegalArgumentException.class, () -> NotificationRuleStore.decode(json));
+            }
+        }
+    }
+
+    @Test
+    public void largeMixedListPreservesUniqueOrderAndFirstSpelling() {
+        List<String> input = new ArrayList<>();
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            String first = "Khuyến mãi " + i;
+            expected.add(first);
+            input.add("  " + first + "  ");
+            input.add("KHUYEN MAI " + i);
+        }
+        assertEquals(expected, NotificationRuleStore.sanitize(input));
     }
 
     private static String repeat(char value, int count) {

@@ -345,12 +345,17 @@ public final class CallRecordingFeature extends Feature {
         return new XpHooks.Before() {
             @Override
             public void before(XpHooks.HookParam param) {
-                Session session = SESSIONS.get(param.thisObject);
-                if (session == null) {
-                    session = resolveCurrentSession(param.thisObject);
-                    if (session == null) return;
-                }
                 String methodName = method.getName();
+                Session session = SESSIONS.get(param.thisObject);
+                // Zalo can reuse its callback after replacing the native peer. A new call
+                // must resolve the current handle instead of reviving the retired session.
+                if (session == null || CallRecordingLifecycle.beginsCall(methodName)) {
+                    Session current = resolveCurrentSession(param.thisObject);
+                    if (current != null) session = current;
+                }
+                // Older hosts can bind through native callback registration without a
+                // mapped Java manager. Preserve that binding only while it is live.
+                if (session == null || session.deleted) return;
                 if ("onIncomingCall".equals(methodName)) {
                     session.direction = "incoming";
                     return;
@@ -485,7 +490,7 @@ public final class CallRecordingFeature extends Feature {
     private static void start(Session session, String trigger) {
         int attempt;
         synchronized (session) {
-            if (session.started
+            if (session.deleted || session.started
                     || !CallRecordingLifecycle.shouldStartAudio(
                     session.confirmed, session.audioConnected)) {
                 return;
@@ -543,6 +548,8 @@ public final class CallRecordingFeature extends Feature {
         CallRecordingMetadata.Snapshot observed;
         synchronized (session) {
             if (!session.started) {
+                session.confirmed = false;
+                session.audioConnected = false;
                 return;
             }
             application = HookConfig.resolveFallbackContextForHooks();
@@ -797,10 +804,16 @@ public final class CallRecordingFeature extends Feature {
     private static void stopForPeer(long peerHandle, String trigger) {
         Session session = SESSIONS_BY_PEER.get(peerHandle);
         if (session != null) {
-            stop(session, trigger);
-            if (trigger.endsWith("zrtc_peer_delete")) {
-                session.deleted = true;
-                SESSIONS_BY_PEER.remove(peerHandle, session);
+            synchronized (session) {
+                // Keep retirement and native stop atomic with start(). Late callbacks
+                // may still hold this Session after the host frees its native pointer.
+                if (trigger.endsWith("zrtc_peer_delete")) {
+                    session.deleted = true;
+                }
+                stop(session, trigger);
+                if (session.deleted) {
+                    SESSIONS_BY_PEER.remove(peerHandle, session);
+                }
             }
         }
     }
