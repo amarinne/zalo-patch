@@ -27,6 +27,7 @@ public final class ConfigProvider extends ContentProvider {
     private static final int ONE_SELF_CHECK = 4;
     private static final int SYMBOL_SCHEMA = 5;
     private static final int NOTIFICATION_HISTORY = 6;
+    private static final int DEXKIT_CACHE = 7;
 
     static {
         MATCHER.addURI(AUTHORITY, "prefs", ALL_PREFS);
@@ -35,6 +36,7 @@ public final class ConfigProvider extends ContentProvider {
         MATCHER.addURI(AUTHORITY, "self_check/*", ONE_SELF_CHECK);
         MATCHER.addURI(AUTHORITY, "symbol_schema", SYMBOL_SCHEMA);
         MATCHER.addURI(AUTHORITY, "notification_history", NOTIFICATION_HISTORY);
+        MATCHER.addURI(AUTHORITY, "dexkit_cache", DEXKIT_CACHE);
     }
 
     @Override
@@ -59,6 +61,9 @@ public final class ConfigProvider extends ContentProvider {
         }
         if (match == SYMBOL_SCHEMA) {
             return querySymbolSchema(getContext());
+        }
+        if (match == DEXKIT_CACHE) {
+            return queryDexkitCache(getContext());
         }
         if (match == NOTIFICATION_HISTORY) {
             return null;
@@ -126,6 +131,44 @@ public final class ConfigProvider extends ContentProvider {
                         ZaloArtifactState.KEY_CATALOG_DIGEST, "")
         });
         return cursor;
+    }
+
+    private static Cursor queryDexkitCache(android.content.Context context) {
+        MatrixCursor cursor = new MatrixCursor(new String[]{
+                "json", "source", "valid", "validation",
+                "scan_allowed", "scan_failures", "scan_reason"
+        });
+        DexKitCache.Entry entry = DexKitStore.load(context);
+        DexKitStore.ScanState state = DexKitStore.scanState(
+                context, System.currentTimeMillis(), dexkitScope(context));
+        if (entry == null) {
+            cursor.addRow(new Object[]{"", "DexKit pilot cache", 0, "no cache",
+                    state.allowed ? 1 : 0, state.failures, state.reason});
+            return cursor;
+        }
+        cursor.addRow(new Object[]{DexKitCache.serialize(entry), "DexKit pilot cache", 1, "",
+                state.allowed ? 1 : 0, state.failures, state.reason});
+        return cursor;
+    }
+
+    private static String dexkitScope(android.content.Context context) {
+        try {
+            android.content.pm.PackageInfo info = context.getPackageManager()
+                    .getPackageInfo("com.zing.zalo", 0);
+            return dexkitScope(android.os.Build.VERSION.SDK_INT >= 28
+                    ? info.getLongVersionCode() : info.versionCode, info.lastUpdateTime);
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static String dexkitScope(long versionCode, long lastUpdateTime) {
+        if (versionCode <= 0L || lastUpdateTime <= 0L) {
+            return "";
+        }
+        return DexKitPilotPolicy.budgetScope(versionCode, lastUpdateTime,
+                DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT,
+                BuildConfig.VERSION_CODE);
     }
 
     private static Cursor querySelfCheck(Uri uri, SharedPreferences prefs, boolean one) {
@@ -255,6 +298,42 @@ public final class ConfigProvider extends ContentProvider {
             DiagnosticsState.completeRuntimeDiscovery(getContext(), versionCode);
             Bundle result = new Bundle();
             result.putBoolean("completed", true);
+            return result;
+        }
+        if ("record_dexkit_cache".equals(method)) {
+            if (!callerAllowed() || extras == null) return null;
+            boolean recorded = DexKitStore.save(getContext(), extras.getString("json", ""));
+            Bundle result = new Bundle();
+            result.putBoolean("recorded", recorded);
+            return result;
+        }
+        if ("record_dexkit_scan_failure".equals(method)) {
+            if (!callerAllowed() || extras == null) return null;
+            String scope = dexkitScope(extras.getLong("version_code", -1L),
+                    extras.getLong("last_update_time", -1L));
+            if (scope.isEmpty()) return null;
+            DexKitStore.recordFailure(getContext(), System.currentTimeMillis(), scope);
+            Bundle result = new Bundle();
+            result.putBoolean("recorded", true);
+            return result;
+        }
+        if ("clear_dexkit_cache".equals(method)) {
+            if (!callerAllowed()) return null;
+            Bundle result = new Bundle();
+            result.putBoolean("cleared", DexKitStore.clear(getContext()));
+            return result;
+        }
+        if ("claim_dexkit_scan".equals(method)) {
+            if (!callerAllowed()) return null;
+            String scope = extras == null ? "" : dexkitScope(
+                    extras.getLong("version_code", -1L),
+                    extras.getLong("last_update_time", -1L));
+            DexKitStore.ScanState state = DexKitStore.claimScanSlot(
+                    getContext(), System.currentTimeMillis(), scope);
+            Bundle result = new Bundle();
+            result.putBoolean("allowed", state.allowed);
+            result.putString("reason", state.reason);
+            result.putInt("failures", state.failures);
             return result;
         }
         if (!"sync_properties".equals(method)) {

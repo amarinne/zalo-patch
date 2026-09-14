@@ -32,15 +32,31 @@ public final class ZinstantFeature extends Feature {
     private final String messageViewError;
     private final boolean feedViewCompatible;
     private final String feedViewError;
+    private final String adBindOverride;
+    private final String feedBindOverride;
 
     public ZinstantFeature(ClassLoader classLoader, boolean messageViewCompatible,
                            String messageViewError, boolean feedViewCompatible,
                            String feedViewError) {
+        this(classLoader, messageViewCompatible, messageViewError, feedViewCompatible,
+                feedViewError, "", "");
+    }
+
+    /**
+     * Pilot override path: non-empty bind names come from a validated DexKit cache entry that
+     * already passed live preflight, instead of the exact catalog/bundled profile. Empty means
+     * "read from schema" exactly as before.
+     */
+    public ZinstantFeature(ClassLoader classLoader, boolean messageViewCompatible,
+                           String messageViewError, boolean feedViewCompatible,
+                           String feedViewError, String adBindOverride, String feedBindOverride) {
         super(classLoader);
         this.messageViewCompatible = messageViewCompatible;
         this.messageViewError = messageViewError;
         this.feedViewCompatible = feedViewCompatible;
         this.feedViewError = feedViewError;
+        this.adBindOverride = adBindOverride == null ? "" : adBindOverride;
+        this.feedBindOverride = feedBindOverride == null ? "" : feedBindOverride;
     }
 
     @Override
@@ -375,12 +391,16 @@ public final class ZinstantFeature extends Feature {
         }
     }
 
-    private static String adBindMethod() {
-        return schemaString("symbols.zinstant.ad_bind_method", "");
+    private String adBindMethod() {
+        return adBindOverride.isEmpty()
+                ? schemaString("symbols.zinstant.ad_bind_method", "")
+                : adBindOverride;
     }
 
-    private static String feedBindMethod() {
-        return schemaString("symbols.zinstant.feed_bind_method", "");
+    private String feedBindMethod() {
+        return feedBindOverride.isEmpty()
+                ? schemaString("symbols.zinstant.feed_bind_method", "")
+                : feedBindOverride;
     }
 
     private static List<String> networkMethods() {

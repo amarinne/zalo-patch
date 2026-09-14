@@ -5,17 +5,18 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/** Deterministic shadow resolver. Its output is not consulted by runtime hooks. */
-final class FingerprintResolver {
-    static final int NORMAL_THRESHOLD = 85;
-    static final int HIGH_RISK_THRESHOLD = 90;
-    static final int MINIMUM_MARGIN = 15;
+/** Deterministic scorer. Direct use stays a shadow; the DexKit pilot consumes it only through
+ * the validated shared predicates in {@link DexKitZinstantFingerprint}. */
+public final class FingerprintResolver {
+    public static final int NORMAL_THRESHOLD = 85;
+    public static final int HIGH_RISK_THRESHOLD = 90;
+    public static final int MINIMUM_MARGIN = 15;
 
     private FingerprintResolver() {
     }
 
-    static Resolution resolve(String expectedApkSha256, String actualApkSha256,
-                              String anchor, boolean highRisk, List<Candidate> input) {
+    public static Resolution resolve(String expectedApkSha256, String actualApkSha256,
+                               String anchor, boolean highRisk, List<Candidate> input) {
         if (!expectedApkSha256.equals(actualApkSha256)) {
             return Resolution.stale(anchor, "apk_hash_mismatch");
         }
@@ -73,12 +74,12 @@ final class FingerprintResolver {
         }
     }
 
-    static final class Resolution {
-        final String anchor;
-        final String symbol;
-        final int score;
-        final int margin;
-        final String status;
+    public static final class Resolution {
+        public final String anchor;
+        public final String symbol;
+        public final int score;
+        public final int margin;
+        public final String status;
 
         Resolution(String anchor, String symbol, int score, int margin, String status) {
             this.anchor = anchor;

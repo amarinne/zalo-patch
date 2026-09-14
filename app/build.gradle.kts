@@ -103,8 +103,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 203
-        versionName = "0.4.199"
+        versionCode = 208
+        versionName = "0.4.204"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -292,6 +292,12 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.preference:preference:1.2.1")
     implementation("com.google.android.material:material:1.12.0")
+    // DexKit pilot (Zinstant ad-bind resolution only): upstream LuckyPray/DexKit 2.2.0,
+    // Maven Central org.luckypray:dexkit:2.2.0 (AAR, 2026-04-11). Kotlin bindings are
+    // Apache-2.0; native Core/ is LGPL-3.0 and ships unmodified inside this APK, loaded
+    // via System.loadLibrary (dynamic link). Notices live in assets/dexkit-notices.txt.
+    // Provenance and pilot scope: recorded in the module project's internal documentation.
+    implementation("org.luckypray:dexkit:2.2.0")
 
     compileOnly("io.github.libxposed:api:102.0.0")
     testImplementation("junit:junit:4.13.2")

@@ -169,6 +169,47 @@ final class SymbolPreflight {
         return errors.isEmpty();
     }
 
+    /**
+     * Preflight for DexKit-resolved pilot descriptors. The owners are the stable public view
+     * classes from the shared fingerprint definition (never an obfuscated name); each resolved
+     * bind name must denote exactly one void method with the anchor's parameter count. This is
+     * the second gate: the scan already evaluated the same predicates through DexKit, and this
+     * revalidates them against the live class loader before any hook installs.
+     */
+    static boolean checkZinstantDescriptors(ClassLoader loader, String adBind, String feedBind,
+                                            List<String> errors) {
+        if ((adBind == null || adBind.isEmpty()) && (feedBind == null || feedBind.isEmpty())) {
+            errors.add("no dexkit pilot descriptors");
+            return false;
+        }
+        if (adBind != null && !adBind.isEmpty()) {
+            checkZinstantDescriptor(loader,
+                    com.ez.zalopatch.DexKitZinstantFingerprint.OWNER_AD_VIEW, adBind,
+                    com.ez.zalopatch.DexKitZinstantFingerprint.AD_PARAM_COUNT, errors);
+        }
+        if (feedBind != null && !feedBind.isEmpty()) {
+            checkZinstantDescriptor(loader,
+                    com.ez.zalopatch.DexKitZinstantFingerprint.OWNER_FEED_ADS, feedBind,
+                    com.ez.zalopatch.DexKitZinstantFingerprint.FEED_PARAM_COUNT, errors);
+        }
+        return errors.isEmpty();
+    }
+
+    private static void checkZinstantDescriptor(ClassLoader loader, String owner, String name,
+                                                int parameterCount, List<String> errors) {
+        Class<?> view = load(owner, loader, errors);
+        if (view == null) {
+            return;
+        }
+        if (!android.view.View.class.isAssignableFrom(view)) {
+            errors.add(owner + " is not a View subtype");
+        }
+        if (view.getDeclaredConstructors().length == 0) {
+            errors.add(owner + " has no constructor");
+        }
+        method(view, name, Void.TYPE, parameterCount, errors);
+    }
+
     private static boolean checkStatusPrivacy(SymbolSchema.Active schema, ClassLoader loader,
                                               List<String> errors) {
         Class<?> ack = load(schema.string("symbols.chat.seen_ack_class", ""), loader, errors);

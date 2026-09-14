@@ -52,9 +52,17 @@ public final class MainFeatures {
         features.add(new TelemetryFeature(classLoader, artifact.compatible));
         features.add(new InteractionTraceFeature(classLoader));
 
-        SymbolPreflight.Result preflight = artifact.compatible
-                ? SymbolPreflight.inspect(SymbolSchema.activeForHooks(context), classLoader)
+        SymbolSchema.Active hookActive = artifact.compatible
+                ? SymbolSchema.activeForHooks(context) : null;
+        SymbolPreflight.Result preflight = artifact.compatible && hookActive != null
+                ? SymbolPreflight.inspect(hookActive, classLoader)
                 : null;
+        // Exact-profile pilot coverage, snapshotted before neighbouring adoption below can
+        // replace the preflight result. The DexKit pilot decides from the exact snapshot, the
+        // bound cache, or the explicit DexKit-unavailable fallback — never from the
+        // post-adoption aggregate.
+        boolean exactValid = hookActive != null && hookActive.valid;
+        SymbolPreflight.Result exactPreflight = preflight;
         // The exact profile resolved nothing, or no profile covers this release at all. Try the
         // neighbouring releases before giving up: a release that did not move the anchors this
         // module hooks is common, and the alternative is every feature silently off until the
@@ -87,9 +95,13 @@ public final class MainFeatures {
             }
             addInbox(features, classLoader, preflight);
             addMeCleanup(features, classLoader, preflight);
+            DexKitZinstantResolver.Pilot pilot = DexKitZinstantResolver.selectPilot(context,
+                    classLoader, exactValid, exactPreflight, preflight,
+                    fallback != null);
             features.add(new ZinstantFeature(classLoader,
-                    preflight.zinstantMessage, preflight.reason(preflight.zinstantMessageErrors),
-                    preflight.zinstantFeed, preflight.reason(preflight.zinstantFeedErrors)));
+                    pilot.messageCompatible, pilot.messageError,
+                    pilot.feedCompatible, pilot.feedError,
+                    pilot.adBindOverride, pilot.feedBindOverride));
             features.add(new ChatFeature(classLoader));
             features.add(new ZcloudBannerFeature(classLoader));
             addPasscodeGrace(features, classLoader, preflight);

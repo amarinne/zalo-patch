@@ -1,0 +1,28 @@
+DexKit notices for the Zalo Patch pilot (Zinstant ad-bind resolution only)
+=============================================================================
+
+Dependency: org.luckypray:dexkit:2.2.0 (AAR, Maven Central, published 2026-04-11)
+Upstream: https://github.com/LuckyPray/DexKit
+Pinned version: 2.2.0. Do not upgrade without re-reading both licenses below.
+
+Kotlin/Java bindings (dexkit/src/main/java): Apache License 2.0.
+  https://www.apache.org/licenses/LICENSE-2.0.txt
+
+Native engine (Core/): GNU Lesser General Public License v3.0.
+  https://www.gnu.org/licenses/lgpl-3.0.html
+
+This module ships the upstream native Core library UNMODIFIED, dynamically
+linked: it is loaded at runtime with System.loadLibrary("dexkit") and never
+statically linked into module code. Per the LGPL-3.0 terms that apply to
+Core/, the library remains replaceable (it is a standard shared object inside
+the module APK), and its complete corresponding source is available from the
+upstream repository above.
+
+Pilot scope: DexKit is used only to resolve the two Zinstant advertisement
+bind-method names against the installed Zalo base APK, with results cached
+locally and gated by structural preflight. It supplies local symbol
+descriptors only: no executable code, no feature-setting changes. Existing
+feature defaults are unchanged.
+
+Full provenance, fingerprint specification, and verification status are recorded
+in the module project's internal development documentation.
