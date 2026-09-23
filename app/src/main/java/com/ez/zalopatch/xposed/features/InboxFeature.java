@@ -4,7 +4,6 @@ import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
-import com.ez.zalopatch.xposed.core.HookReflect;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 
 import java.lang.reflect.Field;
@@ -27,6 +26,7 @@ import com.ez.zalopatch.xposed.core.XpReflect;
 public final class InboxFeature extends Feature {
     private static final String FEATURE_FILTER = "inbox.filter";
     private static final String FEATURE_FILTER_BAR = "inbox.filter_bar";
+    private static final String FEATURE_ROWS = "inbox.rows";
     private static final String FEATURE_MEDIA_BOX = "inbox.media_box";
     private static final String FEATURE_TAP_DIAGNOSTICS = "inbox.tap_diagnostics";
     private static final String FEATURE_DELETED_GROUP = "inbox.deleted_group";
@@ -44,19 +44,31 @@ public final class InboxFeature extends Feature {
 
     // Process default comes from restart-applied settings; chip taps remain session-only.
     private volatile String sessionSelectedCategory = CATEGORY_FOCUSED;
-    private volatile Object lastInboxAdapter;
-    private volatile List<Object> lastUnfilteredItems;
+    private volatile InboxListUpdate lastInboxListUpdate;
+    private volatile Object liveMessagesView;
+    private InboxNativeRoute strangerRoute;
+    private Class<?> strangerDestination;
+    private boolean preferConversationUid;
+    private boolean defaultStrangersPending;
+    private boolean rowsCompatible = true;
+    private String rowsCompatibilityError = "";
     private volatile Object deletedGroupRepository;
     private volatile boolean deletedGroupCheckUnavailable;
     private volatile boolean deletedGroupCheckInstalled;
-    private volatile Object friendManager;
-    private final boolean mediaCompatible;
+
+    /** Adapter class discovered at runtime when the schema has no mapping. */
+    private static volatile String discoveredAdapterClass = "";
+    private static final java.util.Set<String> loggedAdapterNames =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final java.util.Set<String> hookedAdapterClasses =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final String MEDIA_BOX_LAYOUT = "item_channel_media_box";    private final boolean mediaCompatible;
     private final String mediaCompatibilityError;
     private final boolean categoriesCompatible;
     private final String categoryCompatibilityError;
     private boolean hideMediaEnabled;
     private boolean categoriesEnabled;
-    private final Map<String, Boolean> oaFollowCache = new ConcurrentHashMap<>();
+    private boolean categoriesConfigured;
     private static final java.util.Set<String> schemaSourceChecks = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> schemaFallbackPaths = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> symbolFailuresLogged = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
@@ -66,12 +78,15 @@ public final class InboxFeature extends Feature {
 
     public InboxFeature(ClassLoader classLoader, boolean mediaCompatible,
                         String mediaCompatibilityError, boolean categoriesCompatible,
-                        String categoryCompatibilityError) {
+                        String categoryCompatibilityError, boolean rowsCompatible,
+                        String rowsCompatibilityError) {
         super(classLoader);
         this.mediaCompatible = mediaCompatible;
         this.mediaCompatibilityError = mediaCompatibilityError;
         this.categoriesCompatible = categoriesCompatible;
         this.categoryCompatibilityError = categoryCompatibilityError;
+        this.rowsCompatible = rowsCompatible;
+        this.rowsCompatibilityError = rowsCompatibilityError;
     }
 
     @Override
@@ -85,17 +100,27 @@ public final class InboxFeature extends Feature {
         boolean configuredCategories = HookConfig.isEnabled(Tweaks.KEY_FILTER_POPOVER_CATEGORIES);
         hideMediaEnabled = configuredHideMedia && mediaCompatible;
         categoriesEnabled = configuredCategories && categoriesCompatible;
+        categoriesConfigured = configuredCategories;
+        SymbolSchema.Active selected = SymbolSchema.activeForHooks(HookConfig.resolveModuleContextForHooks());
+        preferConversationUid = selected.source.startsWith("DexKit") || selected.source.startsWith("Fallback");
+        if (configuredCategories) {
+            prepareStrangerRoute();
+            defaultStrangersPending = strangerRoute != null
+                    && HookConfig.isEnabled(Tweaks.KEY_CATEGORY_STRANGERS)
+                    && HookConfig.getLevel(Tweaks.KEY_DEFAULT_INBOX_FILTER) == 4;
+        }
         sessionSelectedCategory = configuredDefaultCategory(
                 categoriesEnabled
                         ? HookConfig.getLevel(Tweaks.KEY_DEFAULT_INBOX_FILTER) : 0,
                 HookConfig.isEnabled(Tweaks.KEY_CATEGORY_GROUPS),
-                HookConfig.isEnabled(Tweaks.KEY_CATEGORY_OA),
-                HookConfig.isEnabled(Tweaks.KEY_CATEGORY_STRANGERS));
+                categoriesEnabled && HookConfig.isEnabled(Tweaks.KEY_CATEGORY_OA),
+                false); // Strangers opens a separate native screen; never filter the inbox by its box row.
         if (!configuredHideMedia && !configuredCategories) {
             SelfCheckRegistry.markDisabled(FEATURE_FILTER, messageAdapterClass());
         }
         if (!configuredHideMedia) {
-            SelfCheckRegistry.markDisabled(FEATURE_MEDIA_BOX, mediaBoxItemClass());
+            SelfCheckRegistry.markDisabled(FEATURE_MEDIA_BOX,
+                    "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")");
         } else if (!mediaCompatible) {
             SelfCheckRegistry.markStale(FEATURE_MEDIA_BOX, "structural preflight",
                     mediaCompatibilityError);
@@ -106,51 +131,328 @@ public final class InboxFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_FILTER_BAR, "structural preflight",
                     categoryCompatibilityError);
         }
+        // Row-behavior symbols (friend follow, topOut marker, box rows, adapter field)
+        // are validated up front; a drifted letter fails closed here with its reason
+        // instead of misclassifying rows. The core filter keeps its own gate above.
+        if (rowsCompatible) {
+            SelfCheckRegistry.markStatus(FEATURE_ROWS, "ok", "row symbols",
+                    "friend follow, topOut, box rows, adapter field", "");
+        } else {
+            SelfCheckRegistry.markStale(FEATURE_ROWS, "structural preflight",
+                    rowsCompatibilityError);
+        }
         boolean debugEnabled = HookConfig.isDebugEnabled();
         if (!debugEnabled) {
             SelfCheckRegistry.markDisabled(FEATURE_TAP_DIAGNOSTICS, "debug diagnostics off");
         }
 
-        if (hideMediaEnabled || categoriesEnabled) {
-            runGuarded("Message list filtering", FEATURE_FILTER, messageAdapterClass(),
-                    this::hookMessageListFiltering);
-        } else if (configuredHideMedia || configuredCategories) {
-            String reason = !mediaCompatible ? mediaCompatibilityError : categoryCompatibilityError;
-            SelfCheckRegistry.markStale(FEATURE_FILTER, "structural preflight", reason);
+        if (configuredHideMedia || configuredCategories) {
+            String adapter = messageAdapterClass();
+            boolean pinnedOk = false;
+            if (!adapter.isEmpty()) {
+                try {
+                    Class<?> adapterClass = XpReflect.findClass(adapter, classLoader);
+                    pinnedOk = installListHooks(adapterClass);
+                } catch (Throwable pinnedGone) {
+                    // Pinned adapter renamed on this release; fall through to runtime discovery.
+                    log("Pinned adapter " + adapter + " unavailable; using runtime discovery");
+                }
+            }
+            if (!pinnedOk) {
+                runGuarded("Adapter discovery", FEATURE_FILTER, "MessagesView attach",
+                        this::hookAdapterDiscovery);
+                SelfCheckRegistry.markInstalled(FEATURE_FILTER, "adapter discovery", 0);
+            }
         }
-        if (categoriesEnabled) {
+        if (configuredCategories) {
+            // Inject the bar whenever the user wants it; the setAdapter matcher uses the
+            // runtime-discovered adapter, so a renamed release still shows the UI. Category
+            // filtering itself degrades gracefully without the category discriminator.
             runGuarded("Inbox filter bar", FEATURE_FILTER_BAR, "RecyclerView.setAdapter",
                     this::hookInboxFilterBar);
         }
-        if (debugEnabled) {
-            runGuarded("Inbox tap diagnostics", FEATURE_TAP_DIAGNOSTICS, clickHandlerClass() + "#" + clickMethod(), this::hookInboxTapDiagnostics);
+        if (configuredHideMedia) {
+            runGuarded("Media box layout", FEATURE_MEDIA_BOX,
+                    "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")",
+                    this::hookMediaBoxLayout);
         }
     }
 
     // ---------------------------------------------------------------- list filtering
 
-    private volatile Method listSetterMethod;
 
-    private void hookMessageListFiltering() throws Throwable {
-        Class<?> adapterClass = XpReflect.findClass(messageAdapterClass(), classLoader);
+    /**
+     * Hides the media-box row through its stable layout name instead of a mapped
+     * item class: collapsing the inflated {@code item_channel_media_box} root needs
+     * no symbols at all. Per-inflation cost is one integer comparison otherwise.
+     */
+    private void hookMediaBoxLayout() throws Throwable {
+        final int[] layoutId = {0};
+        XpHooks.After collapse = new XpHooks.After() {
+            @Override
+            public void after(XpHooks.HookParam param) {
+                if (!(param.getResult() instanceof android.view.View)
+                        || param.args == null || param.args.length == 0
+                        || !(param.args[0] instanceof Integer)) {
+                    return;
+                }
+                android.view.View root = (android.view.View) param.getResult();
+                if (layoutId[0] == 0) {
+                    try {
+                        layoutId[0] = root.getResources().getIdentifier(
+                                MEDIA_BOX_LAYOUT, "layout", "com.zing.zalo");
+                    } catch (Throwable ignored) {
+                        return;
+                    }
+                }
+                if (layoutId[0] == 0
+                        || ((Integer) param.args[0]).intValue() != layoutId[0]) {
+                    return;
+                }
+                root.setVisibility(android.view.View.GONE);
+                android.view.ViewGroup.LayoutParams params = root.getLayoutParams();
+                if (params != null) {
+                    params.height = 0;
+                    root.setLayoutParams(params);
+                }
+                SelfCheckRegistry.incrementHit(FEATURE_MEDIA_BOX,
+                        "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")", "row collapsed");
+            }
+        };
+        int hooked = XpHooks.hookAllMethods(FEATURE_MEDIA_BOX,
+                android.view.LayoutInflater.class, "inflate", collapse).size();
+        if (hooked == 0) {
+            SelfCheckRegistry.markStale(FEATURE_MEDIA_BOX,
+                    "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")",
+                    "no inflate overloads found");
+            return;
+        }
+        SelfCheckRegistry.markInstalled(FEATURE_MEDIA_BOX,
+                "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")", hooked);
+    }
+
+    /**
+     * Adapter discovery without mapping: MessagesView is stable, so its
+     * constructors are hooked and the first RecyclerView.Adapter-typed field
+     * found names the inbox adapter. The setAdapter backup covers adapters
+     * attached before field initialization. Install is idempotent per class.
+     */
+    private void hookAdapterDiscovery() throws Throwable {
+        Class<?> messagesView = XpReflect.findClass(MESSAGE_VIEW_CLASS, classLoader);
+        XpHooks.After discover = new XpHooks.After() {
+            @Override
+            public void after(XpHooks.HookParam param) {
+                tryDiscoverAdapter(param.thisObject);
+            }
+        };
+        XpHooks.hookAllConstructors(FEATURE_FILTER, messagesView, null, discover);
+        Class<?> recyclerViewClass = XpReflect.findClass(
+                "androidx.recyclerview.widget.RecyclerView", classLoader);
+        XpHooks.hookAllMethods(FEATURE_FILTER, recyclerViewClass, "setAdapter",
+                new XpHooks.After() {
+            @Override
+            public void after(XpHooks.HookParam param) {
+                Object adapter = param.args.length > 0 ? param.args[0] : null;
+                if (adapter == null || param.thisObject == null) {
+                    return;
+                }
+                String adapterName = adapter.getClass().getName();
+                if (loggedAdapterNames.add(adapterName)) {
+                    log("setAdapter observed: " + adapterName
+                            + " underMessages=" + underMessagesView(param.thisObject)
+                            + " inboxCandidate=" + isInboxAdapterCandidate(adapter.getClass()));
+                }
+                if (underMessagesView(param.thisObject)
+                        || isInboxAdapterCandidate(adapter.getClass())) {
+                    Object ancestorView = findMessagesView(param.thisObject);
+                    if (ancestorView != null) {
+                        liveMessagesView = ancestorView;
+                    } else {
+                        captureMessagesView(adapter);
+                    }
+                    // Hook the inbox adapter, then inject the bar immediately instead of
+                    // waiting for another setAdapter: the first attach is often the only one.
+                    boolean installed = installListHooks(adapter.getClass());
+                    if (installed && categoriesConfigured
+                            && param.thisObject instanceof android.view.View) {
+                        final android.view.View recyclerView =
+                                (android.view.View) param.thisObject;
+                        recyclerView.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                injectFilterBar(recyclerView);
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    private void tryDiscoverAdapter(Object messagesView) {
+        if (messagesView == null) {
+            return;
+        }
+        if (!discoveredAdapterClass.isEmpty()) {
+            installListHooksForName(discoveredAdapterClass);
+            return;
+        }
+        for (Class<?> current = messagesView.getClass(); current != null
+                && current != Object.class; current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                if (isRecyclerAdapterType(field.getType()) && installListHooks(field.getType())) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private boolean isRecyclerAdapterType(Class<?> type) {
+        if (type == null) {
+            return false;
+        }
+        try {
+            Class<?> base = Class.forName(
+                    "androidx.recyclerview.widget.RecyclerView$Adapter", false, classLoader);
+            return base.isAssignableFrom(type);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Structural inbox-adapter test that survives renames: direct Conversation use,
+     * or at least two MessagesView fields (the stable host view the adapter binds).
+     */
+    private boolean isInboxAdapterCandidate(Class<?> adapterClass) {
+        if (holdsConversation(adapterClass)) {
+            return true;
+        }
+        try {
+            Class<?> messagesView = XpReflect.findClass(MESSAGE_VIEW_CLASS, classLoader);
+            int fields = 0;
+            for (Class<?> current = adapterClass; current != null && current != Object.class;
+                    current = current.getSuperclass()) {
+                for (java.lang.reflect.Field field : current.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                        continue;
+                    }
+                    if (messagesView.isAssignableFrom(field.getType())
+                            && ++fields >= 2) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /** True when the adapter mentions Conversation in fields or method signatures. */
+    private boolean holdsConversation(Class<?> adapterClass) {        if (adapterClass == null) {
+            return false;
+        }
+        try {
+            Class<?> conversation = XpReflect.findClass(
+                    "com.zing.zalo.data.chat.model.tabmessage.Conversation", classLoader);
+            for (Class<?> current = adapterClass; current != null && current != Object.class;
+                    current = current.getSuperclass()) {
+                for (java.lang.reflect.Field field : current.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                        continue;
+                    }
+                    if (conversation.isAssignableFrom(field.getType())) {
+                        return true;
+                    }
+                }
+                for (java.lang.reflect.Method method : current.getDeclaredMethods()) {
+                    if (conversation.isAssignableFrom(method.getReturnType())) {
+                        return true;
+                    }
+                    for (Class<?> param : method.getParameterTypes()) {
+                        if (conversation.isAssignableFrom(param)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private boolean underMessagesView(Object view) {
+        return findMessagesView(view) != null;
+    }
+
+    /**
+     * The MessagesView ancestor of a view, or null. The adapter-field route goes stale
+     * whenever Zalo attaches an adapter that carries no view reference, which made the
+     * Strangers chip appear and vanish by navigation; the attached hierarchy is current
+     * by construction.
+     */
+    private Object findMessagesView(Object view) {
+        Object node = view;
+        int depth = 0;
+        while (node instanceof android.view.View && depth++ < 24) {
+            if (node.getClass().getName().equals(MESSAGE_VIEW_CLASS)) {
+                return node;
+            }
+            android.view.ViewParent parent = ((android.view.View) node).getParent();
+            node = parent;
+        }
+        return null;
+    }
+
+    private void installListHooksForName(String className) {
+        if (className == null || className.isEmpty()) {
+            return;
+        }
+        try {
+            installListHooks(XpReflect.findClass(className, classLoader));
+        } catch (Throwable throwable) {
+            logSymbolFailure("class", className, throwable);
+        }
+    }
+
+    private synchronized boolean installListHooks(Class<?> adapterClass) {
+        if (adapterClass == null) {
+            return false;
+        }
+        if (!hookedAdapterClasses.add(adapterClass.getName())) {
+            return true;
+        }
+        try {
+            hookMessageListFiltering(adapterClass);
+            if (discoveredAdapterClass == null || discoveredAdapterClass.isEmpty()) {
+                discoveredAdapterClass = adapterClass.getName();
+            }
+            return true;
+        } catch (Throwable throwable) {
+            hookedAdapterClasses.remove(adapterClass.getName());
+            logSymbolFailure("class", adapterClass.getName(), throwable);
+            return false;
+        }
+    }
+
+    private void hookMessageListFiltering(Class<?> adapterClass) throws Throwable {
         int hooked = 0;
         for (Method method : adapterClass.getDeclaredMethods()) {
-            Class<?>[] params = method.getParameterTypes();
-            if (params.length < 1 || !List.class.isAssignableFrom(params[0])) {
+            if (!InboxListUpdate.accepts(method)) {
                 continue;
             }
-            listSetterMethod = method;
             XpHooks.hookMethod(FEATURE_FILTER, method, new XpHooks.Before() {
                 @Override
                 public void before(XpHooks.HookParam param) {
                     if (param.args.length < 1 || !(param.args[0] instanceof List)) {
                         return;
                     }
-                    lastInboxAdapter = param.thisObject;
-                    List<?> incoming = (List<?>) param.args[0];
-                    // Cache the unfiltered list so a later category switch can re-filter from source.
-                    lastUnfilteredItems = new ArrayList<>(incoming);
-                    param.args[0] = filterInboxItems(incoming);
+                    // Snapshot before filtering; replay must use this exact invocation.
+                    lastInboxListUpdate = new InboxListUpdate(method, param.thisObject, param.args);
+                    param.args[0] = filterInboxItems((List<?>) param.args[0]);
                 }
             });
             hooked++;
@@ -158,42 +460,52 @@ public final class InboxFeature extends Feature {
         log("Adapter list hooks installed -> " + hooked + " methods on " + messageAdapterClass());
         if (hooked > 0) {
             SelfCheckRegistry.markInstalled(FEATURE_FILTER, messageAdapterClass(), hooked);
-            if (hideMediaEnabled) {
-                SelfCheckRegistry.markInstalled(FEATURE_MEDIA_BOX, mediaBoxItemClass(), hooked);
-            }
         } else {
             SelfCheckRegistry.markStale(FEATURE_FILTER, messageAdapterClass(), "no List setter methods");
             if (hideMediaEnabled) {
                 SelfCheckRegistry.markStale(FEATURE_MEDIA_BOX, messageAdapterClass(),
                         "no List setter methods");
             }
+            throw new NoSuchMethodException(adapterClass.getName() + " has no List setter methods");
         }
     }
 
     private List<Object> filterInboxItems(List<?> original) {
+        try {
+            return filterInboxItemsOrThrow(original);
+        } catch (Throwable throwable) {
+            logSymbolFailure("filter", messageAdapterClass(), throwable);
+            return new ArrayList<>(original);
+        }
+    }
+
+    private List<Object> filterInboxItemsOrThrow(List<?> original) {
         boolean hideMedia = effectiveHideMediaBox();
         String category = sessionSelectedCategory;
         boolean applyCategory = !CATEGORY_FOCUSED.equals(category);
+
 
         if (!hideMedia && !applyCategory) {
             return new ArrayList<>(original);
         }
 
         List<Object> filtered = new ArrayList<>(original.size());
-        int mediaRemoved = 0;
+        int classifiable = 0;
         for (Object item : original) {
-            if (hideMedia && isMediaBoxItem(item)) {
-                mediaRemoved++;
-                continue;
-            }
-            if (applyCategory && !belongsToCategory(item, category)) {
-                continue;
+            if (applyCategory) {
+                if (conversationOf(item) != null) {
+                    classifiable++;
+                }
+                if (!belongsToCategory(item, category)) {
+                    continue;
+                }
             }
             filtered.add(item);
         }
-        if (mediaRemoved > 0) {
-            SelfCheckRegistry.markSuppressed(FEATURE_MEDIA_BOX, mediaBoxItemClass(),
-                    "removed=" + mediaRemoved + " in=" + original.size());
+        if (applyCategory && classifiable == 0 && !original.isEmpty()) {
+            logSymbolFailure("filter", messageAdapterClass(),
+                    new IllegalStateException("no classifiable items; showing all"));
+            return new ArrayList<>(original);
         }
         if (applyCategory) {
             log("Filter category=" + category + " in=" + original.size() + " out=" + filtered.size());
@@ -234,6 +546,7 @@ public final class InboxFeature extends Feature {
                 if (adapter == null || !messageAdapterClass().equals(adapter.getClass().getName())) {
                     return;
                 }
+                captureMessagesView(adapter);
                 if (param.thisObject instanceof android.view.View) {
                     final android.view.View rv = (android.view.View) param.thisObject;
                     rv.post(new Runnable() {
@@ -392,13 +705,21 @@ public final class InboxFeature extends Feature {
         if (HookConfig.isEnabled(Tweaks.KEY_CATEGORY_GROUPS)) {
             addCategoryChip(ctx, row, "Groups", CATEGORY_GROUPS);
         }
-        if (HookConfig.isEnabled(Tweaks.KEY_CATEGORY_OA)) {
+        if (categoriesEnabled && HookConfig.isEnabled(Tweaks.KEY_CATEGORY_OA)) {
             addCategoryChip(ctx, row, "OA", CATEGORY_OA);
         }
-        if (HookConfig.isEnabled(Tweaks.KEY_CATEGORY_STRANGERS)) {
+        if (strangerRoute != null && liveMessagesView != null
+                && HookConfig.isEnabled(Tweaks.KEY_CATEGORY_STRANGERS)) {
             addCategoryChip(ctx, row, "Strangers", CATEGORY_STRANGERS);
         }
         restyleChips();
+        if (defaultStrangersPending) {
+            scroll.post(new Runnable() {
+                @Override public void run() {
+                    if (defaultStrangersPending) openStrangers();
+                }
+            });
+        }
         return scroll;
     }
 
@@ -437,6 +758,14 @@ public final class InboxFeature extends Feature {
         chip.setOnClickListener(new android.view.View.OnClickListener() {
             @Override
             public void onClick(android.view.View v) {
+                if (CATEGORY_STRANGERS.equals(category)) {
+                    openStrangers();
+                    return;
+                }
+                if (CATEGORY_OA.equals(category) && !categoriesEnabled) {
+                    showAllInbox();
+                    return;
+                }
                 sessionSelectedCategory = category;
                 log("Filter bar -> " + category);
                 SelfCheckRegistry.markSuppressed(FEATURE_FILTER_BAR, "chip:" + category, "selected");
@@ -492,7 +821,10 @@ public final class InboxFeature extends Feature {
     }
 
     private boolean shouldShowInboxLab() {
-        return categoriesEnabled;
+        // UI visibility follows the user's setting, not static compatibility; the
+        // setAdapter matcher already restricts injection to the discovered inbox
+        // adapter, and filtering degrades gracefully without the category field.
+        return categoriesConfigured;
     }
 
     private boolean effectiveHideMediaBox() {
@@ -505,38 +837,6 @@ public final class InboxFeature extends Feature {
 
     // ---------------------------------------------------------------- classification
 
-    private void hookInboxTapDiagnostics() throws Throwable {
-        Class<?> clickHandlerClass = XpReflect.findClass(clickHandlerClass(), classLoader);
-        XpHooks.hookAllMethods(FEATURE_TAP_DIAGNOSTICS, clickHandlerClass, clickMethod(),
-                new XpHooks.Before() {
-            @Override
-            public void before(XpHooks.HookParam param) {
-                if (!HookConfig.isDebugEnabled() || param.args.length < 2 || !(param.args[1] instanceof Integer)) {
-                    return;
-                }
-                Object item = itemFromClickHandler(param.thisObject, (Integer) param.args[1]);
-                if (item != null) {
-                    String detail = describeRowForDebug(item);
-                    SelfCheckRegistry.markSuppressed(FEATURE_TAP_DIAGNOSTICS, clickHandlerClass() + "#" + clickMethod(), compactDetail(detail));
-                    log("Tap row -> " + detail);
-                }
-            }
-        });
-        SelfCheckRegistry.markInstalled(FEATURE_TAP_DIAGNOSTICS, clickHandlerClass() + "#" + clickMethod(), 1);
-    }
-
-    private Object itemFromClickHandler(Object handler, int position) {
-        try {
-            Object messagesView = HookReflect.findFieldValueByClassName(handler, messageViewClass());
-            Object adapter = XpReflect.getObjectField(messagesView, messagesViewAdapterField());
-            return XpReflect.callMethod(adapter, adapterItemMethod(), position);
-        } catch (Throwable throwable) {
-            log("Tap row lookup failed-soft: "
-                    + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
-            return null;
-        }
-    }
-
     private boolean belongsToCategory(Object item, String category) {
         switch (category) {
             case CATEGORY_NORMAL:
@@ -548,7 +848,9 @@ public final class InboxFeature extends Feature {
             case CATEGORY_MEDIA:
                 return false;
             case CATEGORY_STRANGERS:
-                return isStrangerBoxItem(item);
+                // Strangers opens Zalo's native screen from the chip and is never a
+                // list filter (the box-row letter is retired); nothing matches here.
+                return false;
             case CATEGORY_FOCUSED:
             default:
                 return true;
@@ -562,90 +864,66 @@ public final class InboxFeature extends Feature {
     }
 
     private boolean isNormalItem(Object item) {
-        return item != null && normalItemClasses().contains(item.getClass().getName());
+        if (item == null) {
+            return false;
+        }
+        // Structural route only: a Conversation-typed instance field decides.
+        // The pinned row-class list is retired; a stale letter rejects renamed
+        // rows instead of classifying them.
+        return declaresConversationField(item.getClass());
+    }
+
+    /** Structural normal-item check: a Conversation-typed instance field. */
+    private static final Map<String, Boolean> conversationFieldPresence =
+            new ConcurrentHashMap<>();
+
+    private static boolean declaresConversationField(Class<?> clazz) {
+        if (clazz == null) {
+            return false;
+        }
+        Boolean cached = conversationFieldPresence.get(clazz.getName());
+        if (cached != null) {
+            return cached;
+        }
+        boolean found = conversationFieldName(clazz) != null;
+        conversationFieldPresence.put(clazz.getName(), found);
+        return found;
+    }
+
+    private static String conversationFieldName(Class<?> clazz) {
+        String found = null;
+        for (Class<?> current = clazz; current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                if ("com.zing.zalo.data.chat.model.tabmessage.Conversation"
+                        .equals(field.getType().getName())) {
+                    if (found != null) {
+                        // Ambiguous: more than one Conversation field. Fail closed rather
+                        // than guess which one carries the row's conversation (F5).
+                        return null;
+                    }
+                    found = field.getName();
+                }
+            }
+        }
+        return found;
     }
 
     private String readUid(Object item) {
+        if (preferConversationUid) {
+            // Only the resolved conversation UID is trustworthy here. The mapped row-uid
+            // method belongs to a neighbouring profile on an unmapped artifact, where the
+            // obfuscated letter now points at an unrelated predicate.
+            return conversationUid(conversationOf(item));
+        }
         try {
             return String.valueOf(XpReflect.callMethod(item, rowUidMethod()));
         } catch (Throwable t) {
             return "?";
         }
-    }
-
-    private String describeRowForDebug(Object item) {
-        String className = item == null ? "null" : item.getClass().getName();
-        String uid = readUid(item);
-        Object conversation = conversationOf(item);
-        int category = categoryOf(item);
-        int topOut = topOutOf(conversation);
-        int rowType = intField(item, rowTypeField(), -1);
-        boolean followedByMemory = friendManagerFlag(uid, friendManagerFollowMethod(0));
-        boolean followedByDb = friendManagerFlag(uid, friendManagerFollowMethod(1));
-        boolean deletedGroup = isDeletedGroupUid(uid);
-        boolean ours = isOaItem(item);
-        return "uid=" + uid
-                + " title=" + readTitle(item)
-                + " cls=" + className
-                + " rowType=" + rowType
-                + " cat=" + category
-                + " topOut=" + topOut
-                + " fmA=" + followedByMemory
-                + " fmC=" + followedByDb
-                + " deletedGroup=" + deletedGroup
-                + " bools=" + readBooleans(item)
-                + " oursOa=" + ours;
-    }
-
-    /** Title text fields are schema-provided because row models drift between Zalo releases. */
-    private String readTitle(Object item) {
-        for (String f : SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(), "symbols.inbox.row_title_fields")) {
-            try {
-                Object v = XpReflect.getObjectField(item, f);
-                if (v != null && v.toString().trim().length() > 0) {
-                    String s = v.toString();
-                    return s.length() > 24 ? s.substring(0, 24) : s;
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return "?";
-    }
-
-    /** Dump every no-arg boolean method on a normal row so the group/OA predicate can be identified. */
-    private String readBooleans(Object item) {
-        StringBuilder sb = new StringBuilder();
-        for (Method m : item.getClass().getDeclaredMethods()) {
-            if (m.getParameterTypes().length != 0 || m.getReturnType() != boolean.class) {
-                continue;
-            }
-            try {
-                m.setAccessible(true);
-                Object r = m.invoke(item);
-                if (Boolean.TRUE.equals(r)) {
-                    if (sb.length() > 0) {
-                        sb.append(',');
-                    }
-                    sb.append(m.getName());
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return "[" + sb + "]";
-    }
-
-    private String firstNonEmptyString(Object obj, String prefix, List<String> fields) {
-        for (String f : fields) {
-            try {
-                Object v = XpReflect.getObjectField(obj, f);
-                if (v instanceof String && ((String) v).length() > 0) {
-                    String s = (String) v;
-                    return prefix + (s.length() > 20 ? s.substring(0, 20) : s);
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return prefix + "?";
     }
 
     /** Native category int from the stable Conversation object; field names come from schema. */
@@ -654,11 +932,18 @@ public final class InboxFeature extends Feature {
             return -1;
         }
         try {
-            Object conversation = XpReflect.getObjectField(item, conversationField());
+            // Same validated accessor the rest of the route uses, so a renamed row class
+            // reaches the structural Conversation field instead of failing on the
+            // stale mapped one (F5).
+            Object conversation = conversationOf(item);
             if (conversation == null) {
                 return -1;
             }
-            Object value = XpReflect.getObjectField(conversation, categoryIntField());
+            String categoryField = categoryIntField();
+            if (categoryField == null || categoryField.isEmpty()) {
+                return -1;
+            }
+            Object value = XpReflect.getObjectField(conversation, categoryField);
             return value instanceof Integer ? (Integer) value : -1;
         } catch (Throwable throwable) {
             logSymbolFailure("field-chain", classNameOf(item) + "#" + conversationField()
@@ -669,53 +954,51 @@ public final class InboxFeature extends Feature {
 
     private int countUnknownItems(List<?> items) {
         int unknown = 0;
+        boolean debug = HookConfig.isDebugEnabled();
+        int logged = 0;
         for (Object item : items) {
             if (item == null) {
                 unknown++;
                 continue;
             }
-            String className = item.getClass().getName();
-            if (isNormalItem(item)
-                    || mediaBoxItemClass().equals(className)
-                    || bizBoxItemClass().equals(className)
-                    || strangerBoxItemClass().equals(className)) {
+            if (isNormalItem(item)) {
                 continue;
+            }
+            // Class names only, never row content: lets the unknown-row count in
+            // the filter detail be traced to a concrete row type (T3).
+            if (debug && logged < 5) {
+                log("Unknown inbox row class -> " + item.getClass().getName());
+                logged++;
             }
             unknown++;
         }
         return unknown;
     }
 
-    private String compactDetail(String detail) {
-        if (detail == null) {
-            return "";
-        }
-        String compact = detail.replace('\n', ' ').trim();
-        return compact.length() > 160 ? compact.substring(0, 160) : compact;
-    }
-
     /**
      * Group detection: Zalo group conversation uids carry a literal "group_" prefix (stable across
-     * versions). The wz.c.h() boolean is the current per-item group flag (was m() pre-26.05).
+     * versions). A deleted group keeps that prefix and is still a group row, so the
+     * deleted-group store is consulted only as evidence (its own self-check row) and never
+     * decides the category; treating it as an exclusion moved deleted groups into Chats. The
+     * retired schema group-flag letter mis-decided on neighbouring releases
+     * (it classified OA rows as groups on 26.09.01), so the prefix is the only decider.
      */
     private boolean isGroupItem(Object item) {
         if (!isNormalItem(item)) {
             return false;
         }
         String uid = readUid(item);
-        if (isDeletedGroupUid(uid)) {
+        if (uid == null) {
             return false;
         }
-        try {
-            if (uid.startsWith("group_")) {
-                return true;
-            }
-        } catch (Throwable ignored) {
+        if (isDeletedGroupUid(uid)) {
+            SelfCheckRegistry.markSuppressed(FEATURE_DELETED_GROUP,
+                    deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(),
+                    "deleted group classified as group");
         }
         try {
-            return Boolean.TRUE.equals(XpReflect.callMethod(item, groupFlagMethod()));
-        } catch (Throwable throwable) {
-            logSymbolFailure("method", classNameOf(item) + "#" + groupFlagMethod(), throwable);
+            return uid.startsWith("group_");
+        } catch (Throwable ignored) {
             return false;
         }
     }
@@ -758,75 +1041,110 @@ public final class InboxFeature extends Feature {
     }
 
     /**
-     * OA detection: prefer Zalo's current row-local topOut marker. Live taps on orange-marked rows
-     * showed topOut 1 and 2, while the native category can remain 1 after Zalo resolves final position.
+     * OA detection: Zalo's row-local topOut marker plus the native Conversation
+     * category. Live taps on orange-marked rows showed topOut 1 and 2, while the
+     * native category can remain 1 after Zalo resolves final position. The
+     * friend-manager follow fallback is retired (T2c): its letter is missing on
+     * current releases and topOut/category already discriminate on device.
      */
     private boolean isOaItem(Object item) {
         Object conversation = conversationOf(item);
         if (conversation == null) {
             return false;
         }
-        String uid = stringField(conversation, conversationUidField());
+        String uid = conversationUid(conversation);
         if (uid == null || uid.length() == 0 || uid.startsWith("group_")) {
             return false;
         }
         int topOut = topOutOf(conversation);
-        return topOut == 1 || topOut == 2 || categoryOf(item) == CAT_OA || isKnownOaFollowUid(uid);
-    }
-
-    private boolean isKnownOaFollowUid(String uid) {
-        Boolean cached = oaFollowCache.get(uid);
-        if (cached != null) {
-            return cached;
-        }
-        boolean result = false;
-        try {
-            Object manager = friendManager;
-            if (manager == null) {
-                Class<?> managerClass = XpReflect.findClass(friendManagerClass(), classLoader);
-                manager = XpReflect.callStaticMethod(managerClass, friendManagerInstanceMethod());
-                friendManager = manager;
-            }
-            result = friendManagerFlag(uid, friendManagerFollowMethod(0))
-                    || friendManagerFlag(uid, friendManagerFollowMethod(1));
-        } catch (Throwable throwable) {
-            if (HookConfig.isDebugEnabled()) {
-                log("OA follow check failed-soft: "
-                        + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
-            }
-        }
-        oaFollowCache.put(uid, result);
-        return result;
-    }
-
-    private boolean friendManagerFlag(String uid, String methodName) {
-        if (uid == null || uid.length() == 0) {
-            return false;
-        }
-        try {
-            Object manager = friendManager;
-            if (manager == null) {
-                Class<?> managerClass = XpReflect.findClass(friendManagerClass(), classLoader);
-                manager = XpReflect.callStaticMethod(managerClass, friendManagerInstanceMethod());
-                friendManager = manager;
-            }
-            return Boolean.TRUE.equals(XpReflect.callMethod(manager, methodName, uid));
-        } catch (Throwable throwable) {
-            logSymbolFailure("method-chain", friendManagerClass() + "#" + friendManagerInstanceMethod()
-                    + " -> " + methodName, throwable);
-            return false;
-        }
+        return topOut == 1 || topOut == 2 || categoryOf(item) == CAT_OA;
     }
 
     private Object conversationOf(Object item) {
         if (!isNormalItem(item)) {
             return null;
         }
+        String mapped = conversationField();
+        if (mapped != null && !mapped.isEmpty()) {
+            try {
+                Object value = XpReflect.getObjectField(item, mapped);
+                if (value != null) {
+                    return value;
+                }
+            } catch (Throwable throwable) {
+                logSymbolFailure("field", classNameOf(item) + "#" + mapped, throwable);
+            }
+            // Mapped field missing on a renamed row: fall through to the structural
+            // accessor instead of giving up (F5).
+        }
         try {
-            return XpReflect.getObjectField(item, conversationField());
+            String runtime = conversationFieldName(item.getClass());
+            if (runtime == null) {
+                return null;
+            }
+            return XpReflect.getObjectField(item, runtime);
         } catch (Throwable throwable) {
-            logSymbolFailure("field", classNameOf(item) + "#" + conversationField(), throwable);
+            logSymbolFailure("field", classNameOf(item) + "#conversation(runtime)", throwable);
             return null;
+        }
+    }
+
+    private String conversationUid(Object conversation) {
+        return stringField(conversation, conversationUidField());
+    }
+
+    private void prepareStrangerRoute() {
+        try {
+            Class<?> view = XpReflect.findClass(MESSAGE_VIEW_CLASS, classLoader);
+            strangerDestination = XpReflect.findClass(
+                    "com.zing.zalo.ui.zviews.StrangerMessagesView", classLoader);
+            strangerRoute = InboxNativeRoute.find(view, android.os.Bundle.class,
+                    "com.zing.zalo.zview.");
+        } catch (Throwable ignored) {
+            strangerRoute = null;
+        }
+    }
+
+    private void captureMessagesView(Object adapter) {
+        // Never clears a previously resolved view: a later attach without a view
+        // reference must not hide the chip, and the ancestry route above stays primary.
+        Object found = null;
+        try {
+            for (Class<?> type = adapter.getClass(); type != null && type != Object.class;
+                    type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                            || !MESSAGE_VIEW_CLASS.equals(field.getType().getName())) continue;
+                    field.setAccessible(true);
+                    Object value = field.get(adapter);
+                    if (value == null) continue;
+                    if (found != null && found != value) return;
+                    found = value;
+                }
+            }
+            if (found != null) liveMessagesView = found;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void openStrangers() {
+        try {
+            if (strangerRoute == null) {
+                log("Strangers tap ignored: no native route resolved");
+                return;
+            }
+            if (liveMessagesView == null) {
+                log("Strangers tap ignored: no Messages view retained");
+                return;
+            }
+            if (strangerRoute.open(liveMessagesView, strangerDestination)) {
+                defaultStrangersPending = false;
+                SelfCheckRegistry.markSuppressed(FEATURE_FILTER_BAR, "native Strangers screen", "opened");
+            } else {
+                log("Strangers open returned false: host or manager null at tap time");
+            }
+        } catch (Throwable error) {
+            logSymbolFailure("navigation", "StrangerMessagesView", error);
         }
     }
 
@@ -855,16 +1173,6 @@ public final class InboxFeature extends Feature {
         }
     }
 
-    private int intField(Object target, String fieldName, int fallback) {
-        try {
-            Object value = XpReflect.getObjectField(target, fieldName);
-            return value instanceof Integer ? (Integer) value : fallback;
-        } catch (Throwable throwable) {
-            logSymbolFailure("field", classNameOf(target) + "#" + fieldName, throwable);
-            return fallback;
-        }
-    }
-
     private void logSymbolFailure(String kind, String symbol, Throwable throwable) {
         String key = kind + ":" + symbol;
         if (HookConfig.isDebugEnabled() && symbolFailuresLogged.add(key)) {
@@ -877,66 +1185,33 @@ public final class InboxFeature extends Feature {
         return object == null ? "null" : object.getClass().getName();
     }
 
-    /** Media box rows are synthetic Zalo rows; the row class comes from schema. */
-    private boolean isMediaBoxItem(Object item) {
-        return item != null && mediaBoxItemClass().equals(item.getClass().getName());
-    }
-
-    private boolean isStrangerBoxItem(Object item) {
-        return item != null && strangerBoxItemClass().equals(item.getClass().getName());
-    }
-
     /** Re-run the adapter list-setter from the cached unfiltered list so the new category applies. */
     private void refreshInbox() {
-        Object adapter = lastInboxAdapter;
-        Method setter = listSetterMethod;
-        List<Object> source = lastUnfilteredItems;
-        if (adapter == null || setter == null || source == null) {
+        InboxListUpdate update = lastInboxListUpdate;
+        if (update == null) {
             log("refreshInbox skipped (adapter/setter/source missing)");
             return;
         }
         try {
-            setter.setAccessible(true);
+            update.method.setAccessible(true);
             // Origin invoker: the filtered list goes straight to the original setter
             // without re-firing this feature's own hook, so no reentrancy guard is needed.
-            XpHooks.invokeOriginal(setter, adapter,
-                    filterInboxItems(new ArrayList<>(source)));
+            XpHooks.invokeOriginal(update.method, update.adapter,
+                    update.withItems(filterInboxItems(new ArrayList<>(update.source))));
         } catch (Throwable throwable) {
             log("refreshInbox failed: " + throwable.getClass().getSimpleName());
         }
     }
 
-    private static String messageViewClass() {
-        return schemaString("symbols.inbox.message_view_class", MESSAGE_VIEW_CLASS);
-    }
-
     private static String messageAdapterClass() {
-        return schemaString("symbols.inbox.message_adapter_class", "");
-    }
-
-    private static String normalItemClass() {
-        return schemaString("symbols.inbox.normal_item_class", "");
-    }
-
-    private static List<String> normalItemClasses() {
-        return SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.inbox.normal_item_classes", normalItemClass());
-    }
-
-    private static String mediaBoxItemClass() {
-        return schemaString("symbols.inbox.media_box_item_class", "");
-    }
-
-    private static String bizBoxItemClass() {
-        return schemaString("symbols.inbox.biz_box_item_class", "");
-    }
-
-    private static String strangerBoxItemClass() {
-        return schemaString("symbols.inbox.stranger_box_item_class", "");
-    }
-
-    private static String clickHandlerClass() {
-        return schemaString("symbols.inbox.click_handler_class", "");
+        // Prefer the runtime-discovered adapter: on a renamed release the pinned
+        // schema name is stale, and the setAdapter matcher must use the live class.
+        String discovered = discoveredAdapterClass == null ? "" : discoveredAdapterClass;
+        if (!discovered.isEmpty()) {
+            return discovered;
+        }
+        String schema = schemaString("symbols.inbox.message_adapter_class", "");
+        return schema != null ? schema : "";
     }
 
     private static String conversationField() {
@@ -947,24 +1222,8 @@ public final class InboxFeature extends Feature {
         return schemaString("symbols.inbox.category_int_field", "");
     }
 
-    private static String messagesViewAdapterField() {
-        return schemaString("symbols.inbox.messages_view_adapter_field", "");
-    }
-
-    private static String clickMethod() {
-        return schemaString("symbols.inbox.click_method", "");
-    }
-
-    private static String adapterItemMethod() {
-        return schemaString("symbols.inbox.adapter_item_method", "");
-    }
-
     private static String rowUidMethod() {
         return schemaString("symbols.inbox.row_uid_method", "");
-    }
-
-    private static String groupFlagMethod() {
-        return schemaString("symbols.inbox.group_flag_method", "");
     }
 
     private static String deletedGroupRepositoryClass() {
@@ -979,14 +1238,6 @@ public final class InboxFeature extends Feature {
         return schemaString("symbols.inbox.deleted_group_check_method", "");
     }
 
-    private static String rowTypeField() {
-        return schemaString("symbols.inbox.row_type_field", "");
-    }
-
-    private static String profileField() {
-        return schemaString("symbols.inbox.profile_field", "");
-    }
-
     private static String conversationUidField() {
         return schemaString("symbols.inbox.conversation_uid_field", "");
     }
@@ -997,20 +1248,6 @@ public final class InboxFeature extends Feature {
 
     private static String topOutValueField() {
         return schemaString("symbols.inbox.top_out_value_field", "");
-    }
-
-    private static String friendManagerClass() {
-        return schemaString("symbols.inbox.friend_manager_class", "");
-    }
-
-    private static String friendManagerInstanceMethod() {
-        return schemaString("symbols.inbox.friend_manager_instance_method", "");
-    }
-
-    private static String friendManagerFollowMethod(int index) {
-        List<String> methods = SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.inbox.friend_manager_follow_methods");
-        return index >= 0 && index < methods.size() ? methods.get(index) : "";
     }
 
     private static String schemaString(String path, String fallback) {

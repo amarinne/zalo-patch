@@ -20,6 +20,12 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
             "com.ez.zalopatch.RECORD_RUNTIME_DISCOVERY_EVIDENCE";
     public static final String ACTION_RECORD_RUNTIME_ENVIRONMENT =
             "com.ez.zalopatch.RECORD_RUNTIME_ENVIRONMENT";
+    public static final String ACTION_RECORD_DEXKIT_CACHE =
+            "com.ez.zalopatch.RECORD_DEXKIT_CACHE";
+    public static final String ACTION_RECORD_DEXKIT_FAILURE =
+            "com.ez.zalopatch.RECORD_DEXKIT_FAILURE";
+    public static final String ACTION_CLEAR_DEXKIT_CACHE =
+            "com.ez.zalopatch.CLEAR_DEXKIT_CACHE";
     public static final String EXTRA_VALUES = "values";
     private static final AtomicBoolean REJECTION_LOGGED = new AtomicBoolean(false);
 
@@ -55,6 +61,27 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
         if (ACTION_RECORD_RUNTIME_DISCOVERY_EVIDENCE.equals(intent.getAction())) {
             RemapEvidenceStore.record(context, intent.getLongExtra("version_code", -1L),
                     intent.getStringExtra("kind"), intent.getStringExtra("value"));
+            return;
+        }
+        if (ACTION_RECORD_DEXKIT_CACHE.equals(intent.getAction())) {
+            String json = intent.getStringExtra("json");
+            if (json != null && !json.isEmpty()) {
+                DexKitStore.save(context, json);
+                DexKitMirror.sync(context);
+            }
+            return;
+        }
+        if (ACTION_RECORD_DEXKIT_FAILURE.equals(intent.getAction())) {
+            String scope = intent.getStringExtra("scope");
+            if (scope != null && !scope.isEmpty()) {
+                DexKitStore.recordFailure(context, System.currentTimeMillis(), scope);
+                DexKitMirror.sync(context);
+            }
+            return;
+        }
+        if (ACTION_CLEAR_DEXKIT_CACHE.equals(intent.getAction())) {
+            DexKitStore.clear(context);
+            DexKitMirror.sync(context);
             return;
         }
         if (ACTION_RECORD_NOTIFICATION_HISTORY.equals(intent.getAction())) {

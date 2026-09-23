@@ -41,6 +41,30 @@ public final class SettingsPropertyMirror {
         return write(key, value);
     }
 
+    /**
+     * Writes even an empty value, so a cleared preference can clear a previously mirrored
+     * property instead of leaving the hook process authorizing against the stale one.
+     */
+    public static boolean writeOptional(String key, String value) {
+        if (value == null) {
+            return false;
+        }
+        try {
+            String propertyName = propertyName(key);
+            if (!isSafePropertyName(propertyName) || !isSafeValue(value)) {
+                return logValidationFailure(key, "name/value");
+            }
+            String command = value.isEmpty()
+                    ? "setprop " + propertyName + " \"\""
+                    : "setprop " + propertyName + " " + value;
+            return runRootCommand(key, command);
+        } catch (Throwable throwable) {
+            Log.i("ZaloPatch", "Property mirror write failed key=" + key
+                    + " " + throwable.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     public static String readBlob(String key) {
         try {
             int count = Integer.parseInt(readProperty(propertyName(key) + ".n", "0"));

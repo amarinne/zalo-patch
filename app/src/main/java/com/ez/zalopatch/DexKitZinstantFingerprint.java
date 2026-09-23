@@ -1,10 +1,7 @@
 package com.ez.zalopatch;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Shared DexKit fingerprint definition for the Zinstant ad-bind pilot.
@@ -44,9 +41,24 @@ import java.util.Map;
  * another package; the definition itself stays a closed vocabulary of constants and predicates.
  */
 public final class DexKitZinstantFingerprint {
-    /** Revision of this query definition. Bumped whenever any predicate changes; bound to cache. */
-    public static final int QUERY_REVISION = 1;
-
+    /**
+     * Revision of the whole scan query set, bound to the cache scope and the mirror
+     * budget. Bump whenever the scan gains or changes a family query: a bound cache
+     * never rescans, so without a bump new families would never resolve on an
+     * already-cached artifact. History: 1 = zinstant/webview/passcode/telemetry,
+     * 2 = bottom-tabs state class and method dump, 3 = bottom-tabs scan forensics,
+     * 4 = bottom-tabs candidate forensics, 5 = constructor exclusion in shape gates,
+     * 6 = calibration values forensics and uniform-state abstention,
+     * 7 = order-isomorphism calibration for filtered positions,
+     * 8 = inbox normal-item and category queries,
+     * 9 = unused (inbox row-anchored uid/flag method queries, superseded),
+     * 10 = inbox row uid field via static subtype class relation,
+     * 11 = inbox deleted-group store anchored on the table literal,
+     * 12 = call callback implementation anchored on the ZRTC base relation,
+     * 13 = call peer manager anchored on the PeerJNI predicate invoker,
+     * 14 = bottom-tab structural field gate without pinned member letters.
+     */
+    public static final int QUERY_REVISION = 14;
     public static final String ANCHOR_AD_BIND = "zinstant.ad_bind_method";
     public static final String ANCHOR_FEED_BIND = "zinstant.feed_bind_method";
 
@@ -120,15 +132,13 @@ public final class DexKitZinstantFingerprint {
     }
 
     /**
-     * Recorded bind names for every retained mapped APK, from the bundled exact profiles.
-     * Used by golden tests and by comparison-mode logging; never used to resolve.
+     * Returns whether the installed artifact has a retained exact profile. Bind names
+     * remain profile data and are never embedded in the resolver's Java logic.
      */
-    public static Map<Long, String[]> expectedDescriptors() {
-        Map<Long, String[]> expected = new LinkedHashMap<>();
-        expected.put(260602901L, new String[]{"i", "s"});
-        expected.put(260701901L, new String[]{"c", "c"});
-        expected.put(260801903L, new String[]{"c", "c"});
-        expected.put(260802903L, new String[]{"c", "c"});
-        return Collections.unmodifiableMap(expected);
+    public static boolean isRetainedVersion(long versionCode) {
+        return versionCode == 260602901L
+                || versionCode == 260701901L
+                || versionCode == 260801903L
+                || versionCode == 260802903L;
     }
 }

@@ -8,6 +8,13 @@
     <string name="zp_restart_root_denied">Root access denied</string>
     <string name="zp_restart_failed">Restart command failed</string>
     <string name="zp_restart_manual_fallback_summary">Without root, opens Zalo app info for manual force stop.</string>
+    <string name="zp_restart_target_title">Choose Zalo to restart</string>
+    <string name="zp_restart_all_instances">All instances</string>
+    <string name="zp_restart_owner_label">Owner</string>
+    <string name="zp_restart_user_label">User %1$d</string>
+    <string name="zp_restart_instance_row">%1$s · user %2$d · pid %3$d</string>
+    <string name="zp_restart_instance_row_active">%1$s · user %2$d · pid %3$d · %4$s</string>
+    <string name="zp_restart_instance_active">active</string>
     <string name="zp_root_access_title">Root access</string>
     <string name="zp_root_access_granted">Granted · tap to check again</string>
     <string name="zp_root_access_denied">Denied · tap to check again</string>

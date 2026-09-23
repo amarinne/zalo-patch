@@ -274,13 +274,15 @@ public final class SettingsUiSmokeTest
             String renderedSummary = String.valueOf(child.getSummary());
             SymbolSchema.Active schema = SymbolSchema.active(activity);
             if (schema.valid) {
-                assertTrue(renderedSummary.contains(
-                        "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl#z()"));
+                String accessor = schema.string("symbols.telemetry.analytics_event_accessor", "");
+                String databaseClass = schema.string("symbols.telemetry.analytics_db_class", "");
+                String symbol = databaseClass + "#" + accessor + "()";
+                assertTrue(renderedSummary.contains(symbol));
                 assertTrue(child.getSummary() instanceof android.text.Spanned);
                 android.text.Spanned styledSummary = (android.text.Spanned) child.getSummary();
-                int symbolStart = renderedSummary.indexOf("#z()");
+                int symbolStart = renderedSummary.indexOf("#" + accessor + "()");
                 android.text.style.ForegroundColorSpan[] symbolColors = styledSummary.getSpans(
-                        symbolStart, symbolStart + 4,
+                        symbolStart, symbolStart + accessor.length() + 3,
                         android.text.style.ForegroundColorSpan.class);
                 assertEquals(1, symbolColors.length);
                 assertEquals(androidx.core.content.ContextCompat.getColor(

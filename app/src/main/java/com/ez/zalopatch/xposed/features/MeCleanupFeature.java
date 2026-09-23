@@ -11,7 +11,6 @@ import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,10 +74,6 @@ public final class MeCleanupFeature extends Feature {
             runGuarded("zStyle TabMe view", FEATURE_ZSTYLE,
                     zStyleViewClass(), this::hookZStyleView);
         }
-        if (!legacyBuilderMethod().isEmpty()) {
-            runGuarded("Legacy TabMe builder", "me_cleanup.legacy",
-                    tabMeClass() + "#" + legacyBuilderMethod(), this::hookLegacyTabMeBuilder);
-        }
     }
 
     private void hookCurrentTabMeBuilder() throws Throwable {
@@ -99,23 +94,6 @@ public final class MeCleanupFeature extends Feature {
         if (hideQrWallet || hideZCloud || hideZStyle || hideZBusiness) {
             SelfCheckRegistry.markInstalled(FEATURE_REFRESH,
                     tabMeClass() + "#" + currentBuilderMethod(), hooked);
-        }
-    }
-
-    private void hookLegacyTabMeBuilder() throws Throwable {
-        Class<?> tabMeClass = XpReflect.findClass(tabMeClass(), classLoader);
-        int hooked = XpHooks.hookAllMethods(FEATURE_ITEMS, tabMeClass, legacyBuilderMethod(),
-                new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) {
-                Object filtered = filterIfNeeded(param.getResult());
-                if (filtered != param.getResult()) {
-                    param.setResult(filtered);
-                }
-            }
-        }).size();
-        if (hooked == 0) {
-            throw new NoSuchMethodError(tabMeClass() + "#" + legacyBuilderMethod());
         }
     }
 
@@ -228,12 +206,99 @@ public final class MeCleanupFeature extends Feature {
             if (item == null) {
                 continue;
             }
-            String className = item.getClass().getName();
-            if (settingItemClass().equals(className) || zinstantItemClass().equals(className)) {
+            if (isObservedOrShapedItem(item)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Item identity without a mapped item class: classes observed as products of the
+     * hooked builder are exact; otherwise an item-shape predicate (Zalo class with a
+     * String field plus an int/enum field, matching id+title+summary structure).
+     */
+    private static final java.util.Set<String> OBSERVED_ITEM_CLASSES =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    private static void recordObservedItems(List<?> items) {
+        if (items == null) {
+            return;
+        }
+        for (Object item : items) {
+            if (item != null) {
+                OBSERVED_ITEM_CLASSES.add(item.getClass().getName());
+            }
+        }
+    }
+
+    private static boolean isObservedOrShapedItem(Object item) {
+        if (item == null) {
+            return false;
+        }
+        if (OBSERVED_ITEM_CLASSES.contains(item.getClass().getName())) {
+            return true;
+        }
+        return hasItemShape(item.getClass());
+    }
+
+    private static boolean hasItemShape(Class<?> clazz) {
+        if (clazz == null || clazz.isPrimitive() || clazz.isArray()) {
+            return false;
+        }
+        String name = clazz.getName();
+        if (name.startsWith("java.") || name.startsWith("javax.")
+                || name.startsWith("android.") || name.startsWith("androidx.")
+                || name.startsWith("kotlin.")) {
+            return false;
+        }
+        boolean strings = false;
+        boolean idLike = false;
+        for (Class<?> current = clazz; current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                Class<?> type = field.getType();
+                if (type == String.class) {
+                    strings = true;
+                } else if (type == Integer.TYPE || type == Integer.class
+                        || (!type.isPrimitive() && type.isEnum())) {
+                    idLike = true;
+                }
+            }
+        }
+        return strings && idLike;
+    }
+
+    /**
+     * All String field values of an item, for marker matching when the title and
+     * summary field names are unmapped. Reads are fail-soft per field.
+     */
+    private static String allItemStrings(Object item) {
+        if (item == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (Class<?> current = item.getClass(); current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                        || field.getType() != String.class) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(item);
+                    if (value != null) {
+                        text.append(value).append(' ');
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return text.toString();
     }
 
     private Object filterIfNeeded(Object value) {
@@ -241,6 +306,7 @@ public final class MeCleanupFeature extends Feature {
             return value;
         }
         List<?> originalItems = (List<?>) value;
+        recordObservedItems(originalItems);
         logDebugItems(originalItems);
         List<Object> filteredItems = new ArrayList<>(originalItems.size());
         int removed = 0;
@@ -477,56 +543,32 @@ public final class MeCleanupFeature extends Feature {
         if (item == null) {
             return HIDE_NONE;
         }
-        String className = item.getClass().getName();
-        if (hideZStyle && isZStyleItemClass(className)) {
-            return HIDE_ZSTYLE;
-        }
-        if (settingItemClass().equals(className)) {
+        // Runtime-derived route only: observed builder products or item-shaped
+        // classes are classified by markers/ids. Pinned item classes and the
+        // legacy branch for unsupported releases are retired.
+        if (isObservedOrShapedItem(item)) {
             return currentSettingHideReason(item, hideQrWallet, hideZCloud, hideZStyle, hideZBusiness);
         }
-        if (!legacyItemClass().equals(className)) {
-            return HIDE_NONE;
-        }
-        try {
-            String tracking = invokeStringMethod(item, legacyTrackingMethod());
-            String title = invokeStringMethod(item, legacyTitleMethod());
-            String desc = invokeStringMethod(item, legacySummaryMethod());
-
-            if (hideQrWallet && containsSchemaValue("features.me_cleanup.qr_wallet.tracking_ids", tracking, "tab_me_qr_wallet")) {
-                return HIDE_QR_WALLET;
-            }
-            if (hideZCloud && containsSchemaValue("features.me_cleanup.zcloud.tracking_ids", tracking, "tab_me_z_cloud")) {
-                return HIDE_ZCLOUD;
-            }
-            if (hideZBusiness && containsSchemaValue("features.me_cleanup.zbusiness.tracking_ids", tracking,
-                    "tab_me_z_business", "tab_me_zbusiness", "tab_me_business")) {
-                return HIDE_ZBUSINESS;
-            }
-
-            String titleLower = title == null ? "" : title.toLowerCase();
-            String descLower = desc == null ? "" : desc.toLowerCase();
-            if (hideZStyle && (titleLower.contains("zstyle")
-                    || descLower.contains("music library")
-                    || descLower.contains("background and music library"))) {
-                return HIDE_ZSTYLE;
-            }
-            return hideZBusiness && containsZBusinessMarker(title, desc) ? HIDE_ZBUSINESS : HIDE_NONE;
-        } catch (Throwable throwable) {
-            return HIDE_NONE;
-        }
+        return HIDE_NONE;
     }
 
     private static int currentSettingHideReason(Object item, boolean hideQrWallet, boolean hideZCloud, boolean hideZStyle, boolean hideZBusiness) {
         try {
-            int id = getCurrentSettingId(item);
-            if (hideQrWallet && id == qrWalletItemId()) {
-                return HIDE_QR_WALLET;
+            // ID extraction is optional: a renamed or missing id field must not disable
+            // the marker fallback below (F6). Unknown sentinels are never compared.
+            int id = currentSettingIdOrSentinel(item);
+            if (id != ID_UNKNOWN) {
+                int qrId = qrWalletItemId();
+                if (hideQrWallet && qrId != ID_UNKNOWN && id == qrId) {
+                    return HIDE_QR_WALLET;
+                }
+                int cloudId = zCloudItemId();
+                if (hideZCloud && cloudId != ID_UNKNOWN && id == cloudId) {
+                    return HIDE_ZCLOUD;
+                }
             }
-            if (hideZCloud && id == zCloudItemId()) {
-                return HIDE_ZCLOUD;
-            }
-            String title = stringField(item, settingTitleField());
-            String desc = stringField(item, settingSummaryField());
+            String title = titleOrScanned(item);
+            String desc = summaryOrScanned(item);
             if (hideQrWallet && containsQrWalletMarker(title, desc)) {
                 return HIDE_QR_WALLET;
             }
@@ -545,25 +587,54 @@ public final class MeCleanupFeature extends Feature {
         }
     }
 
+    private static final int ID_UNKNOWN = Integer.MIN_VALUE;
+
+    private static int currentSettingIdOrSentinel(Object item) {
+        try {
+            Object idEnum = objectField(item, settingIdField());
+            Object idValue = objectField(idEnum, settingIdValueField());
+            return idValue instanceof Integer ? (Integer) idValue : ID_UNKNOWN;
+        } catch (Throwable ignored) {
+            return ID_UNKNOWN;
+        }
+    }
+
+    /**
+     * Title/summary through mapped fields when present, otherwise a scan of every
+     * String field. Id-based hiding still runs first when the id fields resolve.
+     */
+    private static String titleOrScanned(Object item) {
+        String field = settingTitleField();
+        if (field != null && !field.isEmpty()) {
+            try {
+                return stringField(item, field);
+            } catch (Throwable ignored) {
+            }
+        }
+        return allItemStrings(item);
+    }
+
+    private static String summaryOrScanned(Object item) {
+        String field = settingSummaryField();
+        if (field != null && !field.isEmpty()) {
+            try {
+                return stringField(item, field);
+            } catch (Throwable ignored) {
+            }
+        }
+        return "";
+    }
+
     private static String describeItem(Object item) {
         if (item == null) {
             return "null";
         }
         String className = item.getClass().getName();
-        if (settingItemClass().equals(className)) {
+        if (isObservedOrShapedItem(item)) {
             try {
                 return className + "{id=" + getCurrentSettingId(item)
                         + ",title=" + compact(stringField(item, settingTitleField()))
                         + ",desc=" + compact(stringField(item, settingSummaryField())) + "}";
-            } catch (Throwable ignored) {
-                return className + "{unreadable}";
-            }
-        }
-        if (legacyItemClass().equals(className)) {
-            try {
-                return className + "{tracking=" + compact(invokeStringMethod(item, legacyTrackingMethod()))
-                        + ",title=" + compact(invokeStringMethod(item, legacyTitleMethod()))
-                        + ",desc=" + compact(invokeStringMethod(item, legacySummaryMethod())) + "}";
             } catch (Throwable ignored) {
                 return className + "{unreadable}";
             }
@@ -627,13 +698,6 @@ public final class MeCleanupFeature extends Feature {
                 "tài khoản kinh doanh", "tai khoan kinh doanh", "doanh nghiệp", "doanh nghiep");
     }
 
-    private static String invokeStringMethod(Object target, String methodName) throws Throwable {
-        Method method = target.getClass().getDeclaredMethod(methodName);
-        method.setAccessible(true);
-        Object result = method.invoke(target);
-        return result == null ? null : String.valueOf(result);
-    }
-
     private static String stringField(Object target, String fieldName) throws Throwable {
         Object value = objectField(target, fieldName);
         return value == null ? null : String.valueOf(value);
@@ -663,28 +727,6 @@ public final class MeCleanupFeature extends Feature {
         return schemaString("symbols.me.tab_me_class", TAB_ME_CLASS);
     }
 
-    private static String adapterClass() {
-        return schemaString("symbols.me.adapter_class", "");
-    }
-
-    private static String settingItemClass() {
-        return schemaString("symbols.me.setting_item_class", "");
-    }
-
-    private static String zinstantItemClass() {
-        return schemaString("symbols.me.zinstant_item_class", "");
-    }
-
-    private static boolean isZStyleItemClass(String className) {
-        for (String value : SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.me.zstyle_item_classes")) {
-            if (value.equals(className)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static String zinstantViewClass() {
         return schemaString("symbols.me.zinstant_view_class", CURRENT_TAB_ME_ZINSTANT_VIEW_CLASS);
     }
@@ -695,14 +737,6 @@ public final class MeCleanupFeature extends Feature {
 
     private static String currentBuilderMethod() {
         return schemaString("symbols.me.current_builder_method", "");
-    }
-
-    private static String legacyBuilderMethod() {
-        return schemaString("symbols.me.legacy_builder_method", "");
-    }
-
-    private static String adapterRefreshMethod() {
-        return schemaString("symbols.me.adapter_refresh_method", "");
     }
 
     private static String settingIdField() {
@@ -721,22 +755,6 @@ public final class MeCleanupFeature extends Feature {
         return schemaString("symbols.me.setting_summary_field", "");
     }
 
-    private static String legacyItemClass() {
-        return schemaString("symbols.me.legacy_item_class", "");
-    }
-
-    private static String legacyTrackingMethod() {
-        return schemaString("symbols.me.legacy_tracking_method", "");
-    }
-
-    private static String legacyTitleMethod() {
-        return schemaString("symbols.me.legacy_title_method", "");
-    }
-
-    private static String legacySummaryMethod() {
-        return schemaString("symbols.me.legacy_summary_method", "");
-    }
-
     private static int qrWalletItemId() {
         return SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
                 "symbols.me.qr_wallet_item_id", -1);
@@ -745,18 +763,6 @@ public final class MeCleanupFeature extends Feature {
     private static int zCloudItemId() {
         return SymbolSchema.integer(HookConfig.resolveModuleContextForHooks(),
                 "symbols.me.zcloud_item_id", -1);
-    }
-
-    private static boolean containsSchemaValue(String path, String value, String... fallback) {
-        if (value == null) {
-            return false;
-        }
-        for (String item : SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(), path, fallback)) {
-            if (value.equals(item)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean containsAny(String text, String path, String... fallback) {

@@ -88,25 +88,51 @@ public final class TweakStore {
         // Hook authorization runs inside Zalo, where the module provider and shared preferences
         // may both be unavailable. Mirror the small artifact identity state needed to authorize
         // the bundled schema through the same root-readable property channel.
-        String[] artifactKeys = {
-                ZaloArtifactState.KEY_STATUS,
-                ZaloArtifactState.KEY_LIGHTWEIGHT,
-                ZaloArtifactState.KEY_GENERATION,
-                ZaloArtifactState.KEY_PROFILE_SHA256,
-                ZaloArtifactState.KEY_EVIDENCE,
-                ZaloArtifactState.KEY_ERROR
-        };
-        for (String key : artifactKeys) {
-            success &= SettingsPropertyMirror.writeString(key,
-                    preferences(context).getString(key, ""));
-        }
+        // Best-effort only: genuine root loss already fails the settings writes above, while
+        // artifact strings such as the error text are free-form human sentences that can never
+        // satisfy the shell-safe alphabet. Letting them veto the sync misreports a healthy root
+        // as denied and makes Restart Zalo impossible.
+        mirrorArtifactState(preferences(context));
         try {
             success &= SettingsPropertyMirror.writeBlob(NotificationRuleStore.MIRROR_KEY,
                     NotificationRuleStore.encode(NotificationRuleStore.load(context)));
         } catch (Exception ignored) {
             success = false;
         }
+        // DexKit pilot transport: the Zalo process may be unable to reach the module
+        // provider (observed on HyperOS / Android 16), so the validated cache entry and
+        // scan budget ride the same root-gated mirror. Best-effort; never fails settings.
+        DexKitMirror.sync(context);
+        SymbolCatalogMirror.sync(context, SymbolSchema.installedZaloVersionCode(context));
         return success;
+    }
+
+    /**
+     * Keys {@link com.ez.zalopatch.ZaloArtifactState#forHooks} reads through {@link HookConfig},
+     * which prefers the property mirror over the provider. Reconcile must refresh these whenever
+     * it rewrites the preferences, or the hook process keeps authorizing against the previous
+     * profile hash while the provider gate (reading preferences directly) passes — observed when
+     * catalog sequence 28 replaced the profile hash without a Restart Zalo sync.
+     */
+    static final String[] ARTIFACT_MIRROR_KEYS = {
+            ZaloArtifactState.KEY_STATUS,
+            ZaloArtifactState.KEY_LIGHTWEIGHT,
+            ZaloArtifactState.KEY_GENERATION,
+            ZaloArtifactState.KEY_PROFILE_SHA256,
+            ZaloArtifactState.KEY_EVIDENCE,
+            ZaloArtifactState.KEY_ERROR
+    };
+
+    /** Best-effort, change-detected mirror refresh of the hook-authorization artifact keys. */
+    static void mirrorArtifactState(SharedPreferences preferences) {
+        for (String key : ARTIFACT_MIRROR_KEYS) {
+            String value = preferences.getString(key, "");
+            String mirrored = SettingsPropertyMirror.read(key);
+            if (value.equals(mirrored == null ? "" : mirrored)) {
+                continue;
+            }
+            SettingsPropertyMirror.writeOptional(key, value);
+        }
     }
 
     private static void removeRetiredKeys(SharedPreferences.Editor editor) {

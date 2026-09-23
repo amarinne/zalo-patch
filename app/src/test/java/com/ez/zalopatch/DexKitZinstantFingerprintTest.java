@@ -6,9 +6,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -23,20 +23,24 @@ public final class DexKitZinstantFingerprintTest {
 
     @Test
     public void recordedDescriptorsResolveForEveryRetainedVersion() {
-        Map<Long, String[]> expected = DexKitZinstantFingerprint.expectedDescriptors();
-        assertEquals(4, expected.size());
-        for (Map.Entry<Long, String[]> binding : expected.entrySet()) {
+        long[] retainedVersions = {260602901L, 260701901L, 260801903L, 260802903L};
+        String[][] descriptors = {{"i", "s"}, {"c", "c"}, {"c", "c"}, {"c", "c"}};
+        assertEquals(retainedVersions.length, descriptors.length);
+        for (int index = 0; index < retainedVersions.length; index++) {
+            assertTrue(DexKitZinstantFingerprint.isRetainedVersion(retainedVersions[index]));
+            String[] descriptor = descriptors[index];
             FingerprintResolver.Resolution ad = evaluate(
-                    DexKitZinstantFingerprint.ANCHOR_AD_BIND, binding.getValue()[0],
+                    DexKitZinstantFingerprint.ANCHOR_AD_BIND, descriptor[0],
                     DexKitZinstantFingerprint.AD_PARAM_COUNT);
             FingerprintResolver.Resolution feed = evaluate(
-                    DexKitZinstantFingerprint.ANCHOR_FEED_BIND, binding.getValue()[1],
+                    DexKitZinstantFingerprint.ANCHOR_FEED_BIND, descriptor[1],
                     DexKitZinstantFingerprint.FEED_PARAM_COUNT);
-            assertEquals(binding.getValue()[0], ad.symbol);
-            assertEquals(binding.getValue()[1], feed.symbol);
+            assertEquals(descriptor[0], ad.symbol);
+            assertEquals(descriptor[1], feed.symbol);
             assertTrue(ad.margin >= FingerprintResolver.MINIMUM_MARGIN);
             assertTrue(feed.margin >= FingerprintResolver.MINIMUM_MARGIN);
         }
+        assertFalse(DexKitZinstantFingerprint.isRetainedVersion(260901903L));
     }
 
     @Test

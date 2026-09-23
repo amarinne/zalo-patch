@@ -197,11 +197,36 @@ final class DexKitStore {
         }
         synchronized (DexKitStore.class) {
             SharedPreferences preferences = TweakStore.preferences(context);
-            if (!scope.equals(preferences.getString(KEY_SCAN_SCOPE, ""))) {
+            String storedScope = preferences.getString(KEY_SCAN_SCOPE, "");
+            if (!scope.equals(storedScope)) {
+                // A new scope gets a fresh budget. Resetting the failure count alone is not
+                // enough: the previous scope's live slot and attempt timestamp would then be
+                // evaluated against the new scope, so the claim below would be rejected as
+                // "already in progress" for the whole TTL, and the process has already
+                // recorded its one attempt.
                 preferences.edit()
                         .putString(KEY_SCAN_SCOPE, scope)
                         .putInt(KEY_SCAN_FAILURES, 0)
+                        .putLong(KEY_SCAN_LAST_ATTEMPT_MS, 0L)
+                        .putLong(KEY_SCAN_SLOT_MS, 0L)
                         .commit();
+                storedScope = scope;
+            }
+            long[] carryOver = DexKitPilotPolicy.budgetCarryOver(storedScope, scope,
+                    preferences.getLong(KEY_SCAN_SLOT_MS, 0L),
+                    preferences.getLong(KEY_SCAN_LAST_ATTEMPT_MS, 0L));
+            SharedPreferences.Editor normalized = preferences.edit();
+            boolean dirty = false;
+            if (carryOver[0] != preferences.getLong(KEY_SCAN_SLOT_MS, 0L)) {
+                normalized.putLong(KEY_SCAN_SLOT_MS, carryOver[0]);
+                dirty = true;
+            }
+            if (carryOver[1] != preferences.getLong(KEY_SCAN_LAST_ATTEMPT_MS, 0L)) {
+                normalized.putLong(KEY_SCAN_LAST_ATTEMPT_MS, carryOver[1]);
+                dirty = true;
+            }
+            if (dirty) {
+                normalized.commit();
             }
             ScanState state = scanState(context, now, scope);
             if (!state.allowed) {

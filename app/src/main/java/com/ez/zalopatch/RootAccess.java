@@ -51,7 +51,10 @@ final class RootAccess {
     }
 
     static State getOrProbe(Context context) {
-        if (hasFreshCache(context)) return cached(context);
+        // A cached GRANTED is stable; a cached DENIED/ABSENT can outlive a later Magisk grant,
+        // so on-demand callers (diagnostics start) must reprobe instead of trusting the denial.
+        // Root is demanded rarely, so the extra `su` probe here is cheap.
+        if (cached(context) == State.GRANTED) return State.GRANTED;
         return probeAndStore(context, new DiagnosticRootProcessRunner());
     }
 

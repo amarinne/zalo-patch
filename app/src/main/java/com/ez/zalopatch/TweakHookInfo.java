@@ -34,10 +34,9 @@ final class TweakHookInfo {
                 path = bottomState(schema) + "#p()/q()/h()/b()/f()/m()";
                 break;
             case Tweaks.KEY_FORCE_MESSAGES_AS_HOME:
-                path = method(schema, "symbols.bottom_tabs.main_tab_view_class",
-                        "com.zing.zalo.ui.maintab.MainTabView",
-                        "symbols.bottom_tabs.main_tab_home_hook_method", "<lifecycle>")
-                        + " -> ViewPager#setCurrentItem()";
+                path = schema.string("symbols.bottom_tabs.main_tab_view_class",
+                        "com.zing.zalo.ui.maintab.MainTabView")
+                        + "#onPageSelected() -> ViewPager#setCurrentItem()";
                 break;
             case Tweaks.KEY_HIDE_QR_WALLET:
             case Tweaks.KEY_HIDE_ZCLOUD:
@@ -81,18 +80,13 @@ final class TweakHookInfo {
             case Tweaks.KEY_CATEGORY_GROUPS:
                 path = inboxListSetter(schema) + " + "
                         + schema.string("symbols.inbox.normal_item_class", "<conversation row>")
-                        + "#" + schema.string("symbols.inbox.row_uid_method", "<uid>") + "()/"
-                        + schema.string("symbols.inbox.group_flag_method", "<group>") + "()";
+                        + "#" + schema.string("symbols.inbox.row_uid_method", "<uid>") + "()/group_ prefix";
                 break;
             case Tweaks.KEY_CATEGORY_STRANGERS:
-                path = inboxListSetter(schema) + " + "
-                        + schema.string("symbols.inbox.stranger_box_item_class", "<stranger row>");
+                path = "StrangerMessagesView native route";
                 break;
             case Tweaks.KEY_CATEGORY_OA:
-                path = inboxListSetter(schema) + " + "
-                        + schema.string("symbols.inbox.friend_manager_class", "<follow manager>")
-                        + "#" + schema.string("symbols.inbox.friend_manager_instance_method", "<instance>")
-                        + "()/" + methods(schema.strings("symbols.inbox.friend_manager_follow_methods"));
+                path = inboxListSetter(schema) + " + topOut marker/native category";
                 break;
             case Tweaks.KEY_HIDE_REACTION_ROW:
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
@@ -180,29 +174,13 @@ final class TweakHookInfo {
 
     private static String bottomState(SymbolSchema.Active schema) {
         List<String> classes = schema.strings("symbols.bottom_tabs.current_state_classes");
-        return classes.isEmpty()
-                ? schema.string("symbols.bottom_tabs.legacy_state_class", "<bottom-tab state>")
-                : classes.get(0);
+        return classes.isEmpty() ? "<bottom-tab state>" : classes.get(0);
     }
 
     private static String method(SymbolSchema.Active schema, String classPath, String fallbackClass,
                                  String methodPath, String fallbackMethod) {
         return schema.string(classPath, fallbackClass) + "#"
                 + schema.string(methodPath, fallbackMethod) + "()";
-    }
-
-    private static String methods(List<String> names) {
-        if (names.isEmpty()) {
-            return "<follow check>()";
-        }
-        StringBuilder value = new StringBuilder();
-        for (String name : names) {
-            if (value.length() > 0) {
-                value.append('/');
-            }
-            value.append(name).append("()");
-        }
-        return value.toString();
     }
 
     private static List<String> driftSymbols(String key, SymbolSchema.Active schema) {
@@ -214,8 +192,7 @@ final class TweakHookInfo {
             case Tweaks.KEY_KEEP_GROUP_TAB:
                 return Arrays.asList(bottomState(schema), "#p()", "q()", "h()", "b()", "f()", "m()");
             case Tweaks.KEY_FORCE_MESSAGES_AS_HOME:
-                return Collections.singletonList("#" + schema.string(
-                        "symbols.bottom_tabs.main_tab_home_hook_method", "<lifecycle>") + "()");
+                return Collections.singletonList("#onPageSelected()");
             case Tweaks.KEY_HIDE_QR_WALLET:
             case Tweaks.KEY_HIDE_ZCLOUD:
             case Tweaks.KEY_HIDE_ZSTYLE:
@@ -239,27 +216,14 @@ final class TweakHookInfo {
                         schema.string("symbols.inbox.message_adapter_class", "<message adapter>"),
                         schema.string("symbols.inbox.normal_item_class", "<conversation row>"),
                         "#" + schema.string("symbols.inbox.row_uid_method", "<uid>") + "()",
-                        schema.string("symbols.inbox.group_flag_method", "<group>") + "()");
+                        "group_ prefix");
             case Tweaks.KEY_CATEGORY_STRANGERS:
+                return Collections.singletonList("StrangerMessagesView native route");
+            case Tweaks.KEY_CATEGORY_OA:
                 return Arrays.asList(
                         schema.string("symbols.inbox.message_adapter_class", "<message adapter>"),
-                        schema.string("symbols.inbox.stranger_box_item_class", "<stranger row>"));
-            case Tweaks.KEY_CATEGORY_OA:
-                java.util.ArrayList<String> oa = new java.util.ArrayList<>();
-                oa.add(schema.string("symbols.inbox.message_adapter_class", "<message adapter>"));
-                oa.add(schema.string("symbols.inbox.friend_manager_class", "<follow manager>"));
-                oa.add("#" + schema.string(
-                        "symbols.inbox.friend_manager_instance_method", "<instance>") + "()");
-                List<String> followMethods = schema.strings(
-                        "symbols.inbox.friend_manager_follow_methods");
-                if (followMethods.isEmpty()) {
-                    oa.add("<follow check>()");
-                } else {
-                    for (String method : followMethods) {
-                        oa.add(method + "()");
-                    }
-                }
-                return oa;
+                        "topOut marker",
+                        "native category");
             case Tweaks.KEY_HIDE_MESSAGE_ADS:
                 return Collections.singletonList("#" + schema.string(
                         "symbols.zinstant.ad_bind_method", "<bind>") + "()");

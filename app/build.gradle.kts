@@ -103,8 +103,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 208
-        versionName = "0.4.204"
+        versionCode = 295
+        versionName = "0.4.291"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")

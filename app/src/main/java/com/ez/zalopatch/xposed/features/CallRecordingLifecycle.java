@@ -1,15 +1,22 @@
 package com.ez.zalopatch.xposed.features;
 
 /** Stable audio-recording decisions derived from ZRTC call callbacks. */
-final class CallRecordingLifecycle {
+public final class CallRecordingLifecycle {
     static final int UNKNOWN_STATE = Integer.MIN_VALUE;
     static final int CONNECTED_AUDIO_STATE = 32;
+    /**
+     * Connected-call state carried by {@code onCallState}. Verified on device: a connected
+     * one-to-one call emitted {@code onCallState(3)}, {@code (4)}, then {@code (5)}, and the
+     * host's own connected predicate is {@code state == 5}. {@code onPreConnectSuccessful}
+     * never fired on 260901903, so this is the confirm edge there.
+     */
+    static final int CONNECTED_CALL_STATE = 5;
     static final int TERMINAL_CALL_STATE = 6;
 
     private CallRecordingLifecycle() {
     }
 
-    static boolean observes(String methodName) {
+    public static boolean observes(String methodName) {
         return "onIncomingCall".equals(methodName)
                 || "onMakeCall".equals(methodName)
                 || "onCallConfirmed".equals(methodName)
@@ -26,11 +33,13 @@ final class CallRecordingLifecycle {
         return "onIncomingCall".equals(methodName) || "onMakeCall".equals(methodName);
     }
 
-    static boolean confirmsCall(String methodName) {
-        // Current ZRTC callback has no onCallConfirmed method. Its confirmed-call edge is
-        // onPreConnectSuccessful; retain the older name for versions that still expose it.
+    static boolean confirmsCall(String methodName, int state) {
+        // Older ZRTC exposed onCallConfirmed; 26.08.02 used onPreConnectSuccessful; 26.09.01
+        // reaches the connected state through onCallState(5) instead. Accept all three so a
+        // single confirm edge change cannot silently disable recording.
         return "onCallConfirmed".equals(methodName)
-                || "onPreConnectSuccessful".equals(methodName);
+                || "onPreConnectSuccessful".equals(methodName)
+                || ("onCallState".equals(methodName) && state == CONNECTED_CALL_STATE);
     }
 
     static boolean connectsAudio(String methodName, int state) {

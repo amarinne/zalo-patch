@@ -43,13 +43,17 @@ public final class MainFeatures {
         if (mainProcess) {
             RuntimeEnvironmentReporter.report(context, resourceHooksObserved);
         }
+        if (DexKitFamilyResolver.maybeRunComparison(context)) {
+            return;
+        }
         if (mainProcess) {
             runFeature(new SymbolSchemaHealthFeature(classLoader));
         }
         List<Feature> features = new ArrayList<>();
         features.add(new NotificationFeature(classLoader));
         ZaloArtifactState.Compatibility artifact = ZaloArtifactState.forHooks(context);
-        features.add(new TelemetryFeature(classLoader, artifact.compatible));
+        // Telemetry is constructed after overlay resolution below: on an unmapped
+        // artifact the DexKit telemetry family can supply the DAO accessors.
         features.add(new InteractionTraceFeature(classLoader));
 
         SymbolSchema.Active hookActive = artifact.compatible
@@ -77,14 +81,55 @@ public final class MainFeatures {
                     preflight = fallback.preflight;
                 }
             }
+        } else if (exactValid) {
+            // An exact profile resolved, so adoption never ran: replace the previous run's
+            // "neighbouring release" row instead of letting it describe a fallback that is
+            // no longer in use.
+            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "disabled",
+                    "exact profile in use",
+                    "neighbouring-release adoption not needed while an exact profile resolves",
+                    "");
         }
+        // DexKit overlay: validated on-device descriptors merged over the neighbouring
+        // base (if any), adopted for this process. Families the overlay resolves arm
+        // from its preflight even when the fallback profile missed them.
+        DexKitFamilyResolver.Result overlay = DexKitFamilyResolver.resolve(context, classLoader,
+                exactValid, fallback != null ? fallback.profile : null);
+        if (overlay.adopted && overlay.preflight != null) {
+            if (preflight == null) {
+                // No exact or neighbouring profile resolved, but the overlay validated its
+                // own symbol sets. Arm features from that result instead of forcing the
+                // unsupported path; unresolved families stay unavailable inside it.
+                preflight = overlay.preflight;
+            }
+            mergeOverlayFamily(preflight, overlay.families);
+        }
+        features.add(new TelemetryFeature(classLoader,
+                artifact.compatible || (overlay.adopted && overlay.families.telemetry)));
 
-        if (artifact.compatible || fallback != null) {
-            markArtifactReady(artifact, fallback);
+        if (preflight != null
+                && (artifact.compatible || fallback != null || overlay.adopted)) {
+            if (artifact.compatible || fallback != null) {
+                markArtifactReady(artifact, fallback);
+            } else {
+                SelfCheckRegistry.markStatus("zalo_artifact", "stale", "dexkit overlay",
+                        "No exact or neighbouring profile resolved; symbols taken from the "
+                                + "validated DexKit overlay only", "");
+            }
             boolean bottomEnabled = HookConfig.isEnabled(Tweaks.KEY_HIDE_DISCOVERY_TAB)
                     || HookConfig.isEnabled(Tweaks.KEY_HIDE_TIMELINE_TAB)
                     || HookConfig.isEnabled(Tweaks.KEY_KEEP_GROUP_TAB)
                     || HookConfig.isEnabled(Tweaks.KEY_FORCE_MESSAGES_AS_HOME);
+            // Auxiliary tab symbols (pager, home hook, consumers) are validated
+            // separately and reported honestly; they never gate the overlay-driven
+            // tab state and consumers that are verified working on device.
+            if (preflight.bottomTabsSymbols) {
+                SelfCheckRegistry.markStatus("bottom_tabs.symbols", "ok", "tab symbols",
+                        "main tab, pager, home hook, consumers", "");
+            } else {
+                SelfCheckRegistry.markStale("bottom_tabs.symbols", "structural preflight",
+                        preflight.reason(preflight.bottomTabsSymbolsErrors));
+            }
             if (preflight.bottomTabs || !bottomEnabled) {
                 features.add(new BottomTabsFeature(classLoader));
             } else {
@@ -95,6 +140,16 @@ public final class MainFeatures {
             }
             addInbox(features, classLoader, preflight);
             addMeCleanup(features, classLoader, preflight);
+            // Helper classes and method-name lists are validated up front and reported
+            // honestly; the feature keeps its own per-list arming decisions with
+            // hardcoded fallbacks, so this row never gates working suppression.
+            if (preflight.zinstantSymbols) {
+                SelfCheckRegistry.markStatus("zinstant.symbols", "ok", "helper symbols",
+                        "communicator, script helper, method lists", "");
+            } else {
+                SelfCheckRegistry.markStale("zinstant.symbols", "structural preflight",
+                        preflight.reason(preflight.zinstantSymbolsErrors));
+            }
             DexKitZinstantResolver.Pilot pilot = DexKitZinstantResolver.selectPilot(context,
                     classLoader, exactValid, exactPreflight, preflight,
                     fallback != null);
@@ -102,7 +157,8 @@ public final class MainFeatures {
                     pilot.messageCompatible, pilot.messageError,
                     pilot.feedCompatible, pilot.feedError,
                     pilot.adBindOverride, pilot.feedBindOverride));
-            features.add(new ChatFeature(classLoader));
+            features.add(new ChatFeature(classLoader, preflight.chatReaction,
+                    preflight.reason(preflight.chatReactionErrors)));
             features.add(new ZcloudBannerFeature(classLoader));
             addPasscodeGrace(features, classLoader, preflight);
             addStatusPrivacy(features, classLoader, preflight);
@@ -112,7 +168,7 @@ public final class MainFeatures {
                         preflight.backupScheduled,
                         preflight.reason(preflight.backupScheduledErrors)));
             }
-            features.add(new CallRecordingFeature(classLoader));
+            addCallRecording(features, classLoader, preflight);
             features.add(new CallRecordingProbeFeature(classLoader));
         } else {
             SelfCheckRegistry.markStatus("zalo_artifact",
@@ -160,6 +216,15 @@ public final class MainFeatures {
         }
         SelfCheckRegistry.markStale(Tweaks.KEY_PASSCODE_GRACE_MS,
                 "structural preflight", preflight.reason(preflight.passcodeGraceErrors));
+    }
+
+    private static void addCallRecording(List<Feature> features, ClassLoader classLoader,
+                                         SymbolPreflight.Result preflight) {
+        // The stable ZRTC core (PeerJNI + CallCallback) arms whenever the setting is on.
+        // Drifted activity and peer-manager letters only gate their optional enrichments
+        // inside the feature, never the whole family: refusing to install left the
+        // working callback path dead on 26.09.01 (T1a).
+        features.add(new CallRecordingFeature(classLoader));
     }
 
     private static void addWebLinkExternalize(List<Feature> features, ClassLoader classLoader,
@@ -241,9 +306,58 @@ public final class MainFeatures {
         }
     }
 
+    /**
+     * Arms families the DexKit overlay resolved on top of the fallback preflight.
+     * Per-anchor precedence: exact profile (handled before this runs), then validated
+     * DexKit descriptors, then neighbouring symbols. Only families with a fingerprint
+     * definition merge today; the rest keep their fallback state.
+     */
+    private static void mergeOverlayFamily(SymbolPreflight.Result preflight,
+                                           DexKitFamilyResolver.FamilyStates overlay) {
+        if (overlay.statusPrivacy && !preflight.statusPrivacy) {
+            preflight.statusPrivacy = true;
+            preflight.statusPrivacyErrors.clear();
+        }
+        if (overlay.webview && !preflight.webviewExternalize) {
+            preflight.webviewExternalize = true;
+            preflight.webviewErrors.clear();
+        }
+        if (overlay.zinstantMessage && !preflight.zinstantMessage) {
+            preflight.zinstantMessage = true;
+            preflight.zinstantMessageErrors.clear();
+        }
+        if (overlay.zinstantFeed && !preflight.zinstantFeed) {
+            preflight.zinstantFeed = true;
+            preflight.zinstantFeedErrors.clear();
+        }
+        if (overlay.passcode && !preflight.passcodeGrace) {
+            preflight.passcodeGrace = true;
+            preflight.passcodeGraceErrors.clear();
+        }
+        if (overlay.backup && !preflight.backupScheduled) {
+            preflight.backupScheduled = true;
+            preflight.backupScheduledErrors.clear();
+        }
+        if (overlay.bottomTabs && !preflight.bottomTabs) {
+            preflight.bottomTabs = true;
+            preflight.bottomErrors.clear();
+        }
+        if (overlay.me && !preflight.me) {
+            preflight.me = true;
+            preflight.meErrors.clear();
+        }
+        if (overlay.inboxCategories && !preflight.inboxCategories) {
+            preflight.inboxCategories = true;
+            preflight.inboxCategoryErrors.clear();
+        }
+        if (overlay.telemetry && !preflight.telemetryDao) {
+            preflight.telemetryDao = true;
+            preflight.telemetryDaoErrors.clear();
+        }
+    }
+
     /** A neighbouring-release profile that preflighted clean, with the result that chose it. */
-    private static final class Adopted {
-        final SymbolSchema.Active profile;
+    private static final class Adopted {        final SymbolSchema.Active profile;
         final SymbolPreflight.Result preflight;
 
         Adopted(SymbolSchema.Active profile, SymbolPreflight.Result preflight) {
@@ -290,7 +404,9 @@ public final class MainFeatures {
                 !hideMedia || preflight.inboxMedia,
                 preflight.reason(preflight.inboxMediaErrors),
                 !filterCategories || preflight.inboxCategories,
-                preflight.reason(preflight.inboxCategoryErrors)));
+                preflight.reason(preflight.inboxCategoryErrors),
+                preflight.inboxRows,
+                preflight.reason(preflight.inboxRowsErrors)));
     }
 
     private static void addMeCleanup(List<Feature> features, ClassLoader classLoader,

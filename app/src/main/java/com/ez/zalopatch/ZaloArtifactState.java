@@ -30,6 +30,7 @@ public final class ZaloArtifactState {
     public static final String KEY_CATALOG_DIGEST = "internal.zalo_catalog.digest";
     public static final String KEY_CATALOG_ERROR = "internal.zalo_catalog.error";
     public static final String KEY_CATALOG_CHECKED_AT = "internal.zalo_catalog.checked_at";
+    public static final String KEY_CATALOG_MODULE_VERSION = "internal.zalo_catalog.module_version";
     /** The installed base APK is byte-identical to the one the profile was mapped from. */
     public static final String EVIDENCE_EXACT_APK = "exact_apk";
     /**
@@ -112,10 +113,12 @@ public final class ZaloArtifactState {
             ZaloArtifactIdentity identity = ZaloArtifactIdentity.capture(context, true);
             String previousGeneration = preferences.getString(KEY_GENERATION, "");
             boolean generationChanged = !identity.generation.equals(previousGeneration);
+            boolean instrumentationPresent = instrumentationInstalled(context);
             SymbolCatalogContract.Entry catalogEntry = SymbolCatalogCache.load(
                     context, identity.versionCode);
             long now = System.currentTimeMillis();
             long catalogCheckedAt = preferences.getLong(KEY_CATALOG_CHECKED_AT, 0L);
+            int catalogModuleVersion = preferences.getInt(KEY_CATALOG_MODULE_VERSION, -1);
             String catalogStatus = catalogEntry == null ? "missing" : "cached";
             String catalogError = "";
             // A 404 caches nothing, so an uncached artifact alone must not force the fetch: that
@@ -125,8 +128,9 @@ public final class ZaloArtifactState {
             // it zeroes KEY_CATALOG_CHECKED_AT, which drives the interval clause.
             boolean knownAbsent = "unknown".equals(
                     preferences.getString(KEY_CATALOG_STATUS, "missing"));
-            if (!instrumentationInstalled(context)
+            if (!instrumentationPresent
                     && (generationChanged
+                    || catalogModuleVersion != BuildConfig.VERSION_CODE
                     || now - catalogCheckedAt >= CATALOG_CHECK_INTERVAL_MS
                     || (catalogEntry == null && !knownAbsent))) {
                 SymbolCatalogClient.Result catalogResult = SymbolCatalogClient.resolve(
@@ -189,11 +193,16 @@ public final class ZaloArtifactState {
                     .putString(KEY_CATALOG_DIGEST, catalogEntry == null ? "" : catalogEntry.digest)
                     .putString(KEY_CATALOG_ERROR, catalogError)
                     .putLong(KEY_CATALOG_CHECKED_AT, catalogCheckedAt);
+            if (!instrumentationPresent) {
+                editor.putInt(KEY_CATALOG_MODULE_VERSION, BuildConfig.VERSION_CODE);
+            }
             editor.commit();
             SymbolSchema.invalidate();
             cachedLightweight = identity.lightweightKey;
             TweakStore.initialize(context);
             HookConfig.reload();
+            TweakStore.mirrorArtifactState(preferences);
+            SymbolCatalogMirror.sync(context, identity.versionCode);
             return new Result(status, identity.lightweightKey, identity.generation, error,
                     evidence);
         } catch (Throwable throwable) {
@@ -210,6 +219,7 @@ public final class ZaloArtifactState {
                     .putLong(KEY_CHECKED_AT, System.currentTimeMillis())
                     .commit();
             HookConfig.reload();
+            TweakStore.mirrorArtifactState(preferences);
             return new Result("failed", "", "", error, EVIDENCE_NONE);
         }
     }
@@ -430,7 +440,7 @@ public final class ZaloArtifactState {
     }
 
     public static void addEvidence(Intent intent, Context context) {
-        SymbolSchema.Active profile = SymbolSchema.active(context);
+        SymbolSchema.Active profile = SymbolSchema.activeForProcess(context);
         intent.putExtra("artifact_lightweight", currentLightweight(context));
         intent.putExtra("artifact_generation", HookConfig.getRawString(KEY_GENERATION, ""));
         intent.putExtra("module_version_code", BuildConfig.VERSION_CODE);

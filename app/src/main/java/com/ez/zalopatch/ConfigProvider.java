@@ -319,8 +319,15 @@ public final class ConfigProvider extends ContentProvider {
         }
         if ("clear_dexkit_cache".equals(method)) {
             if (!callerAllowed()) return null;
+            android.content.Context context = getContext();
+            boolean cleared = DexKitStore.clear(context);
+            // Clear the property mirror too, so a mirror-backed process cannot keep
+            // reusing the entry this call was meant to invalidate. Report the mirror
+            // state instead of claiming success from the store delete alone.
+            DexKitMirror.sync(context);
             Bundle result = new Bundle();
-            result.putBoolean("cleared", DexKitStore.clear(getContext()));
+            result.putBoolean("cleared", cleared);
+            result.putBoolean("mirror_cleared", DexKitMirror.cacheMirrorEmpty());
             return result;
         }
         if ("claim_dexkit_scan".equals(method)) {

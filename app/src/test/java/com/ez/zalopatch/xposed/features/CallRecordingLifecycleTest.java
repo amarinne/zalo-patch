@@ -8,8 +8,13 @@ import org.junit.Test;
 public final class CallRecordingLifecycleTest {
     @Test
     public void confirmationArmsButAudioConnectionStartsCapture() {
-        assertTrue(CallRecordingLifecycle.confirmsCall("onCallConfirmed"));
-        assertTrue(CallRecordingLifecycle.confirmsCall("onPreConnectSuccessful"));
+        assertTrue(CallRecordingLifecycle.confirmsCall("onCallConfirmed", 0));
+        assertTrue(CallRecordingLifecycle.confirmsCall("onPreConnectSuccessful", 0));
+        assertTrue(CallRecordingLifecycle.confirmsCall("onCallState",
+                CallRecordingLifecycle.CONNECTED_CALL_STATE));
+        assertFalse(CallRecordingLifecycle.confirmsCall("onCallState", 3));
+        assertFalse(CallRecordingLifecycle.confirmsCall("onCallAudioState",
+                CallRecordingLifecycle.CONNECTED_AUDIO_STATE));
         assertTrue(CallRecordingLifecycle.connectsAudio("onCallAudioState", 32));
         assertFalse(CallRecordingLifecycle.shouldStartAudio(true, false));
         assertFalse(CallRecordingLifecycle.shouldStartAudio(false, true));

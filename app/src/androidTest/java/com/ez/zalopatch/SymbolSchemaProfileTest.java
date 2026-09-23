@@ -225,20 +225,24 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
     }
 
     public void testCatalogRetainsEveryExactVersionAndSymbolCoverage() {
-        java.util.List<SymbolSchema.ProfileInfo> catalog = SymbolSchema.catalog(getContext());
+        java.util.Map<Long, SymbolSchema.ProfileInfo> byVersion = new java.util.LinkedHashMap<>();
+        for (SymbolSchema.ProfileInfo info : SymbolSchema.catalog(getContext())) {
+            byVersion.put(info.versionCode, info);
+        }
 
-        assertEquals(4, catalog.size());
-        assertEquals(260802903L, catalog.get(0).versionCode);
-        assertEquals(260801903L, catalog.get(1).versionCode);
-        assertEquals(260701901L, catalog.get(2).versionCode);
-        assertEquals(260602901L, catalog.get(3).versionCode);
-        assertTrue(catalog.get(0).symbolPaths.contains(
+        // A stored remote catalog entry adds the installed release on top of the bundled maps,
+        // so assert membership per version instead of a fixed size and order.
+        assertTrue(byVersion.containsKey(260802903L));
+        assertTrue(byVersion.containsKey(260801903L));
+        assertTrue(byVersion.containsKey(260701901L));
+        assertTrue(byVersion.containsKey(260602901L));
+        assertTrue(byVersion.get(260802903L).symbolPaths.contains(
                 "symbols.inbox.message_adapter_class = zf1.e1"));
-        assertTrue(catalog.get(1).symbolPaths.contains(
+        assertTrue(byVersion.get(260801903L).symbolPaths.contains(
                 "symbols.inbox.message_adapter_class = of1.h1"));
-        assertTrue(catalog.get(2).symbolPaths.contains(
+        assertTrue(byVersion.get(260701901L).symbolPaths.contains(
                 "symbols.inbox.message_adapter_class = se1.g1"));
-        assertTrue(catalog.get(3).symbolPaths.contains(
+        assertTrue(byVersion.get(260602901L).symbolPaths.contains(
                 "symbols.inbox.message_adapter_class = je1.c1"));
     }
 

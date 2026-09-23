@@ -1,18 +1,23 @@
 package com.ez.zalopatch.xposed.core;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 
 import com.ez.zalopatch.BuildConfig;
 import com.ez.zalopatch.DexKitCache;
+import com.ez.zalopatch.DexKitMirror;
 import com.ez.zalopatch.DexKitPilotPolicy;
 import com.ez.zalopatch.DexKitZinstantFingerprint;
 import com.ez.zalopatch.FingerprintResolver;
 import com.ez.zalopatch.HookConfig;
+import com.ez.zalopatch.SelfCheckReceiver;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 
@@ -48,6 +53,7 @@ final class DexKitZinstantResolver {
     private static final Uri PROVIDER = Uri.parse("content://com.ez.zalopatch.config");
     private static final Uri CACHE_URI = Uri.parse("content://com.ez.zalopatch.config/dexkit_cache");
     private static final AtomicBoolean SCAN_RUNNING = new AtomicBoolean(false);
+    private static final AtomicBoolean SCAN_DONE_THIS_PROCESS = new AtomicBoolean(false);
 
     private DexKitZinstantResolver() {
     }
@@ -104,7 +110,7 @@ final class DexKitZinstantResolver {
             return Pilot.fromDecision(decision);
         }
         HostIdentity host = hostIdentity(context);
-        CacheRead read = readCache(context);
+        CacheRead read = readCache(context, host);
         coverage.cachePresent = read != null && read.entry != null;
         boolean bound = host != null && coverage.cachePresent && cacheBinds(read.entry, host);
         coverage.cacheBound = bound;
@@ -151,10 +157,13 @@ final class DexKitZinstantResolver {
         if (decision.markScanRow) {
             applyRow(FEATURE_SCAN, decision.scanRow);
         }
-        if (decision.clearCache) {
+        // The family resolver owns current family entries, including pilot rejection
+        // and retries. A pilot-only write or clear would discard healthy siblings.
+        boolean familyOwned = bound && !read.entry.families.isEmpty();
+        if (decision.clearCache && !familyOwned) {
             clearCache(context);
         }
-        if (decision.kickScan && host != null) {
+        if (decision.kickScan && host != null && !familyOwned) {
             int previousAttempts = bound && read != null && read.entry != null
                     ? read.entry.partialAttempts : 0;
             maybeScanInBackground(context, host, previousAttempts);
@@ -162,7 +171,7 @@ final class DexKitZinstantResolver {
         return Pilot.fromDecision(decision);
     }
 
-    private static void applyRow(String feature, DexKitPilotPolicy.Row row) {
+    static void applyRow(String feature, DexKitPilotPolicy.Row row) {
         if ("disabled".equals(row.status)) {
             SelfCheckRegistry.markDisabled(feature, row.target);
             return;
@@ -174,10 +183,10 @@ final class DexKitZinstantResolver {
      * Comparison mode: when the exact profile is active and a valid cache entry exists for the
      * same host code, record agreement without changing hook targets.
      */
-    private static void comparisonMode(Context context) {
+    static void comparisonMode(Context context) {
         try {
             HostIdentity host = hostIdentity(context);
-            CacheRead read = readCache(context);
+            CacheRead read = readCache(context, host);
             if (host == null || read == null || read.entry == null
                     || !cacheBinds(read.entry, host)) {
                 SelfCheckRegistry.markStatus(FEATURE_SCAN, "ok", "standby",
@@ -198,7 +207,7 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static boolean preflights(ClassLoader loader, String adBind, String feedBind) {
+    static boolean preflights(ClassLoader loader, String adBind, String feedBind) {
         try {
             List<String> errors = new ArrayList<>();
             return SymbolPreflight.checkZinstantDescriptors(loader, adBind, feedBind, errors);
@@ -207,8 +216,18 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static void maybeScanInBackground(Context context, HostIdentity host,
+    static void maybeScanInBackground(Context context, HostIdentity host,
                                             int previousPartialAttempts) {
+        if (DexKitFamilyResolver.scanKickedThisProcess()) {
+            SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending", "family scan covers",
+                    "the extended family scan already resolves the pilot anchors", "");
+            return;
+        }
+        if (!SCAN_DONE_THIS_PROCESS.compareAndSet(false, true)) {
+            SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending", "scan already completed",
+                    "one discovery session per process", "");
+            return;
+        }
         if (!SCAN_RUNNING.compareAndSet(false, true)) {
             SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending", "scan already running",
                     "one discovery session per process", "");
@@ -234,15 +253,12 @@ final class DexKitZinstantResolver {
         worker.start();
     }
 
-    private static void runScan(Context context, HostIdentity host, int previousPartialAttempts) {
+    static void runScan(Context context, HostIdentity host, int previousPartialAttempts) {
         long started = System.nanoTime();
-        String scope = DexKitPilotPolicy.budgetScope(host.versionCode, host.lastUpdateTime,
-                DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT,
-                BuildConfig.VERSION_CODE);
-        Bundle claim = providerCall(context, "claim_dexkit_scan",
-                String.valueOf(host.versionCode), claimExtras(host));
+        String scope = mirrorScope(host);
+        Bundle claim = claimScan(context, host);
         if (claim == null || !claim.getBoolean("allowed", false)) {
-            String reason = claim == null ? "provider unavailable"
+            String reason = claim == null ? "scan unavailable"
                     : claim.getString("reason", "scan unavailable");
             if (reason.contains("already in progress")) {
                 SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending",
@@ -284,8 +300,7 @@ final class DexKitZinstantResolver {
                     "", throwable.getClass().getSimpleName());
             return;
         }
-        boolean retained = DexKitZinstantFingerprint.expectedDescriptors()
-                .containsKey(host.versionCode);
+        boolean retained = DexKitZinstantFingerprint.isRetainedVersion(host.versionCode);
         FingerprintResolver.Resolution ad = DexKitZinstantFingerprint.evaluate(
                 DexKitZinstantFingerprint.ANCHOR_AD_BIND, withViewFlags(
                         host.loader, DexKitZinstantFingerprint.ANCHOR_AD_BIND, results[0]),
@@ -341,6 +356,11 @@ final class DexKitZinstantResolver {
             SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending",
                     entry.negative ? "no_match" : "cache ready",
                     detail + "; applies at the next restart", "");
+        } else if (reportCacheFallback(context, DexKitCache.serialize(entry))) {
+            SelfCheckRegistry.markStatus(FEATURE_SCAN, "pending",
+                    entry.negative ? "no_match" : "fallback reported",
+                    "scan outcome sent by broadcast; applies after the module records it"
+                            + " and Zalo restarts", "");
         } else {
             recordFailure(context, host, "cache_rejected");
             SelfCheckRegistry.markStatus(FEATURE_SCAN, "stale", "cache_rejected",
@@ -348,7 +368,7 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static List<DexKitZinstantFingerprint.MethodHit> withViewFlags(
+    static List<DexKitZinstantFingerprint.MethodHit> withViewFlags(
             ClassLoader loader, String anchor, DexKitBridgeRunner.QueryResult result) {
         List<DexKitZinstantFingerprint.MethodHit> hits = new ArrayList<>();
         if (result == null) {
@@ -371,32 +391,43 @@ final class DexKitZinstantResolver {
     }
 
     /** Best-effort skew recovery; see {@link #clearCache}. */
-    private static void clearCache(Context context) {
+    static void clearCache(Context context) {
         try {
-            context.getContentResolver().call(PROVIDER, "clear_dexkit_cache", null, null);
+            if (context.getContentResolver().call(PROVIDER, "clear_dexkit_cache", null, null)
+                    != null) {
+                return;
+            }
         } catch (Throwable ignored) {
         }
+        sendDexkitFallback(context, SelfCheckReceiver.ACTION_CLEAR_DEXKIT_CACHE, null);
     }
 
-    private static Bundle claimExtras(HostIdentity host) {
+    static Bundle claimExtras(HostIdentity host) {
         Bundle extras = new Bundle();
         extras.putLong("version_code", host.versionCode);
         extras.putLong("last_update_time", host.lastUpdateTime);
         return extras;
     }
 
-    private static void recordFailure(Context context, HostIdentity host, String reason) {
+    static void recordFailure(Context context, HostIdentity host, String reason) {
         try {
             Bundle extras = new Bundle();
             extras.putString("reason", reason);
             extras.putLong("version_code", host.versionCode);
             extras.putLong("last_update_time", host.lastUpdateTime);
-            context.getContentResolver().call(PROVIDER, "record_dexkit_scan_failure", null, extras);
+            Bundle response = context.getContentResolver().call(
+                    PROVIDER, "record_dexkit_scan_failure", null, extras);
+            if (response != null && response.getBoolean("recorded", false)) {
+                return;
+            }
         } catch (Throwable ignored) {
         }
+        Bundle fallback = new Bundle();
+        fallback.putString("scope", mirrorScope(host));
+        sendDexkitFallback(context, SelfCheckReceiver.ACTION_RECORD_DEXKIT_FAILURE, fallback);
     }
 
-    private static Bundle recordCache(Context context, String json) {
+    static Bundle recordCache(Context context, String json) {
         try {
             Bundle extras = new Bundle();
             extras.putString("json", json);
@@ -406,11 +437,75 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static Bundle providerCall(Context context, String method, String arg, Bundle extras) {
+    static Bundle providerCall(Context context, String method, String arg, Bundle extras) {
         try {
             return context.getContentResolver().call(PROVIDER, method, arg, extras);
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    /**
+     * Claims the scan slot. Provider first; when the Zalo process cannot reach the
+     * module provider, the mirrored budget decides (no cross-process slot, so the
+     * caller additionally scans at most once per process).
+     */
+    static Bundle claimScan(Context context, HostIdentity host) {
+        Bundle provider = providerCall(context, "claim_dexkit_scan",
+                String.valueOf(host.versionCode), claimExtras(host));
+        if (provider != null) {
+            return provider;
+        }
+        DexKitMirror.Claim claim = DexKitMirror.claimFromMirror(
+                DexKitMirror.readBudget(), mirrorScope(host), System.currentTimeMillis());
+        Bundle mirror = new Bundle();
+        mirror.putBoolean("allowed", claim.allowed);
+        mirror.putString("reason", claim.reason.isEmpty() ? "mirror budget" : claim.reason);
+        mirror.putInt("failures", claim.failures);
+        return mirror;
+    }
+
+    /**
+     * Reports a finished scan to the module process by broadcast when the provider is
+     * unreachable. Returns true when the broadcast was sent (delivery itself is
+     * async; the module validates and re-mirrors on receipt).
+     */
+    static boolean reportCacheFallback(Context context, String json) {
+        if (json == null || json.isEmpty()) {
+            return false;
+        }
+        Bundle extras = new Bundle();
+        extras.putString("json", json);
+        return sendDexkitFallback(context, SelfCheckReceiver.ACTION_RECORD_DEXKIT_CACHE,
+                extras);
+    }
+
+    /**
+     * Zalo-to-module broadcast transport, mirroring the self-check and runtime
+     * discovery fallbacks. Requires API 34+ shareIdentity so the module can sender-check
+     * the Zalo package; below that the provider is the only path.
+     */
+    static boolean sendDexkitFallback(Context context, String action, Bundle extras) {
+        if (context == null || Build.VERSION.SDK_INT < 34) {
+            return false;
+        }
+        try {
+            Intent intent = new Intent(action);
+            intent.setComponent(new ComponentName("com.ez.zalopatch",
+                    "com.ez.zalopatch.SelfCheckReceiver"));
+            intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+            if (extras != null) {
+                intent.putExtras(extras);
+            }
+            android.app.BroadcastOptions options =
+                    android.app.BroadcastOptions.makeBasic();
+            options.setShareIdentityEnabled(true);
+            context.sendBroadcast(intent, null, options.toBundle());
+            return true;
+        } catch (Throwable throwable) {
+            XpLog.i("ZaloPatch: DexKit fallback failed "
+                    + throwable.getClass().getSimpleName());
+            return false;
         }
     }
 
@@ -442,7 +537,7 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static HostIdentity hostIdentity(Context context) {
+    static HostIdentity hostIdentity(Context context) {
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(TARGET_PACKAGE, 0);
             ApplicationInfo application = info.applicationInfo;
@@ -460,11 +555,21 @@ final class DexKitZinstantResolver {
     }
 
     /**
-     * Reads the cache entry plus the scan budget. Returns null when the provider itself is
-     * unreachable, which the policy treats as DexKit-unavailable (neighbouring fallback)
-     * rather than as a pending scan.
+     * Reads the cache entry plus the scan budget. Returns null when neither the provider
+     * nor the property mirror is reachable, which the policy treats as DexKit-unavailable
+     * (neighbouring fallback) rather than as a pending scan. Provider first (Fold3 /
+     * shell path), mirror second (devices where the Zalo process cannot resolve the
+     * module provider, observed on HyperOS / Android 16).
      */
-    private static CacheRead readCache(Context context) {
+    static CacheRead readCache(Context context, HostIdentity host) {
+        CacheRead provider = readProviderCache(context);
+        if (provider != null) {
+            return provider;
+        }
+        return readMirrorCache(host);
+    }
+
+    static CacheRead readProviderCache(Context context) {
         try (Cursor cursor = context.getContentResolver().query(CACHE_URI, null, null, null,
                 null)) {
             if (cursor == null || !cursor.moveToFirst()) {
@@ -496,7 +601,48 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static final class HostIdentity {
+    /**
+     * Mirror fallback for {@link #readProviderCache}. Returns null when the mirror was
+     * never seeded (no transport at all); otherwise the mirrored entry is accepted only
+     * when its cheap host-identity fields match, and the scan budget comes from the
+     * mirrored counters. Fail-closed: an empty mirror never authorizes a scan.
+     */
+    static CacheRead readMirrorCache(HostIdentity host) {
+        try {
+            if (host == null) {
+                return null;
+            }
+            DexKitCache.Entry entry = DexKitMirror.readCacheEntry();
+            DexKitMirror.Budget budget = DexKitMirror.readBudget();
+            if (entry == null && budget == null) {
+                return null;
+            }
+            String scope = mirrorScope(host);
+            DexKitMirror.Claim claim = DexKitMirror.claimFromMirror(
+                    budget, scope, System.currentTimeMillis());
+            CacheRead read = new CacheRead();
+            if (entry != null && DexKitMirror.mirrorBinds(entry, host.versionCode,
+                    host.lastUpdateTime, host.apkSize,
+                    DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT,
+                    BuildConfig.VERSION_CODE)) {
+                read.entry = entry;
+            }
+            read.scanAllowed = claim.allowed;
+            read.scanFailures = claim.failures;
+            read.scanReason = claim.reason;
+            return read;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    static String mirrorScope(HostIdentity host) {
+        return DexKitPilotPolicy.budgetScope(host.versionCode, host.lastUpdateTime,
+                DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT,
+                BuildConfig.VERSION_CODE);
+    }
+
+    static final class HostIdentity {
         final long versionCode;
         final long lastUpdateTime;
         final String sourceDir;
@@ -513,7 +659,7 @@ final class DexKitZinstantResolver {
         }
     }
 
-    private static final class CacheRead {
+    static final class CacheRead {
         DexKitCache.Entry entry;
         boolean scanAllowed = true;
         int scanFailures;

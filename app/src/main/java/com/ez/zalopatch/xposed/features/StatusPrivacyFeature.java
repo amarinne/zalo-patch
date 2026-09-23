@@ -53,64 +53,112 @@ public final class StatusPrivacyFeature extends Feature {
                 + managerClass + "#" + singleMethod + "/" + batchMethod
                 + " + " + repositoryClass + "#" + directMethod;
         runGuarded("seen-status block", FEATURE_SEEN, target, () -> {
-            Class<?> ackType = XpReflect.findClass(ackClass, classLoader);
-            XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, singleMethod,
-                    new Class<?>[]{ackType},
-                    new XpHooks.Before() {
-                        @Override
-                        public void before(XpHooks.HookParam param) {
-                            try {
-                                if (XpReflect.getIntField(param.args[0], typeField)
-                                        != SEEN_ACK_TYPE) {
-                                    return;
-                                }
-                                param.setResult(null);
-                                SelfCheckRegistry.incrementHit(FEATURE_SEEN,
-                                        managerClass + "#" + singleMethod,
-                                        "blocked queued seen acknowledgement");
-                            } catch (Throwable ignored) {
-                            }
-                        }
-                    }, null);
-            XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, batchMethod,
-                    new Class<?>[]{ArrayList.class},
-                    new XpHooks.Before() {
-                        @Override
-                        public void before(XpHooks.HookParam param) {
-                            @SuppressWarnings("unchecked")
-                            List<Object> batch = (List<Object>) param.args[0];
-                            StatusPrivacyAckFilter.Result filtered =
-                                    StatusPrivacyAckFilter.filterSeen(batch, SEEN_ACK_TYPE,
-                                            entry -> XpReflect.getIntField(entry, typeField));
-                            if (filtered.dropped == 0) {
-                                return;
-                            }
-                            SelfCheckRegistry.incrementHit(FEATURE_SEEN,
-                                    managerClass + "#" + batchMethod,
-                                    "blocked " + filtered.dropped + " queued seen acknowledgement(s)");
-                            if (filtered.kept.isEmpty()) {
-                                param.setResult(null);
-                            } else {
-                                param.args[0] = filtered.kept;
-                            }
-                        }
-                    }, null);
-            XpHooks.findAndHookMethod(FEATURE_SEEN, repositoryClass, classLoader, directMethod,
-                    new Class<?>[]{List.class, boolean.class, boolean.class, boolean.class},
-                    new XpHooks.Before() {
-                        @Override
-                        public void before(XpHooks.HookParam param) {
-                            if (!StatusPrivacyAckFilter.shouldBlockDirectAck(
-                                    (Boolean) param.args[3])) {
+            boolean hookedAny = false;
+            // Routes arm independently; a missing route remains visible as stale.
+            if (!managerClass.isEmpty() && !ackClass.isEmpty() && !typeField.isEmpty()) {
+                try {
+                    hookQueuedSeen(managerClass, ackClass, typeField, singleMethod, batchMethod);
+                    hookedAny = true;
+                    SelfCheckRegistry.markInstalled(FEATURE_SEEN + ".queued",
+                            managerClass + "#" + singleMethod + "/" + batchMethod, 2);
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markStale(FEATURE_SEEN + ".queued", target,
+                            throwable.getClass().getSimpleName());
+                    log("queued seen route unavailable: "
+                            + throwable.getClass().getSimpleName());
+                }
+            } else {
+                SelfCheckRegistry.markStale(FEATURE_SEEN + ".queued", target,
+                        "queued seen symbols unavailable");
+            }
+            // Direct acknowledgement route is independent of the queue.
+            if (!repositoryClass.isEmpty() && !directMethod.isEmpty()) {
+                try {
+                    hookDirectAck(repositoryClass, directMethod);
+                    hookedAny = true;
+                    SelfCheckRegistry.markInstalled(FEATURE_SEEN + ".direct",
+                            repositoryClass + "#" + directMethod, 1);
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markStale(FEATURE_SEEN + ".direct", target,
+                            throwable.getClass().getSimpleName());
+                    log("direct ack route unavailable: "
+                            + throwable.getClass().getSimpleName());
+                }
+            }
+            if (!hookedAny) {
+                throw new IllegalStateException("no seen route resolvable");
+            }
+        });
+    }
+
+    private void hookQueuedSeen(String managerClass, String ackClass, String typeField,
+                                String singleMethod, String batchMethod) throws Throwable {
+        Class<?> ackType = XpReflect.findClass(ackClass, classLoader);
+        XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, singleMethod,
+                new Class<?>[]{ackType},
+                new XpHooks.Before() {
+                    @Override
+                    public void before(XpHooks.HookParam param) {
+                        try {
+                            if (XpReflect.getIntField(param.args[0], typeField)
+                                    != SEEN_ACK_TYPE) {
                                 return;
                             }
                             param.setResult(null);
                             SelfCheckRegistry.incrementHit(FEATURE_SEEN,
-                                    repositoryClass + "#" + directMethod,
-                                    "blocked direct seen acknowledgement");
+                                    managerClass + "#" + singleMethod,
+                                    "blocked queued seen acknowledgement");
+                            SelfCheckRegistry.incrementHit(FEATURE_SEEN + ".queued",
+                                    managerClass + "#" + singleMethod, "blocked seen type 3");
+                        } catch (Throwable ignored) {
                         }
-                    }, null);
-        });
+                    }
+                }, null);
+        XpHooks.findAndHookMethod(FEATURE_SEEN, managerClass, classLoader, batchMethod,
+                new Class<?>[]{ArrayList.class},
+                new XpHooks.Before() {
+                    @Override
+                    public void before(XpHooks.HookParam param) {
+                        @SuppressWarnings("unchecked")
+                        List<Object> batch = (List<Object>) param.args[0];
+                        StatusPrivacyAckFilter.Result filtered =
+                                StatusPrivacyAckFilter.filterSeen(batch, SEEN_ACK_TYPE,
+                                        entry -> XpReflect.getIntField(entry, typeField));
+                        if (filtered.dropped == 0) {
+                            return;
+                        }
+                        SelfCheckRegistry.incrementHit(FEATURE_SEEN,
+                                managerClass + "#" + batchMethod,
+                                "blocked " + filtered.dropped + " queued seen acknowledgement(s)");
+                        SelfCheckRegistry.incrementHit(FEATURE_SEEN + ".queued",
+                                managerClass + "#" + batchMethod, "blocked seen type 3");
+                        if (filtered.kept.isEmpty()) {
+                            param.setResult(null);
+                        } else {
+                            param.args[0] = filtered.kept;
+                        }
+                    }
+                }, null);
+    }
+
+    private void hookDirectAck(String repositoryClass, String directMethod) throws Throwable {
+        XpHooks.findAndHookMethod(FEATURE_SEEN, repositoryClass, classLoader, directMethod,
+                new Class<?>[]{List.class, boolean.class, boolean.class, boolean.class},
+                new XpHooks.Before() {
+                    @Override
+                    public void before(XpHooks.HookParam param) {
+                        if (!StatusPrivacyAckFilter.shouldBlockDirectAck(
+                                (Boolean) param.args[3])) {
+                            return;
+                        }
+                        param.setResult(null);
+                        SelfCheckRegistry.incrementHit(FEATURE_SEEN,
+                                repositoryClass + "#" + directMethod,
+                                "blocked direct seen acknowledgement");
+                        SelfCheckRegistry.incrementHit(FEATURE_SEEN + ".direct",
+                                repositoryClass + "#" + directMethod, "blocked seen=true");
+                    }
+                }, null);
     }
 
     private void installTypingBlock() {

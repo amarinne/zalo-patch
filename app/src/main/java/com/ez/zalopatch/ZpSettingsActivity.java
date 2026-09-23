@@ -1,6 +1,8 @@
 package com.ez.zalopatch;
 
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.graphics.Color;
 import android.view.MenuItem;
 import android.view.View;
@@ -16,6 +18,9 @@ import android.provider.Settings;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import java.util.List;
 
 /** Shared navigation behavior for settings destinations. */
 abstract class ZpSettingsActivity extends AppCompatActivity {
@@ -120,13 +125,17 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     }
 
     protected final void restartZalo() {
+        restartZaloWithTarget(null);
+    }
+
+    private void restartZaloWithTarget(ZaloRestart.Target target) {
         if (restartInFlight) {
             return;
         }
         if (RootAccess.cached(this) != RootAccess.State.GRANTED) {
             // Cached denial can outlive a Magisk grant. Re-probe before refusing the action.
             RootAccess.recheck(this, state -> {
-                if (state == RootAccess.State.GRANTED) restartZalo();
+                if (state == RootAccess.State.GRANTED) restartZaloWithTarget(target);
                 else Toast.makeText(this, R.string.zp_restart_root_denied, Toast.LENGTH_SHORT).show();
             });
             return;
@@ -136,7 +145,8 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         setRestartBlockerVisible(true);
         try {
             onRestartStateChanged(true);
-            ZaloRestart.run(this, this::finishRestart);
+            if (target == null) ZaloRestart.run(this, this::finishRestart);
+            else ZaloRestart.run(this, target, this::finishRestart);
         } catch (RuntimeException exception) {
             finishRestart(ZaloRestart.Result.FAILED);
         }
@@ -144,10 +154,88 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
 
     protected final void restartOrOpenZaloAppInfo() {
         if (RootAccess.cached(this) == RootAccess.State.GRANTED) {
-            restartZalo();
-        } else {
-            openZaloAppInfo();
+            beginTargetedRestart();
+            return;
         }
+        // Cached denial can outlive a Magisk grant (open settings first, grant root after).
+        // Re-probe on demand before falling back to manual force-stop; root is demanded
+        // rarely so the extra `su` probe here is cheap.
+        RootAccess.recheck(this, state -> {
+            refreshApplyBar(false);
+            onRootAccessChanged(state);
+            if (state == RootAccess.State.GRANTED) beginTargetedRestart();
+            else openZaloAppInfo();
+        });
+    }
+
+    /**
+     * Probes running Zalo instances before restarting. One instance (or none, or a failed
+     * probe) restarts exactly as before; two or more get an instance selector with a
+     * restart-all row, since an unqualified force-stop would kill the clones without
+     * relaunching them.
+     */
+    private void beginTargetedRestart() {
+        if (restartInFlight) {
+            return;
+        }
+        restartInFlight = true;
+        applyButton.setEnabled(false);
+        setRestartBlockerVisible(true);
+        onRestartStateChanged(true);
+        new Thread(() -> {
+            List<ZaloInstance> instances =
+                    ZaloRestart.probeInstances(new DiagnosticRootProcessRunner());
+            new Handler(Looper.getMainLooper()).post(() -> onInstancesProbed(instances));
+        }, "zalo-instance-probe").start();
+    }
+
+    private void onInstancesProbed(List<ZaloInstance> instances) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        restartInFlight = false;
+        setRestartBlockerVisible(false);
+        onRestartStateChanged(false);
+        if (!ZaloInstance.needsSelection(instances)) {
+            restartZalo();
+            return;
+        }
+        showRestartTargetDialog(instances);
+    }
+
+    private void showRestartTargetDialog(List<ZaloInstance> instances) {
+        CharSequence[] labels = new CharSequence[instances.size() + 1];
+        for (int index = 0; index < instances.size(); index++) {
+            labels[index] = instanceLabel(instances.get(index));
+        }
+        labels[instances.size()] = getString(R.string.zp_restart_all_instances);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.zp_restart_target_title)
+                .setItems(labels, (dialog, which) -> {
+                    dialog.dismiss();
+                    if (which == instances.size()) {
+                        restartZaloWithTarget(
+                                ZaloRestart.Target.all(ZaloInstance.userIds(instances)));
+                    } else {
+                        restartZaloWithTarget(
+                                ZaloRestart.Target.single(instances.get(which).userId));
+                    }
+                })
+                .setNegativeButton(R.string.zp_cancel, null)
+                .show();
+    }
+
+    private String instanceLabel(ZaloInstance instance) {
+        String name = instance.label != null ? instance.label
+                : instance.userId == 0 ? getString(R.string.zp_restart_owner_label)
+                : getString(R.string.zp_restart_user_label, instance.userId);
+        if (instance.foreground) {
+            return getString(R.string.zp_restart_instance_row_active,
+                    name, instance.userId, instance.mainPid(),
+                    getString(R.string.zp_restart_instance_active));
+        }
+        return getString(R.string.zp_restart_instance_row,
+                name, instance.userId, instance.mainPid());
     }
 
     private void finishRestart(ZaloRestart.Result result) {

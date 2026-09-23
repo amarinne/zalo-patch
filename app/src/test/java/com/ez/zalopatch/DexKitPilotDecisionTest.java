@@ -156,8 +156,26 @@ public final class DexKitPilotDecisionTest {
     }
 
     @Test
-    public void skewedEntryIsClearedForRescan() {
+    public void cacheHitMarksScanRowWarm() {
         DexKitPilotPolicy.Coverage coverage = base();
+        coverage.cacheBound = true;
+        coverage.cacheAdPresent = true;
+        coverage.cacheAdUsable = true;
+        coverage.cacheAdName = "c";
+        coverage.cacheFeedPresent = true;
+        coverage.cacheFeedUsable = true;
+        coverage.cacheFeedName = "c";
+        DexKitPilotPolicy.Decision decision = DexKitPilotPolicy.decide(coverage);
+        assertTrue(decision.messageCompatible);
+        assertTrue(decision.feedCompatible);
+        assertEquals("dexkit_cache", decision.source);
+        assertTrue(decision.markScanRow);
+        assertEquals("ok", decision.scanRow.status);
+        assertEquals("warm", decision.scanRow.target);
+    }
+
+    @Test
+    public void skewedEntryIsClearedForRescan() {        DexKitPilotPolicy.Coverage coverage = base();
         coverage.cacheBound = true;
         coverage.cacheAdPresent = true;
         coverage.cacheAdUsable = false;

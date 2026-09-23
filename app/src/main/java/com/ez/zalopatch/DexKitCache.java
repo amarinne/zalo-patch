@@ -26,8 +26,10 @@ public final class DexKitCache {
      * Bumped whenever the serialized shape or the resolution policy changes.
      * Revision 2 adds the base APK size, so a same-timestamp file replacement cannot reuse
      * an entry without a rescan. Revision 3 adds the partial-entry retry counter.
+     * Revision 4 adds the extended per-family descriptor map.
+     * Revision 5 adds bounded per-family recovery state.
      */
-    public static final int RESOLVER_FORMAT = 3;
+    public static final int RESOLVER_FORMAT = 5;
     public static final int MAX_ENTRY_BYTES = 8 * 1024;
     static final int MAX_REASON_BYTES = 256;
 
@@ -51,11 +53,26 @@ public final class DexKitCache {
         public final long scanDurationMs;
         public final long scannedAt;
         public final int partialAttempts;
+        public final java.util.Map<String, String> extended;
+        public final java.util.Map<String, DexKitFamilyRetry.State> families;
 
         public Entry(long versionCode, String codeDigest, long lastUpdateTime, long apkSize,
-              int queryRevision, int resolverFormat, int moduleVersion, String adBind,
-              String feedBind, boolean negative, String reason, int matchAd, int matchFeed,
-              long scanDurationMs, long scannedAt, int partialAttempts) {
+               int queryRevision, int resolverFormat, int moduleVersion, String adBind,
+               String feedBind, boolean negative, String reason, int matchAd, int matchFeed,
+               long scanDurationMs, long scannedAt, int partialAttempts,
+               java.util.Map<String, String> extended) {
+            this(versionCode, codeDigest, lastUpdateTime, apkSize, queryRevision, resolverFormat,
+                    moduleVersion, adBind, feedBind, negative, reason, matchAd, matchFeed,
+                    scanDurationMs, scannedAt, partialAttempts, extended, null);
+        }
+
+        public Entry(long versionCode, String codeDigest, long lastUpdateTime, long apkSize,
+               int queryRevision, int resolverFormat, int moduleVersion, String adBind,
+               String feedBind, boolean negative, String reason, int matchAd, int matchFeed,
+               long scanDurationMs, long scannedAt, int partialAttempts,
+               java.util.Map<String, String> extended,
+               java.util.Map<String, DexKitFamilyRetry.State> families) {
+            this.families = DexKitFamilyRetry.copyStates(families);
             this.versionCode = versionCode;
             this.codeDigest = codeDigest == null ? "" : codeDigest;
             this.lastUpdateTime = lastUpdateTime;
@@ -72,6 +89,16 @@ public final class DexKitCache {
             this.scanDurationMs = scanDurationMs;
             this.scannedAt = scannedAt;
             this.partialAttempts = partialAttempts;
+            java.util.LinkedHashMap<String, String> copy = new java.util.LinkedHashMap<>();
+            if (extended != null) {
+                for (java.util.Map.Entry<String, String> item : extended.entrySet()) {
+                    DexKitAnchors.Anchor anchor = DexKitAnchors.find(item.getKey());
+                    if (anchor != null && DexKitAnchors.validDescriptor(anchor, item.getValue())) {
+                        copy.put(item.getKey(), item.getValue());
+                    }
+                }
+            }
+            this.extended = java.util.Collections.unmodifiableMap(copy);
         }
     }
 
@@ -104,6 +131,31 @@ public final class DexKitCache {
                 && isMethodName(entry.adBind) && isMethodName(entry.feedBind);
     }
 
+    /**
+     * Returns a copy of {@code entry} whose extended descriptor map is exactly
+     * {@code extended}. Use after preflight filtering: a merge would let a rejected
+     * descriptor survive because the original entry still holds it.
+     */
+    public static Entry replaceExtended(Entry entry, java.util.Map<String, String> extended) {
+        if (entry == null) {
+            return null;
+        }
+        java.util.LinkedHashMap<String, String> replaced = new java.util.LinkedHashMap<>();
+        if (extended != null) {
+            for (java.util.Map.Entry<String, String> item : extended.entrySet()) {
+                if (item.getKey() != null && item.getValue() != null
+                        && !item.getValue().isEmpty()) {
+                    replaced.put(item.getKey(), item.getValue());
+                }
+            }
+        }
+        return new Entry(entry.versionCode, entry.codeDigest, entry.lastUpdateTime,
+                entry.apkSize, entry.queryRevision, entry.resolverFormat, entry.moduleVersion,
+                entry.adBind, entry.feedBind, entry.negative, entry.reason, entry.matchAd,
+                entry.matchFeed, entry.scanDurationMs, entry.scannedAt, entry.partialAttempts,
+                replaced, entry.families);
+    }
+
     public static boolean isMethodName(String value) {
         return value != null && !value.isEmpty() && value.length() <= 128
                 && value.matches("[A-Za-z_$][A-Za-z0-9_$]*");
@@ -132,7 +184,9 @@ public final class DexKitCache {
         field(json, "match_feed", Integer.toString(entry.matchFeed), false);
         field(json, "scan_duration_ms", Long.toString(entry.scanDurationMs), false);
         field(json, "scanned_at", Long.toString(entry.scannedAt), false);
-        field(json, "partial_attempts", Integer.toString(entry.partialAttempts), true);
+        field(json, "partial_attempts", Integer.toString(entry.partialAttempts), false);
+        field(json, "extended", quote(DexKitAnchors.serialize(entry.extended)), false);
+        field(json, "families", DexKitFamilyRetry.serialize(entry.families), true);
         json.append('}');
         return json.toString();
     }
@@ -159,7 +213,9 @@ public final class DexKitCache {
                 root.optInt("match_feed", 0),
                 root.optLong("scan_duration_ms", 0L),
                 root.optLong("scanned_at", 0L),
-                root.optInt("partial_attempts", 0));
+                root.optInt("partial_attempts", 0),
+                DexKitAnchors.parse(root.optString("extended", "")),
+                DexKitFamilyRetry.parse(root.optJSONObject("families")));
         if (entry.versionCode <= 0L || !isSha256(entry.codeDigest)) {
             throw new JSONException("dexkit cache entry has invalid artifact binding");
         }
@@ -167,8 +223,11 @@ public final class DexKitCache {
             throw new JSONException("dexkit cache entry has invalid retry counter");
         }
         if (entry.negative) {
+            // A negative entry means the Zinstant pilot anchors missed. Extended families
+            // are independent, so they may still ride this entry (F3).
             if (!entry.adBind.isEmpty() || !entry.feedBind.isEmpty()) {
-                throw new JSONException("negative dexkit cache entry must not carry descriptors");
+                throw new JSONException(
+                        "negative dexkit cache entry must not carry pilot descriptors");
             }
         } else if (!entry.adBind.isEmpty() && !isMethodName(entry.adBind)
                 || !entry.feedBind.isEmpty() && !isMethodName(entry.feedBind)) {
@@ -181,7 +240,7 @@ public final class DexKitCache {
         String[] known = {"version_code", "code_digest", "last_update_time", "apk_size",
                 "query_revision", "resolver_format", "module_version", "ad_bind", "feed_bind",
                 "negative", "reason", "match_ad", "match_feed", "scan_duration_ms",
-                "scanned_at", "partial_attempts"};
+                "scanned_at", "partial_attempts", "extended", "families"};
         Iterator<String> keys = root.keys();
         while (keys.hasNext()) {
             String key = keys.next();

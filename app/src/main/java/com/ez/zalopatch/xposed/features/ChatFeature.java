@@ -36,8 +36,19 @@ public final class ChatFeature extends Feature {
     private final Set<Integer> hiddenReactionRows = Collections.synchronizedSet(new HashSet<>());
     private final Set<Integer> disabledReactionGestures = Collections.synchronizedSet(new HashSet<>());
 
+    private static final String FEATURE_REACTION_SYMBOLS = "messages.reaction_symbols";
+    private boolean longPressCompatible = true;
+    private String longPressCompatibilityError = "";
+
     public ChatFeature(ClassLoader classLoader) {
+        this(classLoader, true, "");
+    }
+
+    public ChatFeature(ClassLoader classLoader, boolean longPressCompatible,
+                       String longPressCompatibilityError) {
         super(classLoader);
+        this.longPressCompatible = longPressCompatible;
+        this.longPressCompatibilityError = longPressCompatibilityError;
     }
 
     @Override
@@ -55,26 +66,26 @@ public final class ChatFeature extends Feature {
             SelfCheckRegistry.markDisabled(FEATURE_REACTION_ROW, "chat popup surfaces");
             return;
         }
+        if (longPressCompatible) {
+            SelfCheckRegistry.markStatus(FEATURE_REACTION_SYMBOLS, "ok", "long-press symbols",
+                    "void method + boolean armed field on the chat row", "");
+        } else {
+            SelfCheckRegistry.markStale(FEATURE_REACTION_SYMBOLS, "structural preflight",
+                    longPressCompatibilityError);
+        }
         int hooked = hookPopupSurfaceScans();
         hooked += hookReactionClasses();
         hooked += hookReactionGestureSuppression();
-        hooked += hookReactionHeartLongPress();
+        if (longPressCompatible) {
+            hooked += hookReactionHeartLongPress();
+        }
         hooked += hookReactionAddView();
         if (hooked > 0) {
             SelfCheckRegistry.markInstalled(FEATURE_REACTION_ROW, "chat popup surface scan", hooked);
             return;
         }
-        List<String> popupAdapters = SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.reaction_popup_adapter_classes");
-        List<String> itemClasses = SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.chat.reaction_item_classes");
-        if (popupAdapters.isEmpty() || itemClasses.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_REACTION_ROW, "symbols.chat",
-                    "reaction popup symbols missing; run chat rendering trace first");
-            return;
-        }
         SelfCheckRegistry.markStale(FEATURE_REACTION_ROW, "symbols.chat",
-                "schema present but popup mutation not enabled until trace confirms reaction row boundary");
+                "no popup surface hooked; run chat rendering trace first");
     }
 
     private int hookPopupSurfaceScans() {

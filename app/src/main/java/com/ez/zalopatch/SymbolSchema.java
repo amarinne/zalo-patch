@@ -59,6 +59,9 @@ public final class SymbolSchema {
                 cached = bundledForVersion(context, installedVersionCode);
                 if (!cached.valid) {
                     Active remote = remoteFromProvider(context, installedVersionCode);
+                    if (remote == null) {
+                        remote = SymbolCatalogMirror.read(installedVersionCode);
+                    }
                     if (remote != null && remote.valid) {
                         cached = remote;
                     }
@@ -68,6 +71,27 @@ public final class SymbolSchema {
             }
             return cached;
         }
+    }
+
+    /**
+     * What the calling process can actually resolve: the module process reads its local catalog
+     * cache, every other process reads the provider-backed entry. Package name alone is not
+     * enough — SelfCheckRegistry builds evidence with a createPackageContext module context
+     * while still running under the Zalo UID, where the module files directory is unreadable
+     * and {@link #active} would report an empty profile hash against a stored catalog hash.
+     */
+    public static Active activeForProcess(Context context) {
+        context = hookContext(context);
+        if (isModuleProcess(context)) {
+            return active(context);
+        }
+        return activeForHooks(context);
+    }
+
+    static boolean isModuleProcess(Context context) {
+        return context != null
+                && MODULE_PACKAGE.equals(context.getPackageName())
+                && android.os.Process.myUid() == context.getApplicationInfo().uid;
     }
 
     public static Active bundled(Context context) {
@@ -146,6 +170,36 @@ public final class SymbolSchema {
 
     static Active selectBundledForVersion(Context context, long installedVersionCode) {
         return bundledForVersion(hookContext(context), installedVersionCode);
+    }
+
+    /**
+     * Symbols node of the bundled profile whose version range covers {@code versionCode},
+     * or null. Read-only; used by the offline DexKit comparison harness to fetch ground
+     * truth for a retained (not installed) release. Never backs a hook.
+     */
+    public static JSONObject bundledSymbolsForVersion(Context context, long versionCode) {
+        try {
+            context = hookContext(context);
+            JSONArray profiles = new JSONObject(readBundledJson(context))
+                    .optJSONArray("profiles");
+            if (profiles == null) {
+                return null;
+            }
+            for (int index = 0; index < profiles.length(); index++) {
+                JSONObject profile = profiles.optJSONObject(index);
+                if (profile == null) {
+                    continue;
+                }
+                JSONObject range = profile.optJSONObject("zalo_version");
+                long min = range == null ? -1L : range.optLong("min_code", -1L);
+                long max = range == null ? -1L : range.optLong("max_code", -1L);
+                if (versionCode > 0L && versionCode >= min && versionCode <= max) {
+                    return profile.optJSONObject("symbols");
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     /**
@@ -265,6 +319,25 @@ public final class SymbolSchema {
         synchronized (SymbolSchema.class) {
             cachedHookSchema = profile;
             cachedHookVersionCode = installedVersionCode;
+        }
+    }
+
+    /**
+     * Validates a DexKit-built exact profile for adoption. Returns null when the
+     * profile fails validation, so callers never adopt a malformed overlay. Scoped
+     * to the Zalo process lifetime like {@link #adoptForHooks}; nothing is persisted.
+     */
+    public static Active dexkitOverlayForHooks(String profileJson, long installedVersionCode) {
+        try {
+            if (profileJson == null || profileJson.isEmpty() || installedVersionCode <= 0L) {
+                return null;
+            }
+            JSONObject root = new JSONObject(profileJson);
+            Active parsed = parseProfile(root, profileJson, "DexKit overlay",
+                    installedVersionCode, 1, "");
+            return parsed.valid ? parsed : null;
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
@@ -390,7 +463,7 @@ public final class SymbolSchema {
     }
 
     public static Health health(Context context) {
-        Active active = active(context);
+        Active active = activeForProcess(context);
         long installedVersionCode = installedZaloVersionCode(context);
         if (!active.valid) {
             String status = active.bundleValid ? "stale" : "failed";
@@ -400,8 +473,7 @@ public final class SymbolSchema {
             return new Health(installedVersionCode, active, "stale",
                     "Installed Zalo version unavailable; no profile selected.");
         }
-        ZaloArtifactState.Compatibility artifact = context != null
-                && MODULE_PACKAGE.equals(context.getPackageName())
+        ZaloArtifactState.Compatibility artifact = isModuleProcess(context)
                 ? ZaloArtifactState.currentCompatibility(context)
                 : ZaloArtifactState.forHooks(context);
         if (!artifact.compatible) {

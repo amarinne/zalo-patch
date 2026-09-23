@@ -44,6 +44,10 @@ public final class CallRecordingFeature extends Feature {
     private static final String MODULE_PACKAGE = "com.ez.zalopatch";
     private static final String TEMP_DIRECTORY = "zalo_patch_call_recordings";
     private static final String FEATURE_HOOKS = "calls.auto_record.hooks";
+    /** Callback-path diagnostic: what fired and why start did or did not happen. */
+    private static final String FEATURE_CALLBACKS = "calls.auto_record.callbacks";
+    private static final java.util.Set<String> OBSERVED_CALLBACKS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final String FEATURE_NATIVE = "calls.auto_record.native";
     private static final String FEATURE_STORAGE = "calls.auto_record.storage";
     private static final String FEATURE_NOTIFICATIONS = "calls.auto_record.notifications";
@@ -346,6 +350,15 @@ public final class CallRecordingFeature extends Feature {
             @Override
             public void before(XpHooks.HookParam param) {
                 String methodName = method.getName();
+                // Record the callback entry itself. Without this a connected call whose
+                // session is unbound (or not yet confirmed) leaves hit_count at 0, which is
+                // indistinguishable from hooks that never fired.
+                int entryState = firstInt(param.args);
+                OBSERVED_CALLBACKS.add(methodName
+                        + (entryState == Integer.MIN_VALUE ? "" : "(" + entryState + ")"));
+                SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
+                        param.thisObject.getClass().getName() + "#" + methodName,
+                        "seen=" + String.join(",", OBSERVED_CALLBACKS));
                 Session session = SESSIONS.get(param.thisObject);
                 // Zalo can reuse its callback after replacing the native peer. A new call
                 // must resolve the current handle instead of reviving the retired session.
@@ -355,7 +368,12 @@ public final class CallRecordingFeature extends Feature {
                 }
                 // Older hosts can bind through native callback registration without a
                 // mapped Java manager. Preserve that binding only while it is live.
-                if (session == null || session.deleted) return;
+                if (session == null || session.deleted) {
+                    SelfCheckRegistry.markStatus(FEATURE_CALLBACKS, "stale", "no bound session",
+                            "seen=" + String.join(",", OBSERVED_CALLBACKS)
+                                    + " deleted=" + (session != null), "");
+                    return;
+                }
                 if ("onIncomingCall".equals(methodName)) {
                     session.direction = "incoming";
                     return;
@@ -380,7 +398,7 @@ public final class CallRecordingFeature extends Feature {
                 }
                 boolean shouldStart;
                 synchronized (session) {
-                    if (CallRecordingLifecycle.confirmsCall(methodName)) {
+                    if (CallRecordingLifecycle.confirmsCall(methodName, state)) {
                         session.confirmed = true;
                     }
                     if (CallRecordingLifecycle.connectsAudio(methodName, state)) {
@@ -391,12 +409,26 @@ public final class CallRecordingFeature extends Feature {
                 }
                 if (shouldStart) {
                     start(session, methodName);
+                } else {
+                    SelfCheckRegistry.markStatus(FEATURE_CALLBACKS, "installed_no_hits",
+                            "awaiting connect",
+                            "seen=" + String.join(",", OBSERVED_CALLBACKS)
+                                    + " confirmed=" + session.confirmed
+                                    + " audio=" + session.audioConnected
+                                    + " peer=" + (session.peerHandle != 0L), "");
                 }
             }
         };
     }
 
     private static Session resolveCurrentSession(Object callback) {
+        // Stable binding first: the PeerJNI make/incoming/register hooks already map
+        // the live callback to its session by peer handle (T1b). The obfuscated
+        // manager chain below is only an optional refinement when it resolves.
+        Session bound = SESSIONS.get(callback);
+        if (bound != null) {
+            return bound;
+        }
         Context context = HookConfig.resolveModuleContextForHooks();
         String managerClassName = SymbolSchema.stringForHooks(context,
                 "symbols.call_recording.peer_manager_class", "").value;
@@ -427,58 +459,47 @@ public final class CallRecordingFeature extends Feature {
                     "callback bound to current peer");
             return session;
         } catch (Throwable throwable) {
-            SelfCheckRegistry.markFailed(FEATURE_HOOKS,
-                    managerClassName + " peer handle", throwable);
+            // A drifted or renamed symbol is migration work, not an unexpected hook
+            // failure; only a throwing callback belongs in the failed tier.
+            if (isMissingSymbol(throwable)) {
+                SelfCheckRegistry.markStale(FEATURE_HOOKS, managerClassName + " peer handle",
+                        throwable.getClass().getSimpleName() + " " + throwable.getMessage());
+            } else {
+                SelfCheckRegistry.markFailed(FEATURE_HOOKS,
+                        managerClassName + " peer handle", throwable);
+            }
             return null;
         }
     }
 
+    /** Reflection miss on a mapped symbol: drift, not a hook defect. */
+    private static boolean isMissingSymbol(Throwable throwable) {
+        return throwable instanceof NoSuchMethodException
+                || throwable instanceof NoSuchFieldException
+                || throwable instanceof ClassNotFoundException
+                || throwable instanceof NoClassDefFoundError;
+    }
+
     private int hookActivities() {
         int count = 0;
-        String readyMethod = SymbolSchema.stringForHooks(
-                HookConfig.resolveModuleContextForHooks(),
-                "symbols.call_recording.activity_ready_method", "").value;
         for (String className : CALL_ACTIVITIES) {
             Class<?> activityClass = XpReflect.findClassIfExists(className, classLoader);
             if (activityClass == null || !Activity.class.isAssignableFrom(activityClass)) {
                 continue;
             }
-            if (!readyMethod.isEmpty()) {
-                count += XpHooks.hookAllMethods(FEATURE_HOOKS, activityClass, readyMethod,
-                        new XpHooks.After() {
-                            @Override
-                            public void after(XpHooks.HookParam param) throws Throwable {
-                                String stateField = SymbolSchema.stringForHooks(
-                                        HookConfig.resolveModuleContextForHooks(),
-                                        "symbols.call_recording.activity_call_state_field", "").value;
-                                String connectedMethod = SymbolSchema.stringForHooks(
-                                        HookConfig.resolveModuleContextForHooks(),
-                                        "symbols.call_recording.activity_connected_method", "").value;
-                                if (stateField.isEmpty() || connectedMethod.isEmpty()) return;
-                                Object callState = XpReflect.getObjectField(
-                                        param.thisObject, stateField);
-                                Object connected = callState == null ? null
-                                        : XpReflect.callMethod(callState, connectedMethod);
-                                if (!(connected instanceof Boolean) || !(Boolean) connected) return;
-                                Session session = resolveCurrentSession(param.thisObject);
-                                if (session == null) return;
-                                synchronized (session) {
-                                    session.confirmed = true;
-                                    session.audioConnected = true;
-                                }
-                                SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
-                                        className + "#" + readyMethod,
-                                        "connected call controls ready");
-                                start(session, "activity_ready");
-                            }
-                        }).size();
-            }
+            // Terminal fallback only, with no obfuscated letters: when the call UI is
+            // destroyed, stop any started session. The connected edge comes from
+            // onCallAudioState==32 and the audio-stream registrations (T1c); the
+            // retired U1/K2/n trigger misread a RelativeLayout on 26.09.01.
             count += XpHooks.hookAllMethods(FEATURE_HOOKS, activityClass, "onDestroy",
                     new XpHooks.Before() {
                 @Override
                 public void before(XpHooks.HookParam param) {
-                    Session session = resolveCurrentSession(param.thisObject);
-                    if (session != null) stop(session, "activity_destroy");
+                    for (Session session : SESSIONS_BY_PEER.values()) {
+                        if (session.started) {
+                            stop(session, "activity_destroy");
+                        }
+                    }
                 }
             }).size();
         }

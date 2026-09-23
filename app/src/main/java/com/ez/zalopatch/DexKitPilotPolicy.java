@@ -180,6 +180,9 @@ public final class DexKitPilotPolicy {
         decision.feedOverride = input.feedEnabled ? input.cacheFeedName : "";
         decision.cacheRow = new Row("ok", "dexkit pilot cache", summary, "");
         decision.source = "dexkit_cache";
+        decision.markScanRow = true;
+        decision.scanRow = new Row("ok", "warm",
+                "pilot served from validated cache; no scan needed", "");
         return decision;
     }
 
@@ -289,8 +292,24 @@ public final class DexKitPilotPolicy {
                 adBind, feedBind, negative, reason,
                 in.matchAd, in.matchFeed, in.durationMs, in.scannedAt,
                 negative ? 0 : (adBind.isEmpty() || feedBind.isEmpty()
-                        ? in.previousPartialAttempts + 1 : 0));
+                        ? in.previousPartialAttempts + 1 : 0), null);
         return outcome;
+    }
+
+    /**
+     * Slot and last-attempt values the budget must evaluate for the incoming scope.
+     * A scope change discards the previous generation's slot entirely: carrying it over
+     * made the fresh scope look like a scan already in progress, and the process had
+     * already spent its single attempt.
+     *
+     * @return {@code {slotMs, lastAttemptMs}}
+     */
+    public static long[] budgetCarryOver(String storedScope, String scope,
+                                         long storedSlotMs, long storedLastAttemptMs) {
+        if (scope == null || scope.isEmpty() || !scope.equals(storedScope)) {
+            return new long[]{0L, 0L};
+        }
+        return new long[]{storedSlotMs, storedLastAttemptMs};
     }
 
     /** Scope identity binding one retry budget to one host/code/query/module generation. */

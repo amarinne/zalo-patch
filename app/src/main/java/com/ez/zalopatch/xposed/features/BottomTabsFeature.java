@@ -89,10 +89,10 @@ public final class BottomTabsFeature extends Feature {
 
         scheduleRetry();
         watchClassLoads();
-        SelfCheckRegistry.markStale(FEATURE_STATE, "symbol schema bottom_tabs.current_tab_symbols", "no matching current or legacy tab state class");
-        SelfCheckRegistry.markStale(FEATURE_CONSUMERS, "symbol schema bottom_tabs.current_tab_symbols", "no matching current or legacy tab state class");
+        SelfCheckRegistry.markStale(FEATURE_STATE, "symbol schema bottom_tabs.current_tab_symbols", "no matching current tab state class");
+        SelfCheckRegistry.markStale(FEATURE_CONSUMERS, "symbol schema bottom_tabs.current_tab_symbols", "no matching current tab state class");
         if (forceMessagesAsHome) {
-            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "symbol schema bottom_tabs.current_tab_symbols", "no matching current or legacy tab state class");
+            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "symbol schema bottom_tabs.current_tab_symbols", "no matching current tab state class");
         }
     }
 
@@ -120,16 +120,9 @@ public final class BottomTabsFeature extends Feature {
             }
         }
 
-        String legacyClassName = schemaString("symbols.bottom_tabs.legacy_state_class", "");
-        Class<?> mainTabClass = findClassIfExists(legacyClassName, preferredLoader);
-        if (mainTabClass == null) {
-            return false;
-        }
-        hookLegacyBottomTabs(mainTabClass);
-        installComplete.set(true);
-        unhookClassLoadWatch();
-        SelfCheckRegistry.markInstalled(FEATURE_STATE, legacyClassName, 12);
-        return true;
+        // Legacy bottom-tab route retired: supported releases expose current tab
+        // symbols (or the DexKit overlay), and the legacy letters are unmapped.
+        return false;
     }
 
     private void scheduleRetry() {
@@ -169,10 +162,6 @@ public final class BottomTabsFeature extends Feature {
             if (symbols.stateClassName != null && !symbols.stateClassName.isEmpty()) {
                 watched.add(symbols.stateClassName);
             }
-        }
-        String legacyClassName = schemaString("symbols.bottom_tabs.legacy_state_class", "");
-        if (legacyClassName != null && !legacyClassName.isEmpty()) {
-            watched.add(legacyClassName);
         }
         if (watched.isEmpty()) {
             return;
@@ -244,51 +233,6 @@ public final class BottomTabsFeature extends Feature {
             logSymbolFailure("class", className, throwable);
             return null;
         }
-    }
-
-    private void hookLegacyBottomTabs(Class<?> mainTabClass) {
-        String rebuildMethod = legacyRebuildMethod();
-        if (rebuildMethod == null || rebuildMethod.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing rebuild method");
-            return;
-        }
-        XpHooks.Before legacyRebuildBefore = new XpHooks.Before() {
-            @Override
-            public void before(XpHooks.HookParam param) {
-                TAB_REBUILD_DEPTH.set(TAB_REBUILD_DEPTH.get() + 1);
-            }
-        };
-        XpHooks.After legacyRebuildAfter = new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                try {
-                    Object mainTabState = param.thisObject;
-                    List<Object> originalTabs = getOriginalTabs(mainTabState);
-                    if (!originalTabs.isEmpty() && loggedOnce.compareAndSet(false, true)) {
-                        log("Original bottom tabs -> " + stringifyTabs(originalTabs));
-                        log("Bottom tab flags -> discovery=" + hideDiscovery + ", timeline=" + hideTimeline);
-                    }
-                } finally {
-                    TAB_REBUILD_DEPTH.set(Math.max(0, TAB_REBUILD_DEPTH.get() - 1));
-                }
-            }
-        };
-        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, rebuildMethod,
-                legacyRebuildBefore, legacyRebuildAfter);
-
-        hookBooleanFlag(mainTabClass, schemaString("symbols.bottom_tabs.legacy_hide_discovery_method", ""), hideDiscovery);
-        hookBooleanFlag(mainTabClass, schemaString("symbols.bottom_tabs.legacy_hide_timeline_method", ""), hideTimeline);
-        hookIndexMethod(mainTabClass, legacyIndexMethod("message"), "MESSAGE");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("phonebook"), "PHONEBOOK");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("group"), "GROUP");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("discovery"), "DISCOVERY");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("timeline"), "TIMELINE");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("more"), "MORE");
-        hookIndexMethod(mainTabClass, legacyIndexMethod("me"), "ME");
-        hookFilteredTabList(mainTabClass, schemaString("symbols.bottom_tabs.legacy_tab_list_method", ""));
-        hookFilteredTabSize(mainTabClass, schemaString("symbols.bottom_tabs.legacy_tab_size_method", ""));
-        hookFilteredIntArray(mainTabClass, schemaString("symbols.bottom_tabs.legacy_int_array_method", ""));
-        hookFilteredBooleanArray(mainTabClass, schemaString("symbols.bottom_tabs.legacy_boolean_array_method", ""));
     }
 
     private void hookCurrentBottomTabs(Class<?> mainTabClass) {
@@ -370,7 +314,77 @@ public final class BottomTabsFeature extends Feature {
                 "symbols.bottom_tabs.consumer_adapter_classes")) {
             hookCurrentPagerAdapter(mainTabClass, adapterClass, "", "");
         }
+        hookDiscoveredConsumers(mainTabClass);
+    }
 
+    /**
+     * Consumer adapters without mapping: MainTabView field types in the state
+     * class's package that hold icon/preloaded arrays. Package co-rotation keeps
+     * this aligned across releases; the array shape keeps it precise. The state
+     * class itself is excluded. Hook effects are idempotent with the schema path
+     * (same Before/After), so overlap is harmless.
+     */
+    private void hookDiscoveredConsumers(Class<?> mainTabClass) {
+        if (currentSymbols == null || currentSymbols.stateClassName == null
+                || currentSymbols.stateClassName.isEmpty()) {
+            return;
+        }
+        Class<?> mainTabViewClass = findClassIfExists(CURRENT_MAIN_TAB_VIEW_CLASS);
+        if (mainTabViewClass == null) {
+            return;
+        }
+        int hooked = 0;
+        for (Field field : mainTabViewClass.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            Class<?> type = field.getType();
+            if (!looksLikeConsumerAdapter(type, currentSymbols.stateClassName)) {
+                continue;
+            }
+            hookCurrentPagerAdapter(mainTabClass, type.getName(), "", "");
+            hooked++;
+        }
+        if (hooked > 0) {
+            log("Discovered bottom tab consumers -> " + hooked);
+        }
+    }
+
+    /** Package co-location plus icon/preloaded array shape, minus the state class. */
+    static boolean looksLikeConsumerAdapter(Class<?> type, String stateClassName) {
+        if (type == null || type.isPrimitive() || type.isArray()
+                || type.isInterface() || type.isEnum()) {
+            return false;
+        }
+        String name = type.getName();
+        if (name.startsWith("java.") || name.startsWith("javax.")
+                || name.startsWith("android.") || name.startsWith("androidx.")
+                || name.startsWith("kotlin.")) {
+            return false;
+        }
+        if (name.equals(stateClassName)) {
+            return false;
+        }
+        if (stateClassName == null || !stateClassName.contains(".")) {
+            return false;
+        }
+        String statePackage = stateClassName.substring(0, stateClassName.lastIndexOf('.') + 1);
+        if (!name.startsWith(statePackage)) {
+            return false;
+        }
+        boolean ints = false;
+        boolean bools = false;
+        for (Field field : type.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            if (field.getType() == int[].class) {
+                ints = true;
+            } else if (field.getType() == boolean[].class) {
+                bools = true;
+            }
+        }
+        return ints && bools;
     }
 
     private void hookCurrentForceMessagesAsHome(Class<?> mainTabClass) {
@@ -382,101 +396,95 @@ public final class BottomTabsFeature extends Feature {
             SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, CURRENT_MAIN_TAB_VIEW_CLASS, "MainTabView unavailable");
             return;
         }
-        String lifecycleMethod = schemaString("symbols.bottom_tabs.main_tab_home_hook_method", "");
-        if (lifecycleMethod.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, mainTabViewClass.getName(),
-                    "missing home lifecycle method");
+        if (hookForceHomeOnPageSelected(mainTabClass, mainTabViewClass)) {
             return;
         }
-        List<XpHooks.Handle> hooks = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, mainTabViewClass, lifecycleMethod, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) {
-                try {
-                    Object state = applyCurrentSingletonState(mainTabClass);
-                    if (state == null) {
-                        return;
-                    }
-                    int currentItem = currentMainTabItem(param.thisObject);
-                    int messageIndex = getIntFieldOr(state, currentSymbols.messageIndexField, -1);
-                    int groupIndex = getIntFieldOr(state, currentSymbols.groupIndexField, -1);
-                    int discoveryIndex = getIntFieldOr(state, currentSymbols.discoveryIndexField, -1);
-                    int timelineIndex = getIntFieldOr(state, currentSymbols.timelineIndexField, -1);
-                    if (messageIndex < 0 || currentItem == messageIndex) {
-                        return;
-                    }
-                    if (currentItem != groupIndex && currentItem != discoveryIndex && currentItem != timelineIndex) {
-                        return;
-                    }
-                    Object pager = getObjectFieldOrFirstMatching(param.thisObject,
-                            schemaString("symbols.bottom_tabs.main_tab_pager_field", ""), "setCurrentItem");
-                    if (pager == null) {
-                        SelfCheckRegistry.markStale(FEATURE_FORCE_HOME,
-                                mainTabViewClass.getName() + "#" + lifecycleMethod, "pager unavailable");
-                        return;
-                    }
-                    XpReflect.callMethod(pager, "setCurrentItem", messageIndex, false);
-                    SelfCheckRegistry.markSuppressed(FEATURE_FORCE_HOME,
-                            mainTabViewClass.getName() + "#" + lifecycleMethod,
-                            "from=" + currentItem + " to=" + messageIndex);
-                } catch (Throwable throwable) {
-                    SelfCheckRegistry.markFailed(FEATURE_FORCE_HOME,
-                            mainTabViewClass.getName() + "#" + lifecycleMethod, throwable);
-                    log("Current force home hook failed: " + throwable.getClass().getSimpleName());
-                }
-            }
-        });
-        if (hooks.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, mainTabViewClass.getName() + "#" + lifecycleMethod,
-                    "method unavailable");
-            return;
-        }
-        SelfCheckRegistry.markInstalled(FEATURE_FORCE_HOME, mainTabViewClass.getName() + "#" + lifecycleMethod,
-                hooks.size());
+        // No letter fallback: the per-release lifecycle letter is retired. Without
+        // the stable page-selected callback there is nothing trustworthy to hook.
+        SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, mainTabViewClass.getName(),
+                "onPageSelected unavailable");
     }
 
-    private int currentMainTabItem(Object mainTabView) {
-        List<String> methodNames = SymbolSchema.strings(HookConfig.resolveModuleContextForHooks(),
-                "symbols.bottom_tabs.main_tab_current_item_methods");
-        Throwable lastFailure = null;
-        int failedMethods = 0;
-        for (String methodName : methodNames) {
-            try {
-                Object value = XpReflect.callMethod(mainTabView, methodName);
-                if (value instanceof Integer) {
-                    return (Integer) value;
-                }
-            } catch (Throwable throwable) {
-                lastFailure = throwable;
-                failedMethods++;
-                logSymbolFailure("method", classNameOf(mainTabView) + "#" + methodName, throwable);
-            }
-        }
-        if (!methodNames.isEmpty() && failedMethods == methodNames.size()) {
-            markSymbolStale(FEATURE_FORCE_HOME,
-                    classNameOf(mainTabView) + "#" + String.join("|", methodNames), lastFailure);
-        }
-        return -1;
-    }
-
-    private Object getObjectFieldOrFirstMatching(Object object, String preferredFieldName, String methodName) {
+    /**
+     * Force-home through the stable ViewPager page-selected callback: the selected
+     * page arrives as the first argument, so no current-item method mapping is
+     * needed. The per-release lifecycle letter is retired with no fallback.
+     */
+    private boolean hookForceHomeOnPageSelected(Class<?> mainTabClass, Class<?> mainTabViewClass) {
+        List<XpHooks.Handle> hooks;
         try {
-            Object value = XpReflect.getObjectField(object, preferredFieldName);
-            if (value != null) {
-                return value;
-            }
+            hooks = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, mainTabViewClass, "onPageSelected",
+                    new XpHooks.After() {
+                @Override
+                public void after(XpHooks.HookParam param) {
+                    try {
+                        if (param.args == null || param.args.length < 1
+                                || !(param.args[0] instanceof Integer)) {
+                            return;
+                        }
+                        redirectHomeIfNeeded(mainTabClass, param.thisObject,
+                                (Integer) param.args[0],
+                                mainTabViewClass.getName() + "#onPageSelected");
+                    } catch (Throwable throwable) {
+                        SelfCheckRegistry.markFailed(FEATURE_FORCE_HOME,
+                                mainTabViewClass.getName() + "#onPageSelected", throwable);
+                    }
+                }
+            });
         } catch (Throwable throwable) {
-            logSymbolFailure("field", classNameOf(object) + "#" + preferredFieldName, throwable);
+            logSymbolFailure("method", mainTabViewClass.getName() + "#onPageSelected", throwable);
+            return false;
         }
-        if (object == null) {
+        if (hooks == null || hooks.isEmpty()) {
+            return false;
+        }
+        SelfCheckRegistry.markInstalled(FEATURE_FORCE_HOME,
+                mainTabViewClass.getName() + "#onPageSelected", hooks.size());
+        return true;
+    }
+
+    private void redirectHomeIfNeeded(Class<?> mainTabClass, Object mainTabView,
+                                      int currentItem, String target) throws Throwable {
+        Object state = applyCurrentSingletonState(mainTabClass);
+        if (state == null) {
+            return;
+        }
+        int messageIndex = getIntFieldOr(state, currentSymbols.messageIndexField, -1);
+        int groupIndex = getIntFieldOr(state, currentSymbols.groupIndexField, -1);
+        int discoveryIndex = getIntFieldOr(state, currentSymbols.discoveryIndexField, -1);
+        int timelineIndex = getIntFieldOr(state, currentSymbols.timelineIndexField, -1);
+        if (messageIndex < 0 || currentItem == messageIndex) {
+            return;
+        }
+        if (currentItem != groupIndex && currentItem != discoveryIndex && currentItem != timelineIndex) {
+            return;
+        }
+        Object pager = getPagerByShape(mainTabView, "setCurrentItem");
+        if (pager == null) {
+            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, target, "pager unavailable");
+            return;
+        }
+        XpReflect.callMethod(pager, "setCurrentItem", messageIndex, false);
+        SelfCheckRegistry.markSuppressed(FEATURE_FORCE_HOME, target,
+                "from=" + currentItem + " to=" + messageIndex);
+    }
+
+    /**
+     * Pager by stable shape: the first MainTabView instance field whose value
+     * carries the named method (the swipeable pager's setCurrentItem). The
+     * per-release pager field letter is retired.
+     */
+    private Object getPagerByShape(Object mainTabView, String methodName) {
+        if (mainTabView == null) {
             return null;
         }
-        for (Field field : object.getClass().getDeclaredFields()) {
+        for (Field field : mainTabView.getClass().getDeclaredFields()) {
             if (Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
             try {
                 field.setAccessible(true);
-                Object value = field.get(object);
+                Object value = field.get(mainTabView);
                 if (value != null && hasMethod(value.getClass(), methodName)) {
                     return value;
                 }
@@ -874,105 +882,6 @@ public final class BottomTabsFeature extends Feature {
         return object == null ? "null" : object.getClass().getName();
     }
 
-    private void hookBooleanFlag(Class<?> mainTabClass, String methodName, boolean hidden) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing boolean flag method");
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) {
-                if (!isRebuilding()) {
-                    param.setResult(!hidden);
-                }
-            }
-        });
-    }
-
-    private void hookIndexMethod(Class<?> mainTabClass, String methodName, String tabName) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing index method for " + tabName);
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                if (!isRebuilding()) {
-                    List<Object> filteredTabs = getFilteredTabs(param.thisObject);
-                    param.setResult(indexOf(filteredTabs, tabName));
-                }
-            }
-        });
-    }
-
-    private void hookFilteredTabList(Class<?> mainTabClass, String methodName) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing tab list method");
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                if (!isRebuilding()) {
-                    param.setResult(getFilteredTabs(param.thisObject));
-                }
-            }
-        });
-    }
-
-    private void hookFilteredTabSize(Class<?> mainTabClass, String methodName) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing tab size method");
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                if (!isRebuilding()) {
-                    param.setResult(getFilteredTabs(param.thisObject).size());
-                }
-            }
-        });
-    }
-
-    private void hookFilteredIntArray(Class<?> mainTabClass, String methodName) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing int array method");
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                if (!isRebuilding()) {
-                    int[] original = (int[]) param.getResult();
-                    if (original == null) {
-                        return;
-                    }
-                    param.setResult(filterIntArray(getOriginalTabs(param.thisObject), original));
-                }
-            }
-        });
-    }
-
-    private void hookFilteredBooleanArray(Class<?> mainTabClass, String methodName) {
-        if (methodName == null || methodName.isEmpty()) {
-            SelfCheckRegistry.markStale(FEATURE_STATE, mainTabClass.getName(), "missing boolean array method");
-            return;
-        }
-        XpHooks.findAndHookMethod(FEATURE_STATE, mainTabClass, methodName, new Class<?>[0], null, new XpHooks.After() {
-            @Override
-            public void after(XpHooks.HookParam param) throws Throwable {
-                if (!isRebuilding()) {
-                    boolean[] original = (boolean[]) param.getResult();
-                    if (original == null) {
-                        return;
-                    }
-                    param.setResult(filterBooleanArray(getOriginalTabs(param.thisObject), original));
-                }
-            }
-        });
-    }
-
     private static boolean isRebuilding() {
         return TAB_REBUILD_DEPTH.get() > 0;
     }
@@ -1013,21 +922,6 @@ public final class BottomTabsFeature extends Feature {
             }
         }
         return -1;
-    }
-
-    private int[] filterIntArray(List<Object> originalTabs, int[] original) {
-        List<Integer> values = new ArrayList<>();
-        for (int i = 0; i < originalTabs.size() && i < original.length; i++) {
-            String name = String.valueOf(originalTabs.get(i));
-            if (!(hideDiscovery && "DISCOVERY".equals(name)) && !(hideTimeline && "TIMELINE".equals(name))) {
-                values.add(original[i]);
-            }
-        }
-        int[] result = new int[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            result[i] = values.get(i);
-        }
-        return result;
     }
 
     private boolean[] filterBooleanArray(List<Object> originalTabs, boolean[] original) {
@@ -1109,14 +1003,6 @@ public final class BottomTabsFeature extends Feature {
             recordSchemaSource("symbols.bottom_tabs.current_tab_symbols", "schema_error", "", true);
             return java.util.Collections.emptyList();
         }
-    }
-
-    private static String legacyRebuildMethod() {
-        return schemaString("symbols.bottom_tabs.legacy_rebuild_method", "");
-    }
-
-    private static String legacyIndexMethod(String tab) {
-        return schemaString("symbols.bottom_tabs.legacy_index_methods." + tab, "");
     }
 
     private static String currentMethod(String role) {

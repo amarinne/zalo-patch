@@ -23,7 +23,7 @@ public final class SymbolSchemaHealthFeature extends Feature {
         SymbolSchema.Health health = SymbolSchema.health(context);
         SymbolSchema.Active schema = health.schema;
         String target = schema.valid
-                ? "bundled schema v" + schema.schemaVersion + "." + schema.schemaRevision
+                ? schema.source + " schema v" + schema.schemaVersion + "." + schema.schemaRevision
                         + " for Zalo " + schema.minCode
                 : "bundled exact-version profiles";
         String error = "failed".equals(health.status) ? schema.validation : "";

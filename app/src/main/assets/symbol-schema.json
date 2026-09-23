@@ -299,11 +299,6 @@
             "tc1.g0",
             "g51.e1"
           ],
-          "main_tab_home_hook_method": "m5",
-          "main_tab_current_item_methods": [
-            "h6"
-          ],
-          "main_tab_pager_field": "L0",
           "current_tab_symbols": [
             {
               "state_class": "de1.y",
@@ -693,11 +688,6 @@
           "consumer_adapter_classes": [
             "me1.f0"
           ],
-          "main_tab_home_hook_method": "m5",
-          "main_tab_current_item_methods": [
-            "h6"
-          ],
-          "main_tab_pager_field": "K0",
           "current_tab_symbols": [
             {
               "state_class": "me1.w",
@@ -1063,11 +1053,6 @@
           "consumer_adapter_classes": [
             "if1.h0"
           ],
-          "main_tab_home_hook_method": "m5",
-          "main_tab_current_item_methods": [
-            "h6"
-          ],
-          "main_tab_pager_field": "K0",
           "current_tab_symbols": [
             {
               "state_class": "if1.y",
@@ -1445,11 +1430,6 @@
           "consumer_adapter_classes": [
             "tf1.f0"
           ],
-          "main_tab_home_hook_method": "n5",
-          "main_tab_current_item_methods": [
-            "i6"
-          ],
-          "main_tab_pager_field": "J0",
           "current_tab_symbols": [
             {
               "state_class": "tf1.w",

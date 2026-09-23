@@ -24,7 +24,7 @@ public final class DexKitCacheTest {
     public void negativeEntryBindsButNeverResolves() {
         DexKitCache.Entry entry = new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
-                "", "", true, "no_match", 0, 0, 41L, 9L, 0);
+                "", "", true, "no_match", 0, 0, 41L, 9L, 0, null);
         assertTrue(binds(entry));
         assertFalse(DexKitCache.fullyResolved(entry));
     }
@@ -34,7 +34,7 @@ public final class DexKitCacheTest {
         DexKitCache.Entry positive = positive();
         DexKitCache.Entry negative = new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
-                "", "", true, "ambiguous_match", 2, 2, 41L, 9L, 0);
+                "", "", true, "ambiguous_match", 2, 2, 41L, 9L, 0, null);
         assertFalse(DexKitCache.bindsTo(negative, VERSION + 1, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE));
         assertFalse(DexKitCache.bindsTo(positive, VERSION + 1, DIGEST, 7L, 68157440L,
@@ -70,6 +70,9 @@ public final class DexKitCacheTest {
         assertEquals(entry.lastUpdateTime, parsed.lastUpdateTime);
         assertEquals(entry.apkSize, parsed.apkSize);
         assertEquals(entry.scanDurationMs, parsed.scanDurationMs);
+        assertEquals(entry.extended, parsed.extended);
+        assertEquals("A8",
+                parsed.extended.get("symbols.webview.redirect_transform_method"));
     }
 
     @Test
@@ -96,22 +99,68 @@ public final class DexKitCacheTest {
     }
 
     @Test
-    public void negativeEntryMustNotCarryDescriptors() {
+    public void negativeEntryMustNotCarryPilotDescriptors() {
         DexKitCache.Entry broken = new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
-                "c", "", true, "no_match", 1, 0, 41L, 9L, 0);
+                "c", "", true, "no_match", 1, 0, 41L, 9L, 0, null);
         try {
             DexKitCache.parse(DexKitCache.serialize(broken));
-            assertTrue("negative entry with descriptors must fail", false);
+            assertTrue("negative entry with pilot descriptors must fail", false);
         } catch (Exception expected) {
             assertTrue(expected instanceof org.json.JSONException);
         }
     }
 
     private DexKitCache.Entry positive() {
+        java.util.LinkedHashMap<String, String> extended = new java.util.LinkedHashMap<>();
+        extended.put("symbols.webview.redirect_transform_method", "A8");
+        extended.put("symbols.webview.companion_class",
+                "com.zing.zalo.ui.zviews.vt");
         return new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
-                "c", "c", false, "", 1, 1, 812L, 1726051200000L, 0);
+                "c", "c", false, "", 1, 1, 812L, 1726051200000L, 0, extended);
+    }
+
+    @Test
+    public void replaceExtendedDropsRejectedKeysAndKeepsBinding() {
+        DexKitCache.Entry entry = positive();
+        assertTrue(entry.extended.containsKey("symbols.webview.companion_class"));
+        java.util.LinkedHashMap<String, String> filtered = new java.util.LinkedHashMap<>();
+        filtered.put("symbols.webview.redirect_transform_method", "A8");
+        DexKitCache.Entry replaced = DexKitCache.replaceExtended(entry, filtered);
+        assertEquals(1, replaced.extended.size());
+        assertTrue(replaced.extended.containsKey("symbols.webview.redirect_transform_method"));
+        assertFalse("rejected key must not survive",
+                replaced.extended.containsKey("symbols.webview.companion_class"));
+        assertTrue(binds(replaced));
+        assertEquals(entry.adBind, replaced.adBind);
+    }
+
+    @Test
+    public void replaceExtendedDropsEmptyValues() {
+        DexKitCache.Entry entry = positive();
+        java.util.LinkedHashMap<String, String> filtered = new java.util.LinkedHashMap<>();
+        filtered.put("symbols.webview.redirect_transform_method", "");
+        filtered.put("symbols.webview.companion_class", null);
+        DexKitCache.Entry replaced = DexKitCache.replaceExtended(entry, filtered);
+        assertTrue(replaced.extended.isEmpty());
+    }
+
+    @Test
+    public void negativeEntryCarriesIndependentFamilyAnchors() throws Exception {
+        java.util.LinkedHashMap<String, String> extended = new java.util.LinkedHashMap<>();
+        extended.put("symbols.passcode.prefs_int_reader_class", "l60.p0");
+        extended.put("symbols.passcode.prefs_int_reader_method", "H");
+        DexKitCache.Entry negative = new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
+                DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
+                "", "", true, "ad:no_match feed:no_match", 0, 0, 812L, 1726051200000L, 0,
+                extended);
+        assertFalse(DexKitCache.fullyResolved(negative));
+        assertTrue(negative.extended.containsKey("symbols.passcode.prefs_int_reader_class"));
+        DexKitCache.Entry parsed = DexKitCache.parse(DexKitCache.serialize(negative));
+        assertTrue(parsed.negative);
+        assertEquals("l60.p0", parsed.extended.get("symbols.passcode.prefs_int_reader_class"));
+        assertEquals("H", parsed.extended.get("symbols.passcode.prefs_int_reader_method"));
     }
 
     private boolean binds(DexKitCache.Entry entry) {
@@ -123,7 +172,7 @@ public final class DexKitCacheTest {
     public void codecCarriesPartialAttempts() throws Exception {
         DexKitCache.Entry entry = new DexKitCache.Entry(VERSION, DIGEST, 7L, 68157440L,
                 DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT, MODULE,
-                "c", "", false, "ad only; feed ambiguous_margin", 1, 2, 41L, 9L, 2);
+                "c", "", false, "ad only; feed ambiguous_margin", 1, 2, 41L, 9L, 2, null);
         DexKitCache.Entry parsed = DexKitCache.parse(DexKitCache.serialize(entry));
         assertEquals(2, parsed.partialAttempts);
         try {
