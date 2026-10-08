@@ -15,6 +15,7 @@ import com.ez.zalopatch.DexKitChatFingerprint;
 import com.ez.zalopatch.DexKitDeletedGroupFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
 import com.ez.zalopatch.DexKitMeFingerprint;
+import com.ez.zalopatch.DexKitMediaFingerprint;
 import com.ez.zalopatch.DexKitPasscodeFingerprint;
 import com.ez.zalopatch.DexKitPilotPolicy;
 import com.ez.zalopatch.DexKitTelemetryFingerprint;
@@ -172,13 +173,13 @@ final class DexKitFamilyResolver {
         return SCAN_KICKED.get();
     }
 
-    static Result resolve(Context context, ClassLoader loader, boolean exactValid,
-                          SymbolSchema.Active fallback) {
-        if (exactValid) {
-            // The exact profile supplies the symbols, so the overlay never runs: say so
-            // instead of leaving the previous unmapped run's family summary on the row.
+    static Result resolve(Context context, ClassLoader loader, SymbolSchema.Active exact,
+                          SymbolPreflight.Result exactPreflight, SymbolSchema.Active fallback) {
+        if (completeExactCoverage(exact, exactPreflight)) {
+            // Profile syntax alone does not prove coverage. Partial exact profiles
+            // leave the remaining families eligible for bound DexKit discovery.
             SelfCheckRegistry.markStatus(FEATURE_OVERLAY, "disabled", "exact profile in use",
-                    "DexKit overlay idle while an exact profile covers this release", "");
+                    "DexKit overlay idle while structural preflight covers every feature family", "");
             return Result.empty();
         }
         DexKitZinstantResolver.HostIdentity host = DexKitZinstantResolver.hostIdentity(context);
@@ -195,12 +196,12 @@ final class DexKitFamilyResolver {
                     read == null || read.entry != null ? ""
                             : "no dexkit result for this host code yet", "");
             if (read != null && read.scanAllowed) {
-                maybeScanInBackground(context, host, null, fallback);
+                maybeScanInBackground(context, host, null, exact, fallback);
             }
             return Result.empty();
         }
         DexKitCache.Entry checked = DexKitFamilyRetry.preflight(read.entry,
-                preflightFilter(context, host, loader, read.entry, fallback));
+                preflightFilter(context, host, loader, read.entry, exact, fallback));
         boolean adOk = checked.adBind.isEmpty()
                 || DexKitZinstantResolver.preflights(loader, checked.adBind, "");
         boolean feedOk = checked.feedBind.isEmpty()
@@ -218,22 +219,42 @@ final class DexKitFamilyResolver {
                     checked.scanDurationMs, checked.scannedAt, checked.partialAttempts,
                     checked.extended, states);
         }
-        Result active = activate(context, loader, host, checked, fallback);
+        Result active = activate(context, loader, host, checked, exact, fallback);
         // Preserve healthy families while recovery runs. The existing provider/mirror
         // claim and global failure backoff still guard every native scan.
         if (read.scanAllowed && !DexKitFamilyRetry.pending(checked).isEmpty()) {
-            maybeScanInBackground(context, host, checked, fallback);
+            maybeScanInBackground(context, host, checked, exact, fallback);
         }
         return active;
     }
 
+    static boolean completeExactCoverage(SymbolSchema.Active exact,
+                                                 SymbolPreflight.Result checked) {
+        if (exact == null || !exact.valid || checked == null) return false;
+        return checked.inboxMedia && checked.inboxCategories && checked.me
+                && checked.bottomTabs && checked.zinstantMessage && checked.zinstantFeed
+                && checked.statusPrivacy && checked.passcodeGrace && checked.backupScheduled
+                && checked.webviewExternalize && checked.telemetryDao && checked.callRecording
+                && checked.inboxRows && checked.bottomTabsSymbols && checked.chatReaction
+                && checked.zinstantSymbols;
+    }
+
+    private static JSONObject composeSymbols(SymbolSchema.Active exact,
+            SymbolSchema.Active fallback, Map<String, String> descriptors,
+            String adBind, String feedBind) {
+        JSONObject exactSymbols = exact != null && exact.valid && exact.root != null
+                ? exact.root.optJSONObject("symbols") : null;
+        JSONObject neighborSymbols = fallback != null && fallback.valid && fallback.root != null
+                ? fallback.root.optJSONObject("symbols") : null;
+        return DexKitOverlay.compose(exactSymbols, neighborSymbols, descriptors, adBind, feedBind);
+    }
+
     private static Result activate(Context context, ClassLoader loader,
                                    DexKitZinstantResolver.HostIdentity host,
-                                   DexKitCache.Entry entry, SymbolSchema.Active fallback) {
-        JSONObject base = fallback != null && fallback.valid && fallback.root != null
-                ? fallback.root.optJSONObject("symbols") : null;
-        JSONObject merged = DexKitOverlay.merge(base, entry.extended, null, null);
-        DexKitOverlay.injectZinstantBinds(merged, entry.adBind, entry.feedBind);
+                                   DexKitCache.Entry entry, SymbolSchema.Active exact,
+                                   SymbolSchema.Active fallback) {
+        JSONObject merged = composeSymbols(exact, fallback, entry.extended,
+                entry.adBind, entry.feedBind);
         String signer = signerSha256(context);
         SymbolSchema.Active overlay = SymbolSchema.dexkitOverlayForHooks(
                 DexKitOverlay.buildProfile(host.versionCode, entry.codeDigest, signer, merged,
@@ -283,7 +304,7 @@ final class DexKitFamilyResolver {
 
     private static void maybeScanInBackground(Context context,
                                               DexKitZinstantResolver.HostIdentity host,
-                                              DexKitCache.Entry previous,
+                                              DexKitCache.Entry previous, SymbolSchema.Active exact,
                                               SymbolSchema.Active fallback) {
         if (!SCAN_KICKED.compareAndSet(false, true)) {
             return;
@@ -295,6 +316,7 @@ final class DexKitFamilyResolver {
                 ? context.getApplicationContext() : context;
         final DexKitZinstantResolver.HostIdentity snapshot = host;
         final DexKitCache.Entry previousEntry = previous;
+        final SymbolSchema.Active exactSnapshot = exact;
         final SymbolSchema.Active fallbackSnapshot = fallback;
         SelfCheckRegistry.markStatus(FEATURE_OVERLAY, "pending", "family scan started",
                 "cold scan off the UI thread; applies at the next restart", "");
@@ -302,7 +324,7 @@ final class DexKitFamilyResolver {
             @Override
             public void run() {
                 try {
-                    runScan(appContext, snapshot, previousEntry, fallbackSnapshot);
+                    runScan(appContext, snapshot, previousEntry, exactSnapshot, fallbackSnapshot);
                 } catch (Throwable throwable) {
                     // An uncaught worker error must be visible as a terminal state, not a
                     // scan that looks like it is still running.
@@ -537,7 +559,8 @@ final class DexKitFamilyResolver {
     }
 
     private static void runScan(Context context, DexKitZinstantResolver.HostIdentity host,
-                                DexKitCache.Entry previous, SymbolSchema.Active fallback) {
+                                DexKitCache.Entry previous, SymbolSchema.Active exact,
+                                SymbolSchema.Active fallback) {
         Set<String> pending = DexKitFamilyRetry.pending(previous);
         long started = System.nanoTime();
         android.os.Bundle claim = DexKitZinstantResolver.claimScan(context, host);
@@ -666,6 +689,9 @@ final class DexKitFamilyResolver {
                     case "call_recording":
                         found = resolveCallCallback(host, anchorStatus);
                         break;
+                    case "media":
+                        found = resolveMediaState(host, anchorStatus);
+                        break;
                     case "chat": found = resolveChat(host, results, anchorStatus); break;
                     default: break;
                 }
@@ -680,7 +706,7 @@ final class DexKitFamilyResolver {
                 DexKitCache.replaceExtended(pilotEntry, extended), states);
         // A negative pilot does not exempt independent families from live validation.
         entry = DexKitFamilyRetry.preflight(entry,
-                preflightFilter(context, host, loaderOf(host), entry, fallback));
+                preflightFilter(context, host, loaderOf(host), entry, exact, fallback));
         XpLog.i("ZaloPatch: DexKit anchor status " + anchorStatusForLog(anchorStatus));
         android.os.Bundle recorded = DexKitZinstantResolver.recordCache(
                 context, DexKitCache.serialize(entry));
@@ -1011,7 +1037,9 @@ final class DexKitFamilyResolver {
         } catch (Throwable ignored) {
             return false;
         }
-        return !"contradicted".equals(calibrateBottomTabs(loader, extended));
+        String calibration = calibrateBottomTabs(loader, extended);
+        return extended.containsKey(DexKitBottomTabsFingerprint.ANCHOR_LIST)
+                ? "full".equals(calibration) : !"contradicted".equals(calibration);
     }
 
     /**
@@ -1052,6 +1080,45 @@ final class DexKitFamilyResolver {
             Object instance = singletonMethod.invoke(null);
             if (instance == null) {
                 return new Calibration("inconclusive", "");
+            }
+            if (extended.containsKey(DexKitBottomTabsFingerprint.ANCHOR_LIST)) {
+                Map<String, Integer> indexes = new LinkedHashMap<>();
+                for (String role : DexKitBottomTabsFingerprint.INDEX_ROLES) {
+                    java.lang.reflect.Field field = state.getDeclaredField(extended.get(
+                            DexKitBottomTabsFingerprint.fieldAnchorForIndexRole(role)));
+                    field.setAccessible(true);
+                    indexes.put(role, field.getInt(instance));
+                }
+                java.lang.reflect.Field list = state.getDeclaredField(
+                        extended.get(DexKitBottomTabsFingerprint.ANCHOR_LIST));
+                list.setAccessible(true);
+                List<?> tabs = (List<?>) list.get(instance);
+                List<String> names = new ArrayList<>();
+                for (Object tab : tabs) {
+                    if (!(tab instanceof Enum<?>)) return new Calibration("contradicted", "non-enum tab");
+                    names.add(((Enum<?>) tab).name());
+                }
+                Map<String, Boolean> enabled = new LinkedHashMap<>();
+                for (String role : DexKitBottomTabsFingerprint.ENABLED_ROLES) {
+                    java.lang.reflect.Field field = state.getDeclaredField(extended.get(
+                            DexKitBottomTabsFingerprint.fieldAnchorForEnabledRole(role)));
+                    field.setAccessible(true);
+                    enabled.put(role, field.getBoolean(instance));
+                }
+                java.lang.reflect.Field icons = state.getDeclaredField(
+                        extended.get("symbols.bottom_tabs.icons_field"));
+                java.lang.reflect.Field preloaded = state.getDeclaredField(
+                        extended.get("symbols.bottom_tabs.preloaded_field"));
+                icons.setAccessible(true);
+                preloaded.setAccessible(true);
+                int[] iconValues = (int[]) icons.get(instance);
+                boolean[] preloadValues = (boolean[]) preloaded.get(instance);
+                if (iconValues == null || preloadValues == null
+                        || iconValues.length != tabs.size() || preloadValues.length != tabs.size()) {
+                    return new Calibration("contradicted", "tab arrays/list mismatch");
+                }
+                return new Calibration(DexKitBottomTabsFingerprint.calibrateState(names, indexes, enabled),
+                        names.toString() + " " + indexes + " " + enabled);
             }
             Map<String, String> roles = new LinkedHashMap<>();
             for (String role : DexKitBottomTabsFingerprint.INDEX_ROLES) {
@@ -1270,7 +1337,9 @@ final class DexKitFamilyResolver {
                 }
             }
         }
-        if (calibration != null && "contradicted".equals(calibration.status)) {
+        if (calibration != null && ("contradicted".equals(calibration.status)
+                || (resolution.anchors.containsKey(DexKitBottomTabsFingerprint.ANCHOR_LIST)
+                && !"full".equals(calibration.status)))) {
             if (anchorStatus != null) {
                 anchorStatus.put("symbols.bottom_tabs.state", "calibration_contradicted");
             }
@@ -1313,7 +1382,7 @@ final class DexKitFamilyResolver {
             List<String> bools = new ArrayList<>();
             String intArray = "";
             String boolArray = "";
-            boolean list = false;
+            String list = "";
             for (java.lang.reflect.Field field : state.getDeclaredFields()) {
                 if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
                     continue;
@@ -1334,7 +1403,8 @@ final class DexKitFamilyResolver {
                     }
                     boolArray = field.getName();
                 } else if (java.util.List.class.isAssignableFrom(type)) {
-                    list = true;
+                    if (!list.isEmpty()) return null;
+                    list = field.getName();
                 }
             }
             return new DexKitBottomTabsFingerprint.FieldLayout(
@@ -1698,6 +1768,109 @@ final class DexKitFamilyResolver {
         resolved.put(DexKitCallPeerFingerprint.ANCHOR_ACCESSOR, resolution.accessor);
         resolved.put(DexKitCallPeerFingerprint.ANCHOR_CONTAINER, resolution.containerField);
         resolved.put(DexKitCallPeerFingerprint.ANCHOR_HANDLE, resolution.handleField);
+        return resolved;
+    }
+
+    /**
+     * The chat big-file expiry state: the enum declaring both expiry states, plus the
+     * static classifier that reads them. Both must be unambiguous; rewriting the wrong
+     * method would remap an unrelated state machine.
+     */
+    private static Map<String, String> resolveMediaState(
+            DexKitZinstantResolver.HostIdentity host,
+            Map<String, String> anchorStatus) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        List<DexKitBridgeRunner.EnumSpec> enumSpecs = new ArrayList<>();
+        enumSpecs.add(new DexKitBridgeRunner.EnumSpec("media.states",
+                DexKitMediaFingerprint.STATE_EXPIRED,
+                DexKitMediaFingerprint.STATE_NOT_EXPIRED));
+        Map<String, DexKitBridgeRunner.ClassQueryResult> enumResults;
+        try {
+            enumResults = DexKitBridgeRunner.findEnumsUsingStrings(host.sourceDir, enumSpecs);
+        } catch (Throwable throwable) {
+            anchorStatus.put("symbols.media.state", "query_error");
+            return resolved;
+        }
+        DexKitBridgeRunner.ClassQueryResult found = enumResults.get("media.states");
+        if (found == null || !found.error.isEmpty()) {
+            anchorStatus.put("symbols.media.state", "query_error");
+            return resolved;
+        }
+        List<DexKitMediaFingerprint.Candidate> candidates = new ArrayList<>();
+        for (String className : found.classNames) {
+            try {
+                Class<?> type = Class.forName(className, false, host.loader);
+                if (!type.isEnum()) {
+                    continue;
+                }
+                List<String> states = new ArrayList<>();
+                for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                    if (field.isEnumConstant()) {
+                        states.add(field.getName());
+                    }
+                }
+                candidates.add(new DexKitMediaFingerprint.Candidate(className, states));
+            } catch (Throwable ignored) {
+            }
+        }
+        DexKitMediaFingerprint.Resolution resolution =
+                DexKitMediaFingerprint.evaluate(candidates);
+        anchorStatus.put("symbols.media.state",
+                resolution.status + " (" + found.classNames.size() + " enum candidates)");
+        if (!resolution.resolved()) {
+            return resolved;
+        }
+        resolved.put(DexKitMediaFingerprint.ANCHOR_STATE_CLASS, resolution.className);
+        resolved.putAll(resolveMediaClassifier(host, resolution.className, anchorStatus));
+        return resolved;
+    }
+
+    private static Map<String, String> resolveMediaClassifier(
+            DexKitZinstantResolver.HostIdentity host, String stateClass,
+            Map<String, String> anchorStatus) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
+        specs.add(new DexKitBridgeRunner.MethodSpec("media.classifier", null, stateClass,
+                null, true));
+        Map<String, DexKitBridgeRunner.QueryResult> results;
+        try {
+            results = DexKitBridgeRunner.scanMethods(host.sourceDir, specs);
+        } catch (Throwable throwable) {
+            anchorStatus.put("symbols.media.classifier", "query_error");
+            return resolved;
+        }
+        DexKitBridgeRunner.QueryResult methods = results.get("media.classifier");
+        if (methods == null || !methods.error.isEmpty()) {
+            anchorStatus.put("symbols.media.classifier", "query_error");
+            return resolved;
+        }
+        String expiredRef = stateClass + "#" + DexKitMediaFingerprint.STATE_EXPIRED;
+        String freshRef = stateClass + "#" + DexKitMediaFingerprint.STATE_NOT_EXPIRED;
+        List<DexKitMediaFingerprint.ClassifierCandidate> candidates = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit hit : methods.hits) {
+            if (hit == null || !hit.isStatic || hit.className.isEmpty()
+                    || hit.methodName.isEmpty()) {
+                continue;
+            }
+            List<String> used = new ArrayList<>();
+            if (hit.usedFields.contains(expiredRef)) {
+                used.add(DexKitMediaFingerprint.STATE_EXPIRED);
+            }
+            if (hit.usedFields.contains(freshRef)) {
+                used.add(DexKitMediaFingerprint.STATE_NOT_EXPIRED);
+            }
+            candidates.add(new DexKitMediaFingerprint.ClassifierCandidate(
+                    hit.className, hit.methodName, used));
+        }
+        DexKitMediaFingerprint.ClassifierResolution resolution =
+                DexKitMediaFingerprint.evaluateClassifier(candidates);
+        anchorStatus.put("symbols.media.classifier",
+                resolution.status + " (" + methods.matchCount + " returning methods)");
+        if (!resolution.resolved()) {
+            return resolved;
+        }
+        resolved.put(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_CLASS, resolution.ownerClass);
+        resolved.put(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_METHOD, resolution.methodName);
         return resolved;
     }
 
@@ -2096,7 +2269,7 @@ final class DexKitFamilyResolver {
      */
     private static Map<String, String> preflightFilter(Context context,
             DexKitZinstantResolver.HostIdentity host, ClassLoader loader, DexKitCache.Entry entry,
-            SymbolSchema.Active fallback) {
+            SymbolSchema.Active exact, SymbolSchema.Active fallback) {
         Map<String, String> kept = new LinkedHashMap<>(entry.extended);
         dropIncompleteFamily(kept,
                 DexKitWebviewFingerprint.ANCHOR_REDIRECT,
@@ -2157,6 +2330,20 @@ final class DexKitFamilyResolver {
             kept.remove(DexKitCallFingerprint.ANCHOR_CALLBACK_CLASS);
         }
         dropIncompleteFamily(kept,
+                DexKitMediaFingerprint.ANCHOR_STATE_CLASS,
+                DexKitMediaFingerprint.ANCHOR_CLASSIFIER_CLASS,
+                DexKitMediaFingerprint.ANCHOR_CLASSIFIER_METHOD);
+        if (kept.containsKey(DexKitMediaFingerprint.ANCHOR_STATE_CLASS)
+                && !SymbolPreflight.checkDexkitMediaState(loader,
+                        kept.get(DexKitMediaFingerprint.ANCHOR_STATE_CLASS),
+                        kept.get(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_CLASS),
+                        kept.get(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_METHOD),
+                        new java.util.ArrayList<String>())) {
+            kept.remove(DexKitMediaFingerprint.ANCHOR_STATE_CLASS);
+            kept.remove(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_CLASS);
+            kept.remove(DexKitMediaFingerprint.ANCHOR_CLASSIFIER_METHOD);
+        }
+        dropIncompleteFamily(kept,
                 DexKitDeletedGroupFingerprint.ANCHOR_CLASS,
                 DexKitDeletedGroupFingerprint.ANCHOR_FIELD,
                 DexKitDeletedGroupFingerprint.ANCHOR_CHECK);
@@ -2188,10 +2375,9 @@ final class DexKitFamilyResolver {
         if (kept.isEmpty()) {
             return kept;
         }
-        // Validate the composed tree: the same neighbouring base activate() merges over.
-        JSONObject base = fallback != null && fallback.valid && fallback.root != null
-                ? fallback.root.optJSONObject("symbols") : null;
-        JSONObject merged = DexKitOverlay.merge(base, kept, null, null);
+        // Scan-time and warm activation must validate the same precedence tree.
+        JSONObject merged = composeSymbols(exact, fallback, kept,
+                entry.adBind, entry.feedBind);
         SymbolSchema.Active overlay = SymbolSchema.dexkitOverlayForHooks(
                 DexKitOverlay.buildProfile(host.versionCode, entry.codeDigest,
                         signerSha256(context), merged, "static-verified"),
@@ -2304,15 +2490,7 @@ final class DexKitFamilyResolver {
         if (kept == null) {
             return false;
         }
-        for (DexKitAnchors.Anchor anchor : DexKitAnchors.all()) {
-            if (anchor.path.startsWith("symbols.bottom_tabs.")) {
-                String value = kept.get(anchor.path);
-                if (value == null || value.isEmpty()) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return DexKitBottomTabsFingerprint.complete(kept);
     }
 
     private static void dropBottomTabsLeaves(Map<String, String> kept) {

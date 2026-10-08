@@ -17,7 +17,7 @@ public final class DexKitFamilyRetry {
     public static final int MAX_ATTEMPTS = 3;
     public static final List<String> FAMILIES = Collections.unmodifiableList(Arrays.asList(
             "zinstant", "webview", "passcode", "backup", "telemetry", "bottom_tabs",
-            "me", "inbox", "chat", "call_recording"));
+            "me", "inbox", "chat", "call_recording", "media"));
     private static final List<String> STATUSES = Arrays.asList(
             "resolved", "no_match", "ambiguous", "query_error", "preflight_rejected");
 

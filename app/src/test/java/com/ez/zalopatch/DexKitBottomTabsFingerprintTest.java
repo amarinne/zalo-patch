@@ -252,6 +252,96 @@ public final class DexKitBottomTabsFingerprintTest {
                 DexKitBottomTabsFingerprint.calibrate(sizeMismatch, roles));
     }
 
+    @Test
+    public void octoberRemovedMethodsUseCompleteFieldRoute() {
+        Map<String, List<DexKitBottomTabsFingerprint.MethodHit>> dumps = new LinkedHashMap<>();
+        dumps.put("zh1.b0", octoberMethods("zh1.b0"));
+        assertEquals("zh1.b0", DexKitBottomTabsFingerprint.selectStateClass(dumps));
+        DexKitBottomTabsFingerprint.Resolution result = DexKitBottomTabsFingerprint.resolve(
+                "zh1.b0", octoberMethods("zh1.b0"), octoberLayout());
+        assertTrue(result.status, result.resolved());
+        assertTrue(DexKitBottomTabsFingerprint.complete(result.anchors));
+        assertEquals("h", result.anchors.get(DexKitBottomTabsFingerprint.ANCHOR_REBUILD));
+        assertFalse(result.anchors.containsKey(DexKitBottomTabsFingerprint.ANCHOR_REFRESH));
+        assertFalse(result.anchors.containsKey(DexKitBottomTabsFingerprint.ANCHOR_GROUP_FLAG));
+        assertFalse(result.anchors.containsKey(DexKitBottomTabsFingerprint.ANCHOR_SIZE));
+        assertFalse(result.anchors.containsKey("symbols.bottom_tabs.phonebook_index_method"));
+        dumps.put("other.State", octoberMethods("other.State"));
+        assertEquals("", DexKitBottomTabsFingerprint.selectStateClass(dumps));
+    }
+
+    @Test
+    public void compactRebuildRequiresAllEnumAndStateFields() {
+        List<DexKitBottomTabsFingerprint.MethodHit> methods = octoberMethods("zh1.b0");
+        DexKitBottomTabsFingerprint.MethodHit rebuild = methods.get(methods.size() - 1);
+        rebuild.usedFields.remove("zh1.z#GROUP");
+        assertEquals("void_pattern_changed", DexKitBottomTabsFingerprint.resolve(
+                "zh1.b0", methods, octoberLayout()).status);
+        methods = octoberMethods("zh1.b0");
+        methods.get(methods.size() - 1).usedFields.remove("zh1.b0#i");
+        assertFalse(DexKitBottomTabsFingerprint.resolve("zh1.b0", methods,
+                octoberLayout()).resolved());
+    }
+
+    @Test
+    public void compactGetterAmbiguityAndMixedOldLeavesFailClosed() {
+        List<DexKitBottomTabsFingerprint.MethodHit> methods = octoberMethods("zh1.b0");
+        methods.add(getter("zh1.b0", "extra", "int", "zh1.b0#b"));
+        assertFalse(DexKitBottomTabsFingerprint.resolve("zh1.b0", methods,
+                octoberLayout()).resolved());
+        Map<String, String> leaves = DexKitBottomTabsFingerprint.resolve(
+                "zh1.b0", octoberMethods("zh1.b0"), octoberLayout()).anchors;
+        leaves.put(DexKitBottomTabsFingerprint.ANCHOR_REFRESH, "q");
+        assertFalse(DexKitBottomTabsFingerprint.complete(leaves));
+    }
+
+    @Test
+    public void fieldCalibrationUsesEnumIdentityIncludingMeBeforeMore() {
+        List<String> tabs = Arrays.asList("MESSAGE", "PHONEBOOK", "GROUP", "ME", "MORE");
+        Map<String, Integer> indexes = new LinkedHashMap<>();
+        String[] names = {"MESSAGE", "PHONEBOOK", "GROUP", "DISCOVERY", "TIMELINE", "MORE", "ME"};
+        for (int i = 0; i < names.length; i++) {
+            indexes.put(DexKitBottomTabsFingerprint.INDEX_ROLES[i], tabs.indexOf(names[i]));
+        }
+        indexes.put("size", tabs.size());
+        assertEquals("full", DexKitBottomTabsFingerprint.calibrateFields(tabs, indexes));
+        Map<String, Boolean> enabled = new LinkedHashMap<>();
+        for (String role : DexKitBottomTabsFingerprint.ENABLED_ROLES) {
+            enabled.put(role, tabs.contains(role.toUpperCase(java.util.Locale.ROOT)));
+        }
+        assertEquals("full", DexKitBottomTabsFingerprint.calibrateState(tabs, indexes, enabled));
+        enabled.put("group", false);
+        assertEquals("contradicted", DexKitBottomTabsFingerprint.calibrateState(tabs, indexes, enabled));
+        indexes.put("more_index", 3);
+        assertEquals("contradicted", DexKitBottomTabsFingerprint.calibrateFields(tabs, indexes));
+    }
+
+    private DexKitBottomTabsFingerprint.FieldLayout octoberLayout() {
+        return new DexKitBottomTabsFingerprint.FieldLayout(
+                Arrays.asList("b", "c", "d", "e", "f", "g", "h", "i"),
+                Arrays.asList("j", "k", "l", "m", "n", "q"), "p", "o", "a");
+    }
+
+    private List<DexKitBottomTabsFingerprint.MethodHit> octoberMethods(String owner) {
+        List<DexKitBottomTabsFingerprint.MethodHit> hits = new ArrayList<>();
+        hits.add(staticMethod(owner, "e", owner));
+        hits.add(new DexKitBottomTabsFingerprint.MethodHit(owner, "d", "int",
+                Arrays.asList("zh1.z"), true, new ArrayList<String>(), new ArrayList<String>()));
+        hits.add(getter(owner, "a", "boolean", owner + "#l"));
+        hits.add(getter(owner, "b", "int", owner + "#e"));
+        hits.add(getter(owner, "c", "int", owner + "#d"));
+        hits.add(getter(owner, "f", "int", owner + "#b"));
+        hits.add(getter(owner, "g", "int", owner + "#f"));
+        List<String> fields = new ArrayList<>();
+        for (String field : Arrays.asList("a", "b", "c", "d", "e", "f", "g", "h", "i",
+                "j", "k", "l", "m", "n", "o", "p", "q")) fields.add(owner + "#" + field);
+        for (String name : Arrays.asList("MESSAGE", "PHONEBOOK", "GROUP", "DISCOVERY",
+                "TIMELINE", "MORE", "ME")) fields.add("zh1.z#" + name);
+        hits.add(new DexKitBottomTabsFingerprint.MethodHit(owner, "h", "void",
+                new ArrayList<String>(), false, fields, new ArrayList<String>()));
+        return hits;
+    }
+
     private List<DexKitBottomTabsFingerprint.MethodHit> stateMethods() {
         return stateMethods(STATE);
     }

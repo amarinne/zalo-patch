@@ -428,24 +428,31 @@ public final class ZaloArtifactState {
     }
 
     public static String currentEvidenceEpoch(Context context) {
-        String lightweight = currentLightweight(context);
-        SymbolSchema.Active profile = SymbolSchema.active(context);
-        String profileHash = profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "";
-        String generation = context != null
-                && android.os.Process.myUid() == context.getApplicationInfo().uid
-                ? TweakStore.preferences(context).getString(KEY_GENERATION, "")
+        return ZaloArtifactIdentity.sha256(evidenceIdentity(context).epochMaterial());
+    }
+
+    static ArtifactEvidenceIdentity evidenceIdentity(Context context) {
+        boolean moduleProcess = SymbolSchema.isModuleProcess(context);
+        SharedPreferences preferences = moduleProcess ? TweakStore.preferences(context) : null;
+        String generation = moduleProcess ? preferences.getString(KEY_GENERATION, "")
                 : HookConfig.getRawString(KEY_GENERATION, "");
-        return ZaloArtifactIdentity.sha256(lightweight + "\n" + generation + "\n"
-                + BuildConfig.VERSION_CODE + "\n" + profileHash);
+        String profileHash = moduleProcess ? preferences.getString(KEY_PROFILE_SHA256, "")
+                : HookConfig.getRawString(KEY_PROFILE_SHA256, "");
+        return new ArtifactEvidenceIdentity(currentLightweight(context), generation,
+                BuildConfig.VERSION_CODE, profileHash);
     }
 
     public static void addEvidence(Intent intent, Context context) {
-        SymbolSchema.Active profile = SymbolSchema.activeForProcess(context);
-        intent.putExtra("artifact_lightweight", currentLightweight(context));
-        intent.putExtra("artifact_generation", HookConfig.getRawString(KEY_GENERATION, ""));
-        intent.putExtra("module_version_code", BuildConfig.VERSION_CODE);
-        intent.putExtra("profile_sha256", profile.valid
-                ? ZaloArtifactIdentity.sha256(profile.json) : "");
+        ArtifactEvidenceIdentity identity = evidenceIdentity(context);
+        intent.putExtra("artifact_lightweight", identity.lightweight);
+        intent.putExtra("artifact_generation", identity.generation);
+        intent.putExtra("module_version_code", identity.moduleVersion);
+        intent.putExtra("profile_sha256", identity.profileHash);
+        // These describe the hook process route. They never participate in artifact admission.
+        SymbolSchema.Active route = SymbolSchema.activeForProcess(context);
+        intent.putExtra("route_profile_sha256", route.valid
+                ? ZaloArtifactIdentity.sha256(route.json) : "");
+        intent.putExtra("route_profile_source", route.source);
     }
 
     private static void requestFromHook(Context context) {

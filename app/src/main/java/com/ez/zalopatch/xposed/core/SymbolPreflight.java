@@ -252,6 +252,18 @@ final class SymbolPreflight {
             Class<?> state = load(definition.optString("state_class", ""), loader, candidateErrors);
             load(definition.optString("enum_class", ""), loader, candidateErrors);
             if (state != null) {
+                if (definition.optBoolean("preserve_icon_arrays", false)) {
+                    field(state, definition.optString("tabs_field", ""), java.util.ArrayList.class,
+                            candidateErrors);
+                }
+                JSONObject enabled = definition.optJSONObject("enabled_fields");
+                if (enabled != null) {
+                    java.util.Iterator<String> enabledKeys = enabled.keys();
+                    while (enabledKeys.hasNext()) {
+                        field(state, enabled.optString(enabledKeys.next(), ""), Boolean.TYPE,
+                                candidateErrors);
+                    }
+                }
                 JSONObject indexes = definition.optJSONObject("index_fields");
                 if (indexes != null) {
                     java.util.Iterator<String> keys = indexes.keys();
@@ -735,10 +747,56 @@ final class SymbolPreflight {
     }
 
     /**
-     * Live validation for a DexKit-resolved active-peer manager: static self accessor, a
-     * container field whose type declares the long handle. Without this the overlay could
-     * arm a manager that yields no usable peer handle.
+     * Live validation for a DexKit-resolved chat expiry state: the enum declares both
+     * states and the classifier is a static method returning the enum. Without this the
+     * overlay could arm a rewrite on an unrelated state machine.
      */
+    static boolean checkDexkitMediaState(ClassLoader loader, String stateClass,
+                                        String classifierClass, String classifierMethod,
+                                        List<String> errors) {
+        if (stateClass == null || stateClass.isEmpty() || classifierClass == null
+                || classifierClass.isEmpty() || classifierMethod == null
+                || classifierMethod.isEmpty()) {
+            errors.add("media state anchors incomplete");
+            return false;
+        }
+        try {
+            Class<?> state = Class.forName(stateClass, false, loader);
+            if (!state.isEnum()) {
+                errors.add(stateClass + " is not an enum");
+                return false;
+            }
+            boolean expired = false;
+            boolean fresh = false;
+            for (java.lang.reflect.Field field : state.getDeclaredFields()) {
+                if (!field.isEnumConstant()) {
+                    continue;
+                }
+                if ("BIG_FILE_EXPIRED".equals(field.getName())) {
+                    expired = true;
+                } else if ("BIG_FILE_NOT_EXPIRED".equals(field.getName())) {
+                    fresh = true;
+                }
+            }
+            if (!expired || !fresh) {
+                errors.add(stateClass + " declares no expiry states");
+                return false;
+            }
+            Class<?> owner = Class.forName(classifierClass, false, loader);
+            Method classifier = declaredMethodInHierarchy(owner, classifierMethod);
+            if (classifier == null
+                    || !Modifier.isStatic(classifier.getModifiers())
+                    || classifier.getReturnType() != state) {
+                errors.add(classifierClass + "#" + classifierMethod
+                        + " static state classifier missing");
+                return false;
+            }
+            return true;
+        } catch (Throwable throwable) {
+            errors.add(familyError("media_state", throwable));
+            return false;
+        }
+    }
     static boolean checkDexkitCallPeer(ClassLoader loader, String className, String accessor,
                                        String containerField, String handleField,
                                        List<String> errors) {
@@ -1185,6 +1243,10 @@ final class SymbolPreflight {
             if (webviewExternalize) count++;
             if (telemetryDao) count++;
             if (callRecording) count++;
+            if (inboxRows) count++;
+            if (bottomTabsSymbols) count++;
+            if (chatReaction) count++;
+            if (zinstantSymbols) count++;
             return count;
         }
 

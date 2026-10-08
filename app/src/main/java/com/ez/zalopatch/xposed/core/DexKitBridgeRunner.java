@@ -618,6 +618,83 @@ final class DexKitBridgeRunner {
         return results;
     }
 
+    /** One "enum classes using these strings" spec. */
+    static final class EnumSpec {
+        final String id;
+        final String[] usingStrings;
+
+        EnumSpec(String id, String... usingStrings) {
+            this.id = id == null ? "" : id;
+            this.usingStrings = usingStrings == null ? new String[0] : usingStrings;
+        }
+    }
+
+    /**
+     * Class names of the enums using each spec's strings, keyed by spec id. One bridge
+     * session for the whole batch. Field names are matched in the resolver against the
+     * live loader; the bridge only prefilters on enum shape plus string usage.
+     */
+    static java.util.Map<String, ClassQueryResult> findEnumsUsingStrings(String apkPath,
+                                                                         java.util.List<EnumSpec> specs) {
+        java.util.Map<String, ClassQueryResult> results = new java.util.LinkedHashMap<>();
+        if (apkPath == null || apkPath.isEmpty() || specs == null || specs.isEmpty()) {
+            return results;
+        }
+        org.luckypray.dexkit.DexKitBridge bridge = null;
+        try {
+            bridge = org.luckypray.dexkit.DexKitBridge.create(apkPath);
+            for (EnumSpec spec : specs) {
+                if (spec == null || spec.id.isEmpty() || spec.usingStrings.length == 0
+                        || results.containsKey(spec.id)) {
+                    continue;
+                }
+                results.put(spec.id, queryEnumsUsingStrings(bridge, spec));
+            }
+        } catch (Throwable throwable) {
+            String error = throwable.getClass().getSimpleName()
+                    + (throwable.getMessage() == null ? "" : ": " + throwable.getMessage());
+            for (EnumSpec spec : specs) {
+                if (spec != null && !spec.id.isEmpty() && !results.containsKey(spec.id)) {
+                    results.put(spec.id, new ClassQueryResult(0, error));
+                }
+            }
+        } finally {
+            if (bridge != null) {
+                try {
+                    bridge.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return results;
+    }
+
+    private static ClassQueryResult queryEnumsUsingStrings(
+            org.luckypray.dexkit.DexKitBridge bridge, EnumSpec spec) {
+        try {
+            org.luckypray.dexkit.query.matchers.FieldsMatcher fields =
+                    org.luckypray.dexkit.query.matchers.FieldsMatcher.create();
+            for (String name : spec.usingStrings) {
+                fields.addForName(name);
+            }
+            org.luckypray.dexkit.result.ClassDataList found = bridge.findClass(
+                    org.luckypray.dexkit.query.FindClass.create().matcher(
+                            org.luckypray.dexkit.query.matchers.ClassMatcher.create()
+                                    .superClass("java.lang.Enum")
+                                    .usingEqStrings(spec.usingStrings)
+                                    .fields(fields)));
+            ClassQueryResult result = new ClassQueryResult(found.size(), "");
+            for (org.luckypray.dexkit.result.ClassData clazz : found) {
+                result.classNames.add(clazz.getName());
+            }
+            return result;
+        } catch (Throwable throwable) {
+            String error = throwable.getClass().getSimpleName()
+                    + (throwable.getMessage() == null ? "" : ": " + throwable.getMessage());
+            return new ClassQueryResult(0, error);
+        }
+    }
+
     /** One "methods that invoke this target" spec. */
     static final class InvokerSpec {
         final String id;

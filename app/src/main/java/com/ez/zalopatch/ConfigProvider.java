@@ -407,21 +407,20 @@ public final class ConfigProvider extends ContentProvider {
                                ContentValues values) {
         TweakStore.initialize(context);
         SharedPreferences preferences = TweakStore.preferences(context);
-        String currentLightweight = ZaloArtifactState.currentLightweight(context);
-        String currentEpoch = ZaloArtifactState.currentEvidenceEpoch(context);
-        String currentGeneration = preferences.getString(ZaloArtifactState.KEY_GENERATION, "");
-        String currentProfileHash = preferences.getString(ZaloArtifactState.KEY_PROFILE_SHA256, "");
-        Integer moduleVersionCode = values.getAsInteger("module_version_code");
-        if (!currentLightweight.equals(values.getAsString("artifact_lightweight"))
-                || !currentGeneration.equals(values.getAsString("artifact_generation"))
-                || moduleVersionCode == null || moduleVersionCode != BuildConfig.VERSION_CODE
-                || !currentProfileHash.equals(values.getAsString("profile_sha256"))) {
+        ArtifactEvidenceIdentity identity = ZaloArtifactState.evidenceIdentity(context);
+        String currentEpoch = ZaloArtifactIdentity.sha256(identity.epochMaterial());
+        if (!identity.matches(values.getAsString("artifact_lightweight"),
+                values.getAsString("artifact_generation"),
+                values.getAsInteger("module_version_code"),
+                values.getAsString("profile_sha256"))) {
             return -2;
         }
         String storedEpoch = preferences.getString(KEY_SELF_CHECK_GENERATION, "");
         String storedRunId = preferences.getString(KEY_SELF_CHECK_RUN_ID, "");
         String runId = values.getAsString("run_id");
-        if (runId == null || runId.isEmpty()) return -3;
+        int admission = ArtifactEvidenceIdentity.processAdmission(currentEpoch, storedEpoch,
+                storedRunId, feature, runId);
+        if (admission != 1) return admission;
         if (!currentEpoch.equals(storedEpoch)) {
             clearSelfCheck(preferences);
             storedRunId = "";

@@ -19,6 +19,7 @@ import com.ez.zalopatch.ZaloContactResolver;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.io.File;
@@ -84,6 +85,15 @@ public final class CallRecordingFeature extends Feature {
     private static volatile Method recordMethod;
     private static volatile Method isInCallMethod;
     private static final AtomicInteger FINALIZER_ACTIVE = new AtomicInteger();
+    /**
+     * Cached peer-manager binding. The overlay is adopted once per Zalo process before
+     * features hook, so resolving the four {@code symbols.call_recording} anchors on every
+     * callback wastes provider reads plus class/method/field scans on the call path.
+     * Resolved once here; the per-call rebind then costs three reflective invokes.
+     */
+    private static final Object PEER_BINDING_LOCK = new Object();
+    private static volatile PeerBinding PEER_BINDING;
+    private static final AtomicInteger PEER_BINDING_REPORTED = new AtomicInteger();
 
     /**
      * Hot reload guard: true while a recording is capturing or a finalization is
@@ -429,6 +439,72 @@ public final class CallRecordingFeature extends Feature {
         if (bound != null) {
             return bound;
         }
+        PeerBinding binding = peerBinding(callback == null
+                ? null : callback.getClass().getClassLoader());
+        if (binding == null || !binding.usable()) {
+            return null;
+        }
+        try {
+            Object manager = binding.accessor.invoke(null);
+            Object container = binding.container.get(manager);
+            if (container == null) {
+                return null;
+            }
+            long peerHandle = binding.handle.getLong(container);
+            if (peerHandle == 0L) {
+                return null;
+            }
+            Session session = SESSIONS_BY_PEER.get(peerHandle);
+            if (session == null) {
+                session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
+                SESSIONS_BY_PEER.put(peerHandle, session);
+            }
+            SESSIONS.put(callback, session);
+            SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
+                    binding.manager.getName() + "#" + binding.accessor.getName(),
+                    "callback bound to current peer");
+            return session;
+        } catch (Throwable throwable) {
+            // A drifted or renamed symbol is migration work, not an unexpected hook
+            // failure; only a throwing callback belongs in the failed tier. Reported
+            // once: the binding is process-static, so per-call reports would spam the
+            // provider boundary on every new call.
+            if (PEER_BINDING_REPORTED.compareAndSet(0, 1)) {
+                if (isMissingSymbol(throwable)) {
+                    SelfCheckRegistry.markStale(FEATURE_HOOKS,
+                            binding.manager.getName() + " peer handle",
+                            throwable.getClass().getSimpleName() + " " + throwable.getMessage());
+                } else {
+                    SelfCheckRegistry.markFailed(FEATURE_HOOKS,
+                            binding.manager.getName() + " peer handle", throwable);
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the obfuscated peer-manager chain once per process and caches the
+     * reflective handles. Absent anchors cache an unusable binding internally and
+     * return null, so later calls skip the provider reads.
+     */
+    private static PeerBinding peerBinding(ClassLoader loader) {
+        PeerBinding cached = PEER_BINDING;
+        if (cached != null) {
+            return cached.usable() ? cached : null;
+        }
+        synchronized (PEER_BINDING_LOCK) {
+            cached = PEER_BINDING;
+            if (cached != null) {
+                return cached.usable() ? cached : null;
+            }
+            PeerBinding resolved = resolvePeerBinding(loader);
+            PEER_BINDING = resolved;
+            return resolved.usable() ? resolved : null;
+        }
+    }
+
+    private static PeerBinding resolvePeerBinding(ClassLoader loader) {
         Context context = HookConfig.resolveModuleContextForHooks();
         String managerClassName = SymbolSchema.stringForHooks(context,
                 "symbols.call_recording.peer_manager_class", "").value;
@@ -439,36 +515,102 @@ public final class CallRecordingFeature extends Feature {
         String handleField = SymbolSchema.stringForHooks(context,
                 "symbols.call_recording.peer_handle_field", "").value;
         if (managerClassName.isEmpty() || instanceMethod.isEmpty()
-                || containerField.isEmpty() || handleField.isEmpty()) return null;
+                || containerField.isEmpty() || handleField.isEmpty()) {
+            return PeerBinding.unusable();
+        }
         try {
-            Class<?> managerClass = XpReflect.findClass(managerClassName,
-                    callback.getClass().getClassLoader());
-            Object manager = XpReflect.callStaticMethod(managerClass, instanceMethod);
-            Object container = XpReflect.getObjectField(manager, containerField);
-            if (container == null) return null;
-            long peerHandle = XpReflect.getLongField(container, handleField);
-            if (peerHandle == 0L) return null;
-            Session session = SESSIONS_BY_PEER.get(peerHandle);
-            if (session == null) {
-                session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
-                SESSIONS_BY_PEER.put(peerHandle, session);
+            Class<?> managerClass = XpReflect.findClass(managerClassName, loader);
+            Method accessor = null;
+            for (Class<?> current = managerClass; current != null;
+                 current = current.getSuperclass()) {
+                for (Method candidate : current.getDeclaredMethods()) {
+                    if (instanceMethod.equals(candidate.getName())
+                            && Modifier.isStatic(candidate.getModifiers())
+                            && candidate.getParameterTypes().length == 0
+                            && candidate.getReturnType() == managerClass) {
+                        accessor = candidate;
+                        break;
+                    }
+                }
+                if (accessor != null) {
+                    break;
+                }
             }
-            SESSIONS.put(callback, session);
-            SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
-                    managerClassName + "#" + instanceMethod,
-                    "callback bound to current peer");
-            return session;
+            Field container = null;
+            for (Class<?> current = managerClass; current != null;
+                 current = current.getSuperclass()) {
+                for (Field candidate : current.getDeclaredFields()) {
+                    if (containerField.equals(candidate.getName())
+                            && !Modifier.isStatic(candidate.getModifiers())) {
+                        container = candidate;
+                        break;
+                    }
+                }
+                if (container != null) {
+                    break;
+                }
+            }
+            Field handle = null;
+            if (container != null) {
+                for (Class<?> current = container.getType(); current != null;
+                     current = current.getSuperclass()) {
+                    for (Field candidate : current.getDeclaredFields()) {
+                        if (handleField.equals(candidate.getName())
+                                && candidate.getType() == Long.TYPE) {
+                            handle = candidate;
+                            break;
+                        }
+                    }
+                    if (handle != null) {
+                        break;
+                    }
+                }
+            }
+            if (accessor == null || container == null || handle == null) {
+                reportPeerBindingStale(managerClassName, "peer handle shape missing");
+                return PeerBinding.unusable();
+            }
+            accessor.setAccessible(true);
+            container.setAccessible(true);
+            handle.setAccessible(true);
+            return new PeerBinding(managerClass, accessor, container, handle);
         } catch (Throwable throwable) {
-            // A drifted or renamed symbol is migration work, not an unexpected hook
-            // failure; only a throwing callback belongs in the failed tier.
             if (isMissingSymbol(throwable)) {
-                SelfCheckRegistry.markStale(FEATURE_HOOKS, managerClassName + " peer handle",
+                reportPeerBindingStale(managerClassName,
                         throwable.getClass().getSimpleName() + " " + throwable.getMessage());
-            } else {
+            } else if (PEER_BINDING_REPORTED.compareAndSet(0, 1)) {
                 SelfCheckRegistry.markFailed(FEATURE_HOOKS,
                         managerClassName + " peer handle", throwable);
             }
-            return null;
+            return PeerBinding.unusable();
+        }
+    }
+
+    private static void reportPeerBindingStale(String managerClassName, String reason) {
+        if (PEER_BINDING_REPORTED.compareAndSet(0, 1)) {
+            SelfCheckRegistry.markStale(FEATURE_HOOKS, managerClassName + " peer handle", reason);
+        }
+    }
+
+    private static final class PeerBinding {
+        final Class<?> manager;
+        final Method accessor;
+        final Field container;
+        final Field handle;
+
+        PeerBinding(Class<?> manager, Method accessor, Field container, Field handle) {
+            this.manager = manager;
+            this.accessor = accessor;
+            this.container = container;
+            this.handle = handle;
+        }
+
+        static PeerBinding unusable() {
+            return new PeerBinding(null, null, null, null);
+        }
+
+        boolean usable() {
+            return manager != null && accessor != null && container != null && handle != null;
         }
     }
 

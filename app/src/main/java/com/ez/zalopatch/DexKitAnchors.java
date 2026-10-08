@@ -63,12 +63,17 @@ public final class DexKitAnchors {
         ANCHORS.add(new Anchor("symbols.call_recording.peer_manager_instance_method", Kind.METHOD));
         ANCHORS.add(new Anchor("symbols.call_recording.peer_container_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.call_recording.peer_handle_field", Kind.FIELD));
+        // Chat big-file expiry state.
+        ANCHORS.add(new Anchor("symbols.media.state_class", Kind.CLASS));
+        ANCHORS.add(new Anchor("symbols.media.state_classifier_class", Kind.CLASS));
+        ANCHORS.add(new Anchor("symbols.media.state_classifier_method", Kind.METHOD));
         // Inbox deleted-group store.
         ANCHORS.add(new Anchor("symbols.inbox.deleted_group_repository_class", Kind.CLASS));
         ANCHORS.add(new Anchor("symbols.inbox.deleted_group_repository_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.inbox.deleted_group_check_method", Kind.METHOD));
         // Bottom-tabs state family (flat leaves; the overlay synthesizes
         // current_tab_symbols/current_methods from exactly this set).
+        ANCHORS.add(new Anchor("symbols.bottom_tabs.tabs_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.bottom_tabs.state_class", Kind.CLASS));
         ANCHORS.add(new Anchor("symbols.bottom_tabs.enum_class", Kind.CLASS));
         ANCHORS.add(new Anchor("symbols.bottom_tabs.singleton_method", Kind.METHOD));

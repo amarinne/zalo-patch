@@ -43,6 +43,7 @@ public final class DexKitBottomTabsFingerprint {
     public static final String ANCHOR_HIDE_DISCOVERY =
             "symbols.bottom_tabs.hide_discovery_method";
     public static final String ANCHOR_GROUP_FLAG = "symbols.bottom_tabs.group_flag_method";
+    public static final String ANCHOR_LIST = "symbols.bottom_tabs.tabs_field";
     public static final String ANCHOR_SIZE = "symbols.bottom_tabs.size_method";
 
     public static final String QUERY_STATE_CANDIDATES = "bottomtabs.state_candidates";
@@ -109,6 +110,7 @@ public final class DexKitBottomTabsFingerprint {
         public final String intArrayField;
         public final String boolArrayField;
         public final boolean hasListField;
+        public final String listField;
 
         public FieldLayout(List<String> intFields, List<String> boolFields,
                            String intArrayField, String boolArrayField,
@@ -120,7 +122,18 @@ public final class DexKitBottomTabsFingerprint {
             this.intArrayField = intArrayField == null ? "" : intArrayField;
             this.boolArrayField = boolArrayField == null ? "" : boolArrayField;
             this.hasListField = hasListField;
+            this.listField = "";
         }
+        public FieldLayout(List<String> intFields, List<String> boolFields,
+                           String intArrayField, String boolArrayField, String listField) {
+            this.intFields = intFields == null ? new ArrayList<>() : new ArrayList<>(intFields);
+            this.boolFields = boolFields == null ? new ArrayList<>() : new ArrayList<>(boolFields);
+            this.intArrayField = intArrayField == null ? "" : intArrayField;
+            this.boolArrayField = boolArrayField == null ? "" : boolArrayField;
+            this.listField = listField == null ? "" : listField;
+            this.hasListField = listField != null && !listField.isEmpty();
+        }
+
     }
 
     /** Resolution outcome: role-anchored names plus a machine-readable status. */
@@ -214,8 +227,9 @@ public final class DexKitBottomTabsFingerprint {
 
     /**
      * Picks the state class from method dumps keyed by candidate class. Exactly one
-     * candidate may carry the full shape (8 int getters, 3 void methods, one static
-     * self-singleton, one static enum-to-int); otherwise the family stays unavailable.
+     * candidate may carry the legacy getter shape or the compact October shape.
+     * Both still require one static self-singleton and enum-to-int method; compact
+     * candidates must subsequently prove the complete rebuild field/enum linkage.
      */
     public static String selectStateClass(Map<String, List<MethodHit>> dumps) {
         if (dumps == null) {
@@ -244,6 +258,7 @@ public final class DexKitBottomTabsFingerprint {
         }
         int ints = 0;
         int voids = 0;
+        int bools = 0;
         int selfSingletons = 0;
         int enumToInts = 0;
         for (MethodHit hit : hits) {
@@ -252,6 +267,8 @@ public final class DexKitBottomTabsFingerprint {
             }
             if (isIntGetter(hit)) {
                 ints++;
+            } else if (isBoolGetter(hit)) {
+                bools++;
             } else if (isVoidMethod(hit)) {
                 voids++;
             } else if (hit.isStatic && hit.paramTypes.isEmpty()
@@ -263,7 +280,8 @@ public final class DexKitBottomTabsFingerprint {
                 enumToInts++;
             }
         }
-        return ints == 8 && voids == 3 && selfSingletons == 1 && enumToInts == 1;
+        return selfSingletons == 1 && enumToInts == 1
+                && ((ints == 8 && voids == 3) || (ints == 4 && bools == 1 && voids == 1));
     }
 
     private static boolean isEnumType(String type) {
@@ -315,15 +333,18 @@ public final class DexKitBottomTabsFingerprint {
         if (icon == null || icon.isEmpty() || enumClass.isEmpty()) {
             return new Resolution(anchors, "", "no_icon_resolver");
         }
-        Map<String, String> voids = resolveVoids(stateClass, hits);
+        boolean compact = isCompact(hits);
+        Map<String, String> voids = compact
+                ? resolveCompactRebuild(stateClass, enumClass, hits, layout)
+                : resolveVoids(stateClass, hits);
         if (voids == null) {
             return new Resolution(anchors, "", "void_pattern_changed");
         }
-        Map<String, String> indexes = resolveIndexes(hits, layout);
+        Map<String, String> indexes = resolveIndexes(hits, layout, compact);
         if (indexes == null) {
             return new Resolution(anchors, "", "index_mapping_failed");
         }
-        Map<String, String> flags = resolveFlags(hits, layout);
+        Map<String, String> flags = compact ? resolveCompactFlags(hits, layout) : resolveFlags(hits, layout);
         if (flags == null) {
             return new Resolution(anchors, "", "flag_mapping_failed");
         }
@@ -332,11 +353,18 @@ public final class DexKitBottomTabsFingerprint {
         anchors.put(ANCHOR_SINGLETON, singleton);
         anchors.put(ANCHOR_ICON, icon);
         anchors.put(ANCHOR_REBUILD, voids.get("rebuild"));
-        anchors.put(ANCHOR_REFRESH, voids.get("refresh"));
+        if (compact) {
+            anchors.put(ANCHOR_LIST, layout.listField);
+        } else {
+            anchors.put(ANCHOR_REFRESH, voids.get("refresh"));
+            anchors.put(ANCHOR_GROUP_FLAG, flags.get("group_flag"));
+        }
         anchors.put(ANCHOR_HIDE_DISCOVERY, flags.get("hide_discovery"));
-        anchors.put(ANCHOR_GROUP_FLAG, flags.get("group_flag"));
         for (int index = 0; index < INDEX_ROLES.length; index++) {
-            anchors.put(anchorForIndexRole(INDEX_ROLES[index]), indexes.get(INDEX_ROLES[index]));
+            String getter = indexes.get(INDEX_ROLES[index]);
+            if (getter != null) {
+                anchors.put(anchorForIndexRole(INDEX_ROLES[index]), getter);
+            }
         }
         for (int index = 0; index < layout.intFields.size() && index < 8; index++) {
             anchors.put(fieldAnchorForIndexRole(INDEX_ROLES[index]), layout.intFields.get(index));
@@ -419,6 +447,11 @@ public final class DexKitBottomTabsFingerprint {
      * fields, and all 8 fields must be covered exactly once.
      */
     static Map<String, String> resolveIndexes(List<MethodHit> hits, FieldLayout layout) {
+        return resolveIndexes(hits, layout, false);
+    }
+
+    static Map<String, String> resolveIndexes(List<MethodHit> hits, FieldLayout layout,
+                                               boolean compact) {
         Map<String, String> roles = new LinkedHashMap<>();
         boolean[] covered = new boolean[8];
         int count = 0;
@@ -435,10 +468,105 @@ public final class DexKitBottomTabsFingerprint {
             roles.put(INDEX_ROLES[position], hit.name);
             count++;
         }
-        if (count != 8) {
+        if (count != (compact ? 4 : 8)) {
+            return null;
+        }
+        if (compact && (!roles.containsKey("message_index")
+                || !roles.containsKey("group_index") || !roles.containsKey("discovery_index")
+                || !roles.containsKey("timeline_index"))) {
             return null;
         }
         return roles;
+    }
+
+    private static boolean isCompact(List<MethodHit> hits) {
+        int voids = 0;
+        for (MethodHit hit : hits) {
+            if (hit != null && isVoidMethod(hit)) voids++;
+        }
+        return voids == 1;
+    }
+
+    // October removed refresh and four getters. Its only rebuild still touches the
+    // complete state and all named enum values. Missing methods stay absent.
+    private static Map<String, String> resolveCompactRebuild(String owner, String enumClass,
+            List<MethodHit> hits, FieldLayout layout) {
+        if (layout.listField == null || layout.listField.isEmpty()) return null;
+        MethodHit rebuild = null;
+        for (MethodHit hit : hits) {
+            if (hit != null && owner.equals(hit.owner) && isVoidMethod(hit)) {
+                if (rebuild != null) return null;
+                rebuild = hit;
+            }
+        }
+        if (rebuild == null) return null;
+        List<String> required = new ArrayList<>(layout.intFields);
+        required.addAll(layout.boolFields.subList(0, 5));
+        required.add(layout.intArrayField);
+        required.add(layout.boolArrayField);
+        required.add(layout.listField);
+        for (String field : required) {
+            if (!rebuild.usedFields.contains(owner + "#" + field)) return null;
+        }
+        for (String tab : new String[]{"MESSAGE", "PHONEBOOK", "GROUP", "DISCOVERY",
+                "TIMELINE", "MORE", "ME"}) {
+            if (!rebuild.usedFields.contains(enumClass + "#" + tab)) return null;
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("rebuild", rebuild.name);
+        return result;
+    }
+
+    private static Map<String, String> resolveCompactFlags(List<MethodHit> hits,
+                                                            FieldLayout layout) {
+        String discovery = null;
+        for (MethodHit hit : hits) {
+            if (hit != null && isBoolGetter(hit)) {
+                if (discovery != null || !singleUsedField(hit).equals(layout.boolFields.get(2))) {
+                    return null;
+                }
+                discovery = hit.name;
+            }
+        }
+        if (discovery == null) return null;
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("hide_discovery", discovery);
+        return result;
+    }
+
+    /** Shared family completeness gate for overlay synthesis and cache admission. */
+    public static boolean complete(Map<String, String> leaves) {
+        if (leaves == null) return false;
+        for (String key : new String[]{ANCHOR_STATE_CLASS, ANCHOR_ENUM_CLASS,
+                ANCHOR_SINGLETON, ANCHOR_ICON, ANCHOR_REBUILD, ANCHOR_HIDE_DISCOVERY}) {
+            if (!present(leaves, key)) return false;
+        }
+        for (String role : INDEX_ROLES) {
+            if (!present(leaves, fieldAnchorForIndexRole(role))) return false;
+        }
+        for (String role : ENABLED_ROLES) {
+            if (!present(leaves, fieldAnchorForEnabledRole(role))) return false;
+        }
+        if (!present(leaves, "symbols.bottom_tabs.icons_field")
+                || !present(leaves, "symbols.bottom_tabs.preloaded_field")) return false;
+        if (present(leaves, ANCHOR_LIST)) {
+            if (present(leaves, ANCHOR_REFRESH) || present(leaves, ANCHOR_GROUP_FLAG)) return false;
+            for (String role : INDEX_ROLES) {
+                boolean retained = "message_index".equals(role) || "group_index".equals(role)
+                        || "discovery_index".equals(role) || "timeline_index".equals(role);
+                if (present(leaves, anchorForIndexRole(role)) != retained) return false;
+            }
+            return true;
+        }
+        if (!present(leaves, ANCHOR_REFRESH) || !present(leaves, ANCHOR_GROUP_FLAG)) return false;
+        for (String role : INDEX_ROLES) {
+            if (!present(leaves, anchorForIndexRole(role))) return false;
+        }
+        return true;
+    }
+
+    private static boolean present(Map<String, String> leaves, String key) {
+        return leaves.get(key) != null && !leaves.get(key).isEmpty();
     }
 
     /**
@@ -478,6 +606,33 @@ public final class DexKitBottomTabsFingerprint {
         resolved.put("group_flag", groupReader);
         resolved.put("hide_discovery", discoveryReader);
         return resolved;
+    }
+
+    public static String calibrateState(List<String> tabs, Map<String, Integer> indexes,
+                                        Map<String, Boolean> enabled) {
+        String result = calibrateFields(tabs, indexes);
+        if (!"full".equals(result)) return result;
+        if (enabled == null) return "inconclusive";
+        for (String role : ENABLED_ROLES) {
+            Boolean value = enabled.get(role);
+            if (value == null || value != tabs.contains(role.toUpperCase(java.util.Locale.ROOT))) {
+                return "contradicted";
+            }
+        }
+        return "full";
+    }
+
+    public static String calibrateFields(List<String> tabs, Map<String, Integer> indexes) {
+        if (tabs == null || indexes == null || tabs.size() < 2) return "inconclusive";
+        String[] names = {"MESSAGE", "PHONEBOOK", "GROUP", "DISCOVERY", "TIMELINE", "MORE", "ME"};
+        java.util.HashSet<String> unique = new java.util.HashSet<>(tabs);
+        if (unique.size() != tabs.size()) return "contradicted";
+        for (int i = 0; i < names.length; i++) {
+            Integer value = indexes.get(INDEX_ROLES[i]);
+            if (value == null || value != tabs.indexOf(names[i])) return "contradicted";
+        }
+        Integer size = indexes.get("size");
+        return size != null && size == tabs.size() ? "full" : "contradicted";
     }
 
     /**

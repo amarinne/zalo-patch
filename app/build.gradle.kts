@@ -103,8 +103,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 295
-        versionName = "0.4.291"
+        versionCode = 319
+        versionName = "0.4.315"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -259,11 +259,14 @@ val generateBundledSymbolSchema by tasks.registering {
             objectAt(bottomTabs["current_methods"], "profile[$index].symbols.bottom_tabs.current_methods")
         }
 
-        val escaped = json
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\r", "\\r")
-            .replace("\n", "\\n\" +\n        \"")
+        // Bound each Java constant below the modified UTF-8 limit and prevent folding.
+        val escapedChunks = json.chunked(16_000).joinToString(",\n        ") { chunk ->
+            "\"" + chunk
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n\" +\n        \"") + "\""
+        }
         val outputFile = output.get().asFile
         outputFile.parentFile.mkdirs()
         outputFile.writeText(
@@ -276,7 +279,7 @@ val generateBundledSymbolSchema by tasks.registering {
                 }
 
                 static String json() {
-                    return "$escaped";
+                    return String.join("", $escapedChunks);
                 }
             }
             """.trimIndent()

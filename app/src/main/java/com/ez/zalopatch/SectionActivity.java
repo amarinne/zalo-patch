@@ -641,6 +641,9 @@ public final class SectionActivity {
             if (Tweaks.KEY_BLOCK_TYPING_STATUS.equals(key)) {
                 return new String[]{Tweaks.KEY_BLOCK_TYPING_STATUS};
             }
+            if (Tweaks.KEY_KEEP_EXPIRED_MEDIA.equals(key)) {
+                return new String[]{Tweaks.KEY_KEEP_EXPIRED_MEDIA};
+            }
             if (Tweaks.KEY_CALL_RECORDING_PROBE.equals(key)) {
                 return new String[]{"calls.recording_probe.lifecycle",
                         "calls.recording_probe.stream_registration", "calls.recording_probe.audio"};

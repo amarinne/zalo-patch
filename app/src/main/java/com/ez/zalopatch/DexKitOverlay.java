@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Iterator;
 import java.util.Map;
 
 /**
@@ -93,6 +94,73 @@ public final class DexKitOverlay {
         }
     }
 
+    /**
+     * Composes the tree used by both scan preflight and warm activation. Exact
+     * nonempty leaves win over discovered descriptors and neighbouring symbols.
+     * Missing exact leaves remain eligible for discovery; the caller still checks
+     * every complete family against the live classloader before adoption.
+     */
+    public static JSONObject compose(JSONObject exactSymbols, JSONObject neighborSymbols,
+            Map<String, String> dexkit, String adBind, String feedBind) {
+        JSONObject merged = merge(neighborSymbols, dexkit, null, null);
+        injectZinstantBinds(merged, adBind, feedBind);
+        try {
+            copyExactLeaves(merged, exactSymbols);
+            return merged;
+        } catch (org.json.JSONException exception) {
+            throw new IllegalStateException("exact symbol overlay merge failed", exception);
+        }
+    }
+
+    /** A composition base must supply a populated leaf that the exact profile lacks. */
+    public static boolean hasSupplementalSymbols(JSONObject exact, JSONObject candidate) {
+        if (candidate == null) return false;
+        Iterator<String> keys = candidate.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = candidate.opt(key);
+            Object exactValue = exact == null ? null : exact.opt(key);
+            if (value instanceof JSONObject) {
+                if (hasSupplementalSymbols(exact == null ? null : exact.optJSONObject(key),
+                        (JSONObject) value)) return true;
+            } else if (isPopulatedLeaf(value) && !isPopulatedLeaf(exactValue)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPopulatedLeaf(Object value) {
+        return value != null && value != JSONObject.NULL
+                && !(value instanceof JSONObject)
+                && (!(value instanceof String) || !((String) value).isEmpty())
+                && (!(value instanceof JSONArray) || ((JSONArray) value).length() > 0);
+    }
+
+    private static void copyExactLeaves(JSONObject target, JSONObject exact)
+            throws org.json.JSONException {
+        if (exact == null) return;
+        Iterator<String> keys = exact.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = exact.opt(key);
+            if (value == null || value == JSONObject.NULL) continue;
+            if (value instanceof String && ((String) value).isEmpty()) continue;
+            if (value instanceof JSONArray && ((JSONArray) value).length() == 0) continue;
+            if (value instanceof JSONObject) {
+                JSONObject child = target.optJSONObject(key);
+                if (child == null) child = new JSONObject();
+                copyExactLeaves(child, (JSONObject) value);
+                target.put(key, child);
+            } else {
+                // Copy arrays too: profile arrays are atomic candidate definitions,
+                // never a mix of neighbouring and exact-artifact candidates.
+                target.put(key, value instanceof JSONArray
+                        ? new JSONArray(value.toString()) : value);
+            }
+        }
+    }
+
     private static JSONObject mergeOrThrow(JSONObject baseSymbols, Map<String, String> dexkit,
                                    Map<String, List<String>> dexkitLists,
                                    Map<String, Integer> dexkitIntegers)
@@ -152,6 +220,8 @@ public final class DexKitOverlay {
         if (merged == null || dexkit == null) {
             return;
         }
+        if (!DexKitBottomTabsFingerprint.complete(dexkit)) return;
+        boolean compact = dexkit.containsKey(DexKitBottomTabsFingerprint.ANCHOR_LIST);
         String[] methods = {"singleton", "icon_resolver", "rebuild", "refresh",
                 "hide_discovery", "group_flag", "message_index", "phonebook_index",
                 "group_index", "discovery_index", "timeline_index", "more_index",
@@ -165,9 +235,7 @@ public final class DexKitOverlay {
             return;
         }
         for (String role : methods) {
-            if (!take(dexkit, leaves, "symbols.bottom_tabs." + role + "_method")) {
-                return;
-            }
+            take(dexkit, leaves, "symbols.bottom_tabs." + role + "_method");
         }
         for (String role : indexFields) {
             if (!take(dexkit, leaves, "symbols.bottom_tabs." + role + "_index_field")) {
@@ -202,6 +270,11 @@ public final class DexKitOverlay {
             index.put(role, leaves.get("symbols.bottom_tabs." + role + "_index_field"));
         }
         JSONObject definition = new JSONObject();
+        if (compact) {
+            definition.put("tabs_field", dexkit.get(DexKitBottomTabsFingerprint.ANCHOR_LIST));
+            definition.put("preserve_icon_arrays", true);
+            bottom.remove("tabs_field");
+        }
         definition.put("state_class", leaves.get("symbols.bottom_tabs.state_class"));
         definition.put("enum_class", leaves.get("symbols.bottom_tabs.enum_class"));
         definition.put("group_tab_field", "GROUP");

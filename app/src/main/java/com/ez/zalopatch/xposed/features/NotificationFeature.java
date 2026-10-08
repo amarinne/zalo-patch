@@ -7,6 +7,7 @@ import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.CallRecordingMetadata;
 import com.ez.zalopatch.NotificationHistoryPayload;
 import com.ez.zalopatch.NotificationPromoClassifier;
+import com.ez.zalopatch.NotificationRuleStore;
 import com.ez.zalopatch.SelfCheckReceiver;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
@@ -35,6 +36,18 @@ public final class NotificationFeature extends Feature {
         boolean filterEnabled = HookConfig.isEnabled(Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS);
         boolean historyEnabled = HookConfig.isEnabled(Tweaks.KEY_RECORD_NOTIFICATION_HISTORY);
         boolean callMetadataEnabled = HookConfig.isEnabled(Tweaks.KEY_AUTO_RECORD_CALLS);
+        Context fixtureContext = HookConfig.resolveFallbackContextForHooks();
+        if (fixtureContext != null) NotificationE2eFixture.cleanupOrphans(fixtureContext);
+        if (HookConfig.isDebugEnabled()) {
+            // The OFF baseline still needs the fixed end-to-end notification fixture.
+            try {
+                hookBehaveProbe(historyEnabled, callMetadataEnabled);
+                SelfCheckRegistry.markInstalled(OBSERVER_FEATURE, BEHAVE_ACTION, 1);
+            } catch (Throwable throwable) {
+                SelfCheckRegistry.markStale(OBSERVER_FEATURE, BEHAVE_ACTION,
+                        throwable.getClass().getSimpleName());
+            }
+        }
         if (!filterEnabled && !historyEnabled && !callMetadataEnabled) {
             SelfCheckRegistry.markDisabled(FEATURE, "NotificationManager.notify");
             SelfCheckRegistry.markDisabled(OBSERVER_FEATURE, "NotificationManager.notify");
@@ -102,6 +115,93 @@ public final class NotificationFeature extends Feature {
             SelfCheckRegistry.markFailed(OBSERVER_FEATURE, "NotificationManager.notify", throwable);
             SelfCheckRegistry.markFailed(HISTORY_FEATURE, "NotificationManager.notify", throwable);
             log("Failed to hook notifications: " + throwable);
+        }
+    }
+
+    /** Test-only probe action for headless verification (`zalo-verify behave notifications`). */
+    static final String BEHAVE_ACTION = "com.ez.zalopatch.behave.NOTIFICATION_PROBE";
+
+    /**
+     * Runs the live classifier over a synthetic notification and reports the verdict on
+     * the existing observer row. When the device carries a custom keyword rule, the
+     * fixture contains it and a promo verdict is expected; otherwise the run still
+     * proves the probe path with a plain verdict. Read-only: nothing is posted,
+     * stored, or filtered.
+     */
+    private void hookBehaveProbe(boolean historyEnabledAtHookInstall,
+                                 boolean callMetadataEnabledAtHookInstall) throws Throwable {
+        Context context = HookConfig.resolveFallbackContextForHooks();
+        if (context == null) {
+            throw new IllegalStateException("application context unavailable");
+        }
+        android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ignored, android.content.Intent intent) {
+                if (intent != null && NotificationE2eFixture.ACTION.equals(intent.getAction())) {
+                    if (HookConfig.isDebugEnabled() && NotificationE2eFixture.isDebugCurrentlyEnabled()) {
+                        NotificationE2eFixture.receive(context, intent,
+                                historyEnabledAtHookInstall, callMetadataEnabledAtHookInstall, goAsync());
+                    }
+                    return;
+                }
+                if (!HookConfig.isDebugCurrentlyEnabled() || intent == null
+                        || !BEHAVE_ACTION.equals(intent.getAction())) {
+                    return;
+                }
+                String keyword = firstCustomKeyword();
+                Notification test = buildProbeNotification(context, keyword);
+                String detail;
+                try {
+                    boolean promo = NotificationPromoClassifier.isPromoNotification(test);
+                    detail = keyword == null
+                            ? "rules=none promo=" + promo
+                            : "keyword=yes promo=" + promo;
+                } catch (Throwable throwable) {
+                    detail = "probe=threw:" + throwable.getClass().getSimpleName();
+                }
+                SelfCheckRegistry.markSuppressed(OBSERVER_FEATURE, "behave:notifications", detail);
+            }
+        };
+        // Shell broadcasts cross UIDs. The E2E action accepts only a bounded run ID,
+        // posts fixed notifications, and cleans only its own tags and new channels.
+        android.content.IntentFilter filter = new android.content.IntentFilter(BEHAVE_ACTION);
+        filter.addAction(NotificationE2eFixture.ACTION);
+        androidx.core.content.ContextCompat.registerReceiver(context, receiver,
+                filter,
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED);
+    }
+
+    private static String firstCustomKeyword() {
+        try {
+            NotificationRuleStore.RuleSet rules = HookConfig.notificationRules();
+            if (rules == null) {
+                return null;
+            }
+            for (String keyword : rules.list(NotificationRuleStore.Type.KEYWORD_BLOCKLIST)) {
+                if (keyword != null && !keyword.trim().isEmpty()) {
+                    return keyword.trim();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static Notification buildProbeNotification(Context context, String keyword) {
+        String trailer = keyword == null ? "routine check-in" : "featuring " + keyword;
+        try {
+            return new Notification.Builder(context, "behave_probe")
+                    .setContentTitle("Behave probe " + trailer)
+                    .setContentText("Synthetic classifier fixture " + trailer)
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .build();
+        } catch (Throwable ignored) {
+            Notification bare = new Notification();
+            android.os.Bundle extras = bare.extras != null
+                    ? bare.extras : new android.os.Bundle();
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Behave probe " + trailer);
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Synthetic classifier fixture");
+            return bare;
         }
     }
 

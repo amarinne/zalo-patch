@@ -260,6 +260,11 @@ public final class HookConfig {
         return cached != null ? cached : readDebugEnabled();
     }
 
+    /** Reads the live gate for exported diagnostic receivers. */
+    public static boolean isDebugCurrentlyEnabled() {
+        return readDebugEnabled();
+    }
+
     private static boolean readDebugEnabled() {
         try {
             Class<?> sp = Class.forName("android.os.SystemProperties");

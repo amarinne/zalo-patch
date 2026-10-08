@@ -5,6 +5,7 @@ import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
+import com.ez.zalopatch.xposed.core.TypedFieldAccess;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -31,6 +32,8 @@ public final class InboxFeature extends Feature {
     private static final String FEATURE_TAP_DIAGNOSTICS = "inbox.tap_diagnostics";
     private static final String FEATURE_DELETED_GROUP = "inbox.deleted_group";
     private static final String MESSAGE_VIEW_CLASS = "com.zing.zalo.ui.maintab.msg.MessagesView";
+    private static final String CONVERSATION_CLASS =
+            "com.zing.zalo.data.chat.model.tabmessage.Conversation";
     // Native category integers. Field name is schema-provided and drifts between Zalo builds.
     private static final int CAT_NORMAL = 1;
     private static final int CAT_OA = 4;
@@ -45,6 +48,8 @@ public final class InboxFeature extends Feature {
     // Process default comes from restart-applied settings; chip taps remain session-only.
     private volatile String sessionSelectedCategory = CATEGORY_FOCUSED;
     private volatile InboxListUpdate lastInboxListUpdate;
+    private java.lang.ref.WeakReference<android.view.View> e2eRecycler = new java.lang.ref.WeakReference<>(null);
+    private java.lang.ref.WeakReference<android.view.View> e2eStrangers = new java.lang.ref.WeakReference<>(null);
     private volatile Object liveMessagesView;
     private InboxNativeRoute strangerRoute;
     private Class<?> strangerDestination;
@@ -72,6 +77,27 @@ public final class InboxFeature extends Feature {
     private static final java.util.Set<String> schemaSourceChecks = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> schemaFallbackPaths = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final java.util.Set<String> symbolFailuresLogged = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    /**
+     * Per-process row anchors + resolved handles. Schema names are read once through the
+     * existing helpers (so {@code inbox.schema} source bookkeeping is unchanged); per-row
+     * reflection then uses cached handles. The overlay is adopted before features hook, so
+     * these are stable for the process. {@code messageAdapterClass()} stays dynamic:
+     * runtime discovery can set {@code discoveredAdapterClass} after install.
+     */
+    private static final Object ROW_ANCHORS_LOCK = new Object();
+    private static volatile RowAnchors ROW_ANCHORS;
+    private static final Map<String, Field> ROW_FIELDS = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> ROW_FIELD_MISSES =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Map<String, Method> ROW_METHODS = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> ROW_METHOD_MISSES =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Map<String, Field> ROW_CONVERSATION_FIELDS = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> ROW_CONVERSATION_FIELD_MISSES =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static volatile Class<?> DELETED_GROUP_CLASS;
+    private static volatile boolean DELETED_GROUP_CLASS_MISS;
 
     // Debug diagnostics gate on debug.zalopatch at use time. Never gate permanent feature hooks on
     // diagnostics state.
@@ -142,6 +168,7 @@ public final class InboxFeature extends Feature {
                     rowsCompatibilityError);
         }
         boolean debugEnabled = HookConfig.isDebugEnabled();
+        SelfCheckRegistry.markDisabled("inbox.e2e", "host acceptance off");
         if (!debugEnabled) {
             SelfCheckRegistry.markDisabled(FEATURE_TAP_DIAGNOSTICS, "debug diagnostics off");
         }
@@ -176,6 +203,58 @@ public final class InboxFeature extends Feature {
                     "LayoutInflater#inflate(" + MEDIA_BOX_LAYOUT + ")",
                     this::hookMediaBoxLayout);
         }
+        if ((configuredHideMedia || configuredCategories) && HookConfig.isDebugEnabled()) {
+            // Debug-started processes only: headless stimulus for `zalo-verify behave`.
+            runGuarded("Inbox behave stimulus", FEATURE_FILTER, BEHAVE_ACTION,
+                    this::hookBehaveStimulus);
+            runGuarded("Inbox E2E observation", "inbox.e2e", InboxE2eProbe.ACTION,
+                    () -> InboxE2eProbe.register(() -> lastInboxListUpdate, () -> e2eRecycler.get(), () -> e2eStrangers.get(),
+                            () -> sessionSelectedCategory,
+                            () -> schemaString("symbols.inbox.adapter_item_method", ""),
+                            () -> rowAnchors().rowUidMethod));
+        }
+    }
+
+    /** Test-only stimulus action for headless verification (`zalo-verify behave inbox`). */
+    static final String BEHAVE_ACTION = "com.ez.zalopatch.behave.INBOX_CATEGORY";
+    private static final String BEHAVE_EXTRA_CATEGORY = "category";
+
+    /**
+     * Applies a session chip selection and re-runs the filter from the cached list — the
+     * same path a chip tap drives, minus chip restyling. Session-only: no pref writes and
+     * no navigation. The receiver exists only in debug-started processes and every
+     * broadcast re-checks the debug gate plus a fixed category allow-list, so the
+     * exported flag (required for shell-sent test broadcasts) cannot reach normal use.
+     */
+    private void hookBehaveStimulus() throws Throwable {
+        android.content.Context context = HookConfig.resolveFallbackContextForHooks();
+        if (context == null) {
+            throw new IllegalStateException("application context unavailable");
+        }
+        android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context ignored, android.content.Intent intent) {
+                if (!HookConfig.isDebugCurrentlyEnabled() || intent == null
+                        || !BEHAVE_ACTION.equals(intent.getAction())) {
+                    return;
+                }
+                String category = intent.getStringExtra(BEHAVE_EXTRA_CATEGORY);
+                if (!CATEGORY_NORMAL.equals(category) && !CATEGORY_GROUPS.equals(category)
+                        && !CATEGORY_OA.equals(category) && !CATEGORY_FOCUSED.equals(category)) {
+                    return;
+                }
+                sessionSelectedCategory = category;
+                refreshInbox();
+                SelfCheckRegistry.markSuppressed(FEATURE_FILTER_BAR, "behave:" + category,
+                        "stimulus applied");
+            }
+        };
+        android.content.IntentFilter filter = new android.content.IntentFilter(BEHAVE_ACTION);
+        // Exported: shell-sent test broadcasts cross UIDs, and NOT_EXPORTED would deny
+        // them (verified on device). Harmless by construction: debug-started processes
+        // only, debug re-checked per broadcast, fixed category allow-list, session-only.
+        androidx.core.content.ContextCompat.registerReceiver(context, receiver, filter,
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED);
     }
 
     // ---------------------------------------------------------------- list filtering
@@ -490,8 +569,15 @@ public final class InboxFeature extends Feature {
         }
 
         List<Object> filtered = new ArrayList<>(original.size());
+        List<Object> mediaFiltered = new ArrayList<>(original.size());
         int classifiable = 0;
+        int removedMedia = 0;
         for (Object item : original) {
+            if (hideMedia && isVerifiedMediaBoxRow(item)) {
+                removedMedia++;
+                continue;
+            }
+            mediaFiltered.add(item);
             if (applyCategory) {
                 if (conversationOf(item) != null) {
                     classifiable++;
@@ -502,10 +588,14 @@ public final class InboxFeature extends Feature {
             }
             filtered.add(item);
         }
+        if (removedMedia > 0) {
+            SelfCheckRegistry.incrementHit(FEATURE_MEDIA_BOX, messageAdapterClass(),
+                    "verified Media Box rows removed=" + removedMedia);
+        }
         if (applyCategory && classifiable == 0 && !original.isEmpty()) {
             logSymbolFailure("filter", messageAdapterClass(),
                     new IllegalStateException("no classifiable items; showing all"));
-            return new ArrayList<>(original);
+            return mediaFiltered;
         }
         if (applyCategory) {
             log("Filter category=" + category + " in=" + original.size() + " out=" + filtered.size());
@@ -517,6 +607,18 @@ public final class InboxFeature extends Feature {
                     "media-only in=" + original.size() + " out=" + filtered.size());
         }
         return filtered;
+    }
+
+    private boolean isVerifiedMediaBoxRow(Object item) {
+        String mapped = schemaString("symbols.inbox.media_box_item_class", "");
+        if (item == null || mapped.isEmpty() || !mapped.equals(item.getClass().getName())) return false;
+        try {
+            // October's adapter binds this exact row to MediaBoxModuleView. The
+            // native synthetic UID guards against an unrelated rotated class.
+            return "-8".equals(callRowMethod(item, rowAnchors().rowUidMethod));
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     // ---------------------------------------------------------------- module-owned filter bar
@@ -539,6 +641,13 @@ public final class InboxFeature extends Feature {
                 new XpHooks.After() {
             @Override
             public void after(XpHooks.HookParam param) {
+                if (HookConfig.isDebugEnabled() && param.thisObject instanceof android.view.View) {
+                    android.view.View observed = (android.view.View) param.thisObject;
+                    int contactListId = observed.getResources().getIdentifier("contactlist", "id", "com.zing.zalo");
+                    if (contactListId != 0 && observed.getId() == contactListId) {
+                        e2eStrangers = new java.lang.ref.WeakReference<>(observed);
+                    }
+                }
                 if (!shouldShowInboxLab()) {
                     return;
                 }
@@ -549,6 +658,7 @@ public final class InboxFeature extends Feature {
                 captureMessagesView(adapter);
                 if (param.thisObject instanceof android.view.View) {
                     final android.view.View rv = (android.view.View) param.thisObject;
+                    if (HookConfig.isDebugEnabled()) e2eRecycler = new java.lang.ref.WeakReference<>(rv);
                     rv.post(new Runnable() {
                         @Override
                         public void run() {
@@ -805,6 +915,7 @@ public final class InboxFeature extends Feature {
         for (android.widget.TextView chip : filterChips) {
             String tag = String.valueOf(chip.getTag());
             boolean selected = isChipSelected(tag);
+            chip.setSelected(selected);
             android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
             bg.setCornerRadius(dp(chip.getContext(), 16));
             bg.setColor(selected ? 0xFF0068FF : 0xFF2A2A2A);
@@ -891,25 +1002,203 @@ public final class InboxFeature extends Feature {
     }
 
     private static String conversationFieldName(Class<?> clazz) {
-        String found = null;
-        for (Class<?> current = clazz; current != null && current != Object.class;
-                current = current.getSuperclass()) {
-            for (Field field : current.getDeclaredFields()) {
-                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
-                    continue;
-                }
-                if ("com.zing.zalo.data.chat.model.tabmessage.Conversation"
-                        .equals(field.getType().getName())) {
-                    if (found != null) {
-                        // Ambiguous: more than one Conversation field. Fail closed rather
-                        // than guess which one carries the row's conversation (F5).
-                        return null;
-                    }
-                    found = field.getName();
+        Field found = TypedFieldAccess.uniqueField(clazz, CONVERSATION_CLASS);
+        return found == null ? null : found.getName();
+    }
+
+    /** Schema names read once; per-row reflection below reuses them without provider reads. */
+    private static final class RowAnchors {
+        final String conversationField;
+        final String categoryIntField;
+        final String conversationUidField;
+        final String topOutField;
+        final String topOutValueField;
+        final String rowUidMethod;
+        final String deletedGroupRepositoryClass;
+        final String deletedGroupRepositoryField;
+        final String deletedGroupCheckMethod;
+
+        private RowAnchors() {
+            conversationField = conversationField();
+            categoryIntField = categoryIntField();
+            conversationUidField = conversationUidField();
+            topOutField = topOutField();
+            topOutValueField = topOutValueField();
+            rowUidMethod = rowUidMethod();
+            deletedGroupRepositoryClass = deletedGroupRepositoryClass();
+            deletedGroupRepositoryField = deletedGroupRepositoryField();
+            deletedGroupCheckMethod = deletedGroupCheckMethod();
+        }
+    }
+
+    private static RowAnchors rowAnchors() {
+        RowAnchors cached = ROW_ANCHORS;
+        if (cached == null) {
+            synchronized (ROW_ANCHORS_LOCK) {
+                cached = ROW_ANCHORS;
+                if (cached == null) {
+                    cached = new RowAnchors();
+                    ROW_ANCHORS = cached;
                 }
             }
         }
+        return cached;
+    }
+
+    /**
+     * Same match rule as {@code XpReflect.getObjectField}: first declared field with this
+     * name walking up the hierarchy. Resolved once per class; misses cached so unmapped
+     * rows skip the scan.
+     */
+    private static Field rowField(Class<?> owner, String name) {
+        if (owner == null || name == null || name.isEmpty()) {
+            return null;
+        }
+        String key = owner.getName() + "#" + name;
+        Field hit = ROW_FIELDS.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        if (ROW_FIELD_MISSES.contains(key)) {
+            return null;
+        }
+        Field found = null;
+        for (Class<?> current = owner; current != null; current = current.getSuperclass()) {
+            for (Field candidate : current.getDeclaredFields()) {
+                if (name.equals(candidate.getName())) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found != null) {
+                break;
+            }
+        }
+        if (found == null) {
+            ROW_FIELD_MISSES.add(key);
+            return null;
+        }
+        found.setAccessible(true);
+        ROW_FIELDS.put(key, found);
         return found;
+    }
+
+    private static Object readField(Object target, String name) throws Throwable {
+        Field field = rowField(target == null ? null : target.getClass(), name);
+        if (field == null) {
+            throw new NoSuchFieldException(
+                    (target == null ? "<null>" : target.getClass().getName())
+                            + "#" + name + " not found");
+        }
+        return field.get(target);
+    }
+
+    /**
+     * Same match rule as {@code XpReflect.callMethod} for our call shapes: first declared
+     * method with this name and arity walking up, instance side. The single-arg call sites
+     * pass a {@code String}, which every non-primitive parameter accepts, so the arity
+     * check carries the same outcome as the assignability check there.
+     */
+    private static Method rowMethod(Class<?> owner, String name, boolean staticOnly, int arity) {
+        if (owner == null || name == null || name.isEmpty()) {
+            return null;
+        }
+        String key = owner.getName() + "#" + name + "/" + arity;
+        Method hit = ROW_METHODS.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        if (ROW_METHOD_MISSES.contains(key)) {
+            return null;
+        }
+        Method found = null;
+        for (Class<?> current = owner; current != null; current = current.getSuperclass()) {
+            for (Method candidate : current.getDeclaredMethods()) {
+                if (!name.equals(candidate.getName())
+                        || java.lang.reflect.Modifier.isStatic(candidate.getModifiers()) != staticOnly
+                        || candidate.getParameterTypes().length != arity) {
+                    continue;
+                }
+                if (arity > 0) {
+                    boolean placeable = true;
+                    for (Class<?> parameter : candidate.getParameterTypes()) {
+                        if (parameter.isPrimitive()) {
+                            placeable = false;
+                            break;
+                        }
+                    }
+                    if (!placeable) {
+                        continue;
+                    }
+                }
+                found = candidate;
+                break;
+            }
+            if (found != null) {
+                break;
+            }
+        }
+        if (found == null) {
+            ROW_METHOD_MISSES.add(key);
+            return null;
+        }
+        found.setAccessible(true);
+        ROW_METHODS.put(key, found);
+        return found;
+    }
+
+    private static Object callRowMethod(Object target, String name, Object... args) throws Throwable {
+        Method method = rowMethod(target == null ? null : target.getClass(),
+                name, false, args == null ? 0 : args.length);
+        if (method == null) {
+            throw new NoSuchMethodException(
+                    (target == null ? "<null>" : target.getClass().getName())
+                            + "#" + name + "(" + (args == null ? 0 : args.length)
+                            + " args) not found");
+        }
+        return method.invoke(target, args);
+    }
+
+    /**
+     * Mapped conversation field first, structural scan second (F5) — the same order as the
+     * uncached path — resolved once per row class.
+     */
+    private static Field conversationFieldFor(Class<?> rowClass) {
+        if (rowClass == null) {
+            return null;
+        }
+        String key = rowClass.getName();
+        Field hit = ROW_CONVERSATION_FIELDS.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        if (ROW_CONVERSATION_FIELD_MISSES.contains(key)) {
+            return null;
+        }
+        Field found = TypedFieldAccess.resolve(rowClass, rowAnchors().conversationField,
+                CONVERSATION_CLASS);
+        if (found == null) {
+            ROW_CONVERSATION_FIELD_MISSES.add(key);
+            return null;
+        }
+        ROW_CONVERSATION_FIELDS.put(key, found);
+        return found;
+    }
+
+    private static Class<?> deletedGroupClass(RowAnchors anchors, ClassLoader loader) {
+        Class<?> cached = DELETED_GROUP_CLASS;
+        if (cached != null || DELETED_GROUP_CLASS_MISS) {
+            return cached;
+        }
+        // Single Zalo loader per process in practice; a miss stays missed, matching the
+        // fail-soft unavailable flag at the call site.
+        Class<?> loaded = XpReflect.findClassIfExists(anchors.deletedGroupRepositoryClass, loader);
+        if (loaded == null) {
+            DELETED_GROUP_CLASS_MISS = true;
+            return null;
+        }
+        DELETED_GROUP_CLASS = loaded;
+        return loaded;
     }
 
     private String readUid(Object item) {
@@ -920,7 +1209,7 @@ public final class InboxFeature extends Feature {
             return conversationUid(conversationOf(item));
         }
         try {
-            return String.valueOf(XpReflect.callMethod(item, rowUidMethod()));
+            return String.valueOf(callRowMethod(item, rowAnchors().rowUidMethod));
         } catch (Throwable t) {
             return "?";
         }
@@ -939,11 +1228,11 @@ public final class InboxFeature extends Feature {
             if (conversation == null) {
                 return -1;
             }
-            String categoryField = categoryIntField();
+            String categoryField = rowAnchors().categoryIntField;
             if (categoryField == null || categoryField.isEmpty()) {
                 return -1;
             }
-            Object value = XpReflect.getObjectField(conversation, categoryField);
+            Object value = readField(conversation, categoryField);
             return value instanceof Integer ? (Integer) value : -1;
         } catch (Throwable throwable) {
             logSymbolFailure("field-chain", classNameOf(item) + "#" + conversationField()
@@ -992,8 +1281,9 @@ public final class InboxFeature extends Feature {
             return false;
         }
         if (isDeletedGroupUid(uid)) {
+            RowAnchors groupAnchors = rowAnchors();
             SelfCheckRegistry.markSuppressed(FEATURE_DELETED_GROUP,
-                    deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(),
+                    groupAnchors.deletedGroupRepositoryClass + "#" + groupAnchors.deletedGroupCheckMethod,
                     "deleted group classified as group");
         }
         try {
@@ -1007,30 +1297,46 @@ public final class InboxFeature extends Feature {
         if (uid == null || !uid.startsWith("group_") || deletedGroupCheckUnavailable) {
             return false;
         }
+        RowAnchors anchors = rowAnchors();
         try {
             Object repository = deletedGroupRepository;
             if (repository == null) {
-                Class<?> repositoryClass = XpReflect.findClass(deletedGroupRepositoryClass(), classLoader);
-                repository = XpReflect.getStaticObjectField(repositoryClass, deletedGroupRepositoryField());
+                Class<?> repositoryClass = deletedGroupClass(anchors, classLoader);
+                if (repositoryClass == null) {
+                    throw new ClassNotFoundException(anchors.deletedGroupRepositoryClass);
+                }
+                Field repositoryField = rowField(
+                        repositoryClass, anchors.deletedGroupRepositoryField);
+                if (repositoryField == null) {
+                    throw new NoSuchFieldException(repositoryClass.getName()
+                            + "#" + anchors.deletedGroupRepositoryField + " not found");
+                }
+                repository = repositoryField.get(null);
                 deletedGroupRepository = repository;
             }
-            boolean deleted = Boolean.TRUE.equals(XpReflect.callMethod(repository, deletedGroupCheckMethod(), uid));
+            Method check = rowMethod(repository.getClass(),
+                    anchors.deletedGroupCheckMethod, false, 1);
+            if (check == null) {
+                throw new NoSuchMethodException(repository.getClass().getName()
+                        + "#" + anchors.deletedGroupCheckMethod + "(1 arg) not found");
+            }
+            boolean deleted = Boolean.TRUE.equals(check.invoke(repository, uid));
             if (!deletedGroupCheckInstalled) {
                 deletedGroupCheckInstalled = true;
                 SelfCheckRegistry.markInstalled(FEATURE_DELETED_GROUP,
-                        deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(), 1);
+                        anchors.deletedGroupRepositoryClass + "#" + anchors.deletedGroupCheckMethod, 1);
             }
             if (deleted) {
-                SelfCheckRegistry.markSuppressed(FEATURE_DELETED_GROUP, deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(), uid);
+                SelfCheckRegistry.markSuppressed(FEATURE_DELETED_GROUP, anchors.deletedGroupRepositoryClass + "#" + anchors.deletedGroupCheckMethod, uid);
             }
             return deleted;
         } catch (Throwable throwable) {
             deletedGroupCheckUnavailable = true;
             if (throwable instanceof NoSuchFieldError || throwable instanceof ClassNotFoundException) {
-                SelfCheckRegistry.markStale(FEATURE_DELETED_GROUP, deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(),
+                SelfCheckRegistry.markStale(FEATURE_DELETED_GROUP, anchors.deletedGroupRepositoryClass + "#" + anchors.deletedGroupCheckMethod,
                         throwable.getClass().getSimpleName() + " " + throwable.getMessage());
             } else {
-                    SelfCheckRegistry.markFailed(FEATURE_DELETED_GROUP, deletedGroupRepositoryClass() + "#" + deletedGroupCheckMethod(), throwable);
+                    SelfCheckRegistry.markFailed(FEATURE_DELETED_GROUP, anchors.deletedGroupRepositoryClass + "#" + anchors.deletedGroupCheckMethod, throwable);
             }
             if (HookConfig.isDebugEnabled()) {
                 log("Deleted group check failed-soft: "
@@ -1064,25 +1370,13 @@ public final class InboxFeature extends Feature {
         if (!isNormalItem(item)) {
             return null;
         }
-        String mapped = conversationField();
-        if (mapped != null && !mapped.isEmpty()) {
-            try {
-                Object value = XpReflect.getObjectField(item, mapped);
-                if (value != null) {
-                    return value;
-                }
-            } catch (Throwable throwable) {
-                logSymbolFailure("field", classNameOf(item) + "#" + mapped, throwable);
-            }
-            // Mapped field missing on a renamed row: fall through to the structural
-            // accessor instead of giving up (F5).
-        }
+        // The cached resolver applies the declared-type and unique-field gates before reading.
         try {
-            String runtime = conversationFieldName(item.getClass());
-            if (runtime == null) {
+            Field structural = conversationFieldFor(item.getClass());
+            if (structural == null) {
                 return null;
             }
-            return XpReflect.getObjectField(item, runtime);
+            return TypedFieldAccess.read(structural, item, CONVERSATION_CLASS);
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(item) + "#conversation(runtime)", throwable);
             return null;
@@ -1090,7 +1384,7 @@ public final class InboxFeature extends Feature {
     }
 
     private String conversationUid(Object conversation) {
-        return stringField(conversation, conversationUidField());
+        return stringField(conversation, rowAnchors().conversationUidField);
     }
 
     private void prepareStrangerRoute() {
@@ -1149,12 +1443,13 @@ public final class InboxFeature extends Feature {
     }
 
     private int topOutOf(Object conversation) {
+        RowAnchors anchors = rowAnchors();
         try {
-            Object topOutInfo = XpReflect.getObjectField(conversation, topOutField());
+            Object topOutInfo = readField(conversation, anchors.topOutField);
             if (topOutInfo == null) {
                 return -1;
             }
-            Object value = XpReflect.getObjectField(topOutInfo, topOutValueField());
+            Object value = readField(topOutInfo, anchors.topOutValueField);
             return value instanceof Integer ? (Integer) value : -1;
         } catch (Throwable throwable) {
             logSymbolFailure("field-chain", classNameOf(conversation) + "#" + topOutField()
@@ -1165,7 +1460,7 @@ public final class InboxFeature extends Feature {
 
     private String stringField(Object target, String fieldName) {
         try {
-            Object value = XpReflect.getObjectField(target, fieldName);
+            Object value = readField(target, fieldName);
             return value instanceof String ? (String) value : null;
         } catch (Throwable throwable) {
             logSymbolFailure("field", classNameOf(target) + "#" + fieldName, throwable);

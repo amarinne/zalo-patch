@@ -1,9 +1,19 @@
 package com.ez.zalopatch.xposed.features;
 
+import android.app.Activity;
+import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.Intent;
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 import android.os.Handler;
 import android.os.Looper;
 
 import com.ez.zalopatch.HookConfig;
+import com.ez.zalopatch.MessagesHomeLaunch;
+import com.ez.zalopatch.BottomTabsArrays;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.xposed.core.Feature;
@@ -12,6 +22,7 @@ import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -19,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -56,6 +68,15 @@ public final class BottomTabsFeature extends Feature {
     private boolean hideTimeline;
     private boolean keepGroupTab;
     private boolean forceMessagesAsHome;
+    // Lifecycle and view callbacks run on the host main thread. Weak keys and values
+    // must not retain a retired activity through its pager or native tab controller.
+    private final WeakHashMap<Activity, LaunchHomeRequest> homeLaunches = new WeakHashMap<>();
+    private final WeakHashMap<Activity, WeakReference<Object>> homeTabs = new WeakHashMap<>();
+
+    private static final class LaunchHomeRequest {
+        boolean resumed;
+        boolean queued;
+    }
 
     public BottomTabsFeature(ClassLoader classLoader) {
         super(classLoader);
@@ -76,11 +97,11 @@ public final class BottomTabsFeature extends Feature {
         if (!hideDiscovery && !hideTimeline && !keepGroupTab && !forceMessagesAsHome) {
             SelfCheckRegistry.markDisabled(FEATURE_STATE, "bottom tab settings");
             SelfCheckRegistry.markDisabled(FEATURE_CONSUMERS, "bottom tab consumers");
-            SelfCheckRegistry.markDisabled(FEATURE_FORCE_HOME, "MainTabView#onResume");
+            SelfCheckRegistry.markDisabled(FEATURE_FORCE_HOME, "ZaloLauncherActivity launch");
             return;
         }
         if (!forceMessagesAsHome) {
-            SelfCheckRegistry.markDisabled(FEATURE_FORCE_HOME, "MainTabView#onResume");
+            SelfCheckRegistry.markDisabled(FEATURE_FORCE_HOME, "ZaloLauncherActivity launch");
         }
 
         if (installMatchingHooks()) {
@@ -255,7 +276,7 @@ public final class BottomTabsFeature extends Feature {
         XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("rebuild"),
                 rebuildBefore, rebuildAfter);
 
-        XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("refresh"),
+        if (!currentMethod("refresh").isEmpty()) XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, currentMethod("refresh"),
                 new XpHooks.After() {
             @Override
             public void after(XpHooks.HookParam param) {
@@ -274,7 +295,9 @@ public final class BottomTabsFeature extends Feature {
             }
         });
 
-        hookCurrentBooleanFlag(mainTabClass, currentMethod("hide_discovery"), hideDiscovery);
+        if (hideDiscovery || !currentSymbols.preserveIconArrays) {
+            hookCurrentBooleanFlag(mainTabClass, currentMethod("hide_discovery"), hideDiscovery);
+        }
         if (keepGroupTab) {
             hookCurrentBooleanFlag(mainTabClass, currentMethod("group_flag"), false);
         }
@@ -388,85 +411,133 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentForceMessagesAsHome(Class<?> mainTabClass) {
-        if (!forceMessagesAsHome) {
+        if (!forceMessagesAsHome) return;
+        Class<?> tabType = findClassIfExists(CURRENT_MAIN_TAB_VIEW_CLASS);
+        Class<?> launcherType = findClassIfExists("com.zing.zalo.ui.ZaloLauncherActivity");
+        if (tabType == null || launcherType == null) {
+            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "launcher startup", "launcher or MainTabView unavailable");
             return;
         }
-        Class<?> mainTabViewClass = findClassIfExists(CURRENT_MAIN_TAB_VIEW_CLASS);
-        if (mainTabViewClass == null) {
-            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, CURRENT_MAIN_TAB_VIEW_CLASS, "MainTabView unavailable");
+        Method createView = null;
+        for (Method method : tabType.getDeclaredMethods()) {
+            Class<?>[] args = method.getParameterTypes();
+            if (!Modifier.isStatic(method.getModifiers()) && method.getReturnType() == View.class
+                    && args.length == 3 && args[0] == LayoutInflater.class
+                    && args[1] == ViewGroup.class && args[2] == Bundle.class) {
+                if (createView != null) {
+                    SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "launcher startup", "ambiguous MainTabView creation shape");
+                    return;
+                }
+                createView = method;
+            }
+        }
+        if (createView == null) {
+            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "launcher startup", "MainTabView creation shape unavailable");
             return;
         }
-        if (hookForceHomeOnPageSelected(mainTabClass, mainTabViewClass)) {
+        XpHooks.hookMethod(FEATURE_FORCE_HOME, createView, new XpHooks.After() {
+            @Override public void after(XpHooks.HookParam param) {
+                if (!(param.getResult() instanceof View)) return;
+                Activity activity = activityOf(((View) param.getResult()).getContext());
+                if (activity == null || !launcherType.isInstance(activity)) return;
+                homeTabs.put(activity, new WeakReference<>(param.thisObject));
+                queueLaunchHome(mainTabClass, activity);
+            }
+        });
+        List<XpHooks.Handle> creates = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, launcherType, "onCreate", new XpHooks.Before() {
+            @Override public void before(XpHooks.HookParam param) {
+                Activity activity = (Activity) param.thisObject;
+                armLaunchHome(activity, activity.getIntent(), true, param.args.length > 0 && param.args[0] != null);
+            }
+        });
+        List<XpHooks.Handle> intents = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, launcherType, "onNewIntent",
+                new XpHooks.Before() {
+                    @Override public void before(XpHooks.HookParam param) {
+                        if (param.args.length == 1 && param.args[0] instanceof Intent)
+                            armLaunchHome((Activity) param.thisObject, (Intent) param.args[0], false, false);
+                    }
+                }, new XpHooks.After() {
+                    @Override public void after(XpHooks.HookParam param) {
+                        Activity activity = (Activity) param.thisObject;
+                        LaunchHomeRequest request = homeLaunches.get(activity);
+                        if (request != null) request.resumed = true;
+                        queueLaunchHome(mainTabClass, activity);
+                    }
+                });
+        List<XpHooks.Handle> resumes = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, launcherType, "onResume", new XpHooks.After() {
+            @Override public void after(XpHooks.HookParam param) {
+                Activity activity = (Activity) param.thisObject;
+                LaunchHomeRequest request = homeLaunches.get(activity);
+                if (request != null) request.resumed = true;
+                queueLaunchHome(mainTabClass, activity);
+            }
+        });
+        if (creates.isEmpty() || intents.isEmpty() || resumes.isEmpty()) {
+            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, "launcher startup", "launcher lifecycle unavailable");
             return;
         }
-        // No letter fallback: the per-release lifecycle letter is retired. Without
-        // the stable page-selected callback there is nothing trustworthy to hook.
-        SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, mainTabViewClass.getName(),
-                "onPageSelected unavailable");
+        SelfCheckRegistry.markInstalled(FEATURE_FORCE_HOME, "ZaloLauncherActivity launch", creates.size() + intents.size() + resumes.size() + 1);
     }
 
-    /**
-     * Force-home through the stable ViewPager page-selected callback: the selected
-     * page arrives as the first argument, so no current-item method mapping is
-     * needed. The per-release lifecycle letter is retired with no fallback.
-     */
-    private boolean hookForceHomeOnPageSelected(Class<?> mainTabClass, Class<?> mainTabViewClass) {
-        List<XpHooks.Handle> hooks;
+    private void armLaunchHome(Activity activity, Intent intent, boolean cold, boolean restored) {
+        // A new routed intent invalidates an older queued launcher callback. Warm
+        // launches use the incoming argument: Zalo may return before setIntent().
+        homeLaunches.remove(activity);
+        if (retiredForHotReload || intent == null) return;
+        boolean routed = intent.getData() != null || (intent.getExtras() != null && !intent.getExtras().isEmpty());
+        if (MessagesHomeLaunch.accepts(intent.getAction(), intent.hasCategory(Intent.CATEGORY_LAUNCHER), routed, cold, restored))
+            homeLaunches.put(activity, new LaunchHomeRequest());
+    }
+
+    private Activity activityOf(Context context) {
+        while (context instanceof ContextWrapper) {
+            if (context instanceof Activity) return (Activity) context;
+            Context next = ((ContextWrapper) context).getBaseContext();
+            if (next == context) break;
+            context = next;
+        }
+        return null;
+    }
+
+    private void queueLaunchHome(Class<?> mainTabClass, Activity activity) {
+        LaunchHomeRequest request = homeLaunches.get(activity);
+        WeakReference<Object> tabRef = homeTabs.get(activity);
+        Object tab = tabRef == null ? null : tabRef.get();
+        if (request == null || !request.resumed || request.queued || tab == null) return;
         try {
-            hooks = XpHooks.hookAllMethods(FEATURE_FORCE_HOME, mainTabViewClass, "onPageSelected",
-                    new XpHooks.After() {
-                @Override
-                public void after(XpHooks.HookParam param) {
-                    try {
-                        if (param.args == null || param.args.length < 1
-                                || !(param.args[0] instanceof Integer)) {
-                            return;
-                        }
-                        redirectHomeIfNeeded(mainTabClass, param.thisObject,
-                                (Integer) param.args[0],
-                                mainTabViewClass.getName() + "#onPageSelected");
-                    } catch (Throwable throwable) {
-                        SelfCheckRegistry.markFailed(FEATURE_FORCE_HOME,
-                                mainTabViewClass.getName() + "#onPageSelected", throwable);
+            Object pager = getPagerByShape(tab, "setCurrentItem");
+            if (!(pager instanceof View) || activityOf(((View) pager).getContext()) != activity) return;
+            Object state = applyCurrentSingletonState(mainTabClass);
+            int messageIndex = getIntFieldOr(state, currentSymbols.messageIndexField, -1);
+            if (messageIndex < 0) return;
+            int sourcePage = (Integer) XpReflect.callMethod(pager, "getCurrentItem");
+            // Consume even when the host already selected Messages. No subsequent
+            // tab choice or ordinary resume can re-arm this launch request.
+            request.queued = true;
+            WeakReference<Activity> ownerRef = new WeakReference<>(activity);
+            WeakReference<View> pagerRef = new WeakReference<>((View) pager);
+            ((View) pager).post(() -> {
+                Activity owner = ownerRef.get();
+                View currentPager = pagerRef.get();
+                if (retiredForHotReload || owner == null || currentPager == null
+                        || owner.isFinishing() || owner.isDestroyed() || !currentPager.isAttachedToWindow()
+                        || homeLaunches.get(owner) != request || homeTabs.get(owner) != tabRef) return;
+                try {
+                    Object currentTab = tabRef.get();
+                    if (currentTab == null || getPagerByShape(currentTab, "setCurrentItem") != currentPager
+                            || !Integer.valueOf(sourcePage).equals(XpReflect.callMethod(currentPager, "getCurrentItem"))) return;
+                    if (sourcePage != messageIndex) {
+                        XpReflect.callMethod(currentPager, "setCurrentItem", messageIndex, false);
+                        SelfCheckRegistry.markSuppressed(FEATURE_FORCE_HOME, "ZaloLauncherActivity launch",
+                                "launch from=" + sourcePage + " to=" + messageIndex);
                     }
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markFailed(FEATURE_FORCE_HOME, "launcher startup", throwable);
                 }
             });
         } catch (Throwable throwable) {
-            logSymbolFailure("method", mainTabViewClass.getName() + "#onPageSelected", throwable);
-            return false;
+            SelfCheckRegistry.markFailed(FEATURE_FORCE_HOME, "launcher startup", throwable);
         }
-        if (hooks == null || hooks.isEmpty()) {
-            return false;
-        }
-        SelfCheckRegistry.markInstalled(FEATURE_FORCE_HOME,
-                mainTabViewClass.getName() + "#onPageSelected", hooks.size());
-        return true;
-    }
-
-    private void redirectHomeIfNeeded(Class<?> mainTabClass, Object mainTabView,
-                                      int currentItem, String target) throws Throwable {
-        Object state = applyCurrentSingletonState(mainTabClass);
-        if (state == null) {
-            return;
-        }
-        int messageIndex = getIntFieldOr(state, currentSymbols.messageIndexField, -1);
-        int groupIndex = getIntFieldOr(state, currentSymbols.groupIndexField, -1);
-        int discoveryIndex = getIntFieldOr(state, currentSymbols.discoveryIndexField, -1);
-        int timelineIndex = getIntFieldOr(state, currentSymbols.timelineIndexField, -1);
-        if (messageIndex < 0 || currentItem == messageIndex) {
-            return;
-        }
-        if (currentItem != groupIndex && currentItem != discoveryIndex && currentItem != timelineIndex) {
-            return;
-        }
-        Object pager = getPagerByShape(mainTabView, "setCurrentItem");
-        if (pager == null) {
-            SelfCheckRegistry.markStale(FEATURE_FORCE_HOME, target, "pager unavailable");
-            return;
-        }
-        XpReflect.callMethod(pager, "setCurrentItem", messageIndex, false);
-        SelfCheckRegistry.markSuppressed(FEATURE_FORCE_HOME, target,
-                "from=" + currentItem + " to=" + messageIndex);
     }
 
     /**
@@ -676,6 +747,7 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentBooleanFlag(Class<?> mainTabClass, String methodName, boolean hidden) {
+        if (methodName == null || methodName.isEmpty()) return;
         XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
             public void after(XpHooks.HookParam param) {
@@ -687,6 +759,7 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentIndexMethod(Class<?> mainTabClass, String methodName, String tabName) {
+        if (methodName == null || methodName.isEmpty()) return;
         XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
             public void after(XpHooks.HookParam param) throws Throwable {
@@ -698,6 +771,7 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private void hookCurrentSizeMethod(Class<?> mainTabClass, String methodName) {
+        if (methodName == null || methodName.isEmpty()) return;
         XpHooks.hookAllMethods(FEATURE_STATE, mainTabClass, methodName, new XpHooks.After() {
             @Override
             public void after(XpHooks.HookParam param) throws Throwable {
@@ -711,15 +785,32 @@ public final class BottomTabsFeature extends Feature {
     private void applyCurrentTabState(Object mainTabState) {
         try {
             List<Object> tabs = getOriginalTabs(mainTabState);
-            if (keepGroupTab) {
+            if (keepGroupTab && !currentSymbols.preserveIconArrays) {
                 Object groupTab = getCurrentTab(currentSymbols.groupTabField);
                 if (groupTab != null && !containsTab(tabs, "GROUP")) {
                     tabs.add(Math.min(2, tabs.size()), groupTab);
                 }
             }
             List<Object> filteredTabs = getFilteredTabs(mainTabState);
-            int[] filteredIcons = buildCurrentIconArray(mainTabState, filteredTabs);
-            boolean[] filteredPreloaded = filterBooleanArray(tabs, findBooleanArray(mainTabState, tabs.size()));
+            int[] filteredIcons;
+            boolean[] filteredPreloaded;
+            if (currentSymbols.preserveIconArrays) {
+                // The surviving enum-to-int method returns labels, not icons. Keep
+                // the host's actual icon and preload values paired with each enum.
+                int[] icons = (int[]) XpReflect.getObjectField(mainTabState, currentSymbols.iconsField);
+                boolean[] preloaded = (boolean[]) XpReflect.getObjectField(mainTabState, currentSymbols.preloadedField);
+                boolean restoreGroup = keepGroupTab && !containsTab(tabs, "GROUP");
+                BottomTabsArrays.Result arrays = BottomTabsArrays.configure(tabs, icons, preloaded,
+                        hideDiscovery, hideTimeline, keepGroupTab,
+                        restoreGroup ? getCurrentTab(currentSymbols.groupTabField) : null,
+                        restoreGroup ? nativeGroupIcon() : 0);
+                filteredTabs = arrays.tabs;
+                filteredIcons = arrays.icons;
+                filteredPreloaded = arrays.preloaded;
+            } else {
+                filteredIcons = buildCurrentIconArray(mainTabState, filteredTabs);
+                filteredPreloaded = filterBooleanArray(tabs, findBooleanArray(mainTabState, tabs.size()));
+            }
 
             tabs.clear();
             tabs.addAll(filteredTabs);
@@ -795,6 +886,15 @@ public final class BottomTabsFeature extends Feature {
             logSymbolFailure("field", currentSymbols.enumClassName + "#" + fieldName, throwable);
             return null;
         }
+    }
+
+    private int nativeGroupIcon() {
+        if (findClassIfExists("com.zing.zalo.ui.maintab.group.GroupTabParentView") == null) {
+            return 0;
+        }
+        android.content.Context context = HookConfig.resolveFallbackContextForHooks();
+        return context == null ? 0 : context.getResources().getIdentifier(
+                "stencils_ic_tab_groups", "drawable", "com.zing.zalo");
     }
 
     private int[] buildCurrentIconArray(Object mainTabState, List<Object> tabs) {
@@ -888,6 +988,11 @@ public final class BottomTabsFeature extends Feature {
 
     @SuppressWarnings("unchecked")
     private List<Object> getOriginalTabs(Object mainTabState) throws Throwable {
+        if (currentSymbols != null && !currentSymbols.tabsField.isEmpty()) {
+            Object tabs = XpReflect.getObjectField(mainTabState, currentSymbols.tabsField);
+            if (tabs instanceof List) return (List<Object>) tabs;
+            throw new IllegalStateException("mapped tabs field is not a list");
+        }
         for (Field field : mainTabState.getClass().getDeclaredFields()) {
             if (List.class.isAssignableFrom(field.getType())) {
                 field.setAccessible(true);
@@ -990,7 +1095,9 @@ public final class BottomTabsFeature extends Feature {
                         index.optString("me", ""),
                         index.optString("size", ""),
                         item.optString("icons_field", ""),
-                        item.optString("preloaded_field", "")));
+                        item.optString("preloaded_field", ""),
+                        item.optString("tabs_field", ""),
+                        item.optBoolean("preserve_icon_arrays", false)));
             }
             if (result.isEmpty()) {
                 recordSchemaSource("symbols.bottom_tabs.current_tab_symbols", "schema_invalid", "", true);
@@ -1006,6 +1113,21 @@ public final class BottomTabsFeature extends Feature {
     }
 
     private static String currentMethod(String role) {
+        SymbolSchema.Active active = SymbolSchema.activeForHooks(HookConfig.resolveModuleContextForHooks());
+        JSONObject symbols = active == null || active.root == null ? null : active.root.optJSONObject("symbols");
+        JSONObject bottom = symbols == null ? null : symbols.optJSONObject("bottom_tabs");
+        JSONObject methods = bottom == null ? null : bottom.optJSONObject("current_methods");
+        JSONArray definitions = bottom == null ? null : bottom.optJSONArray("current_tab_symbols");
+        JSONObject definition = definitions == null ? null : definitions.optJSONObject(0);
+        if (definition != null && definition.optBoolean("preserve_icon_arrays", false)
+                && methods != null && !methods.has(role)
+                && ("refresh".equals(role) || "group_flag".equals(role)
+                || "phonebook_index".equals(role) || "more_index".equals(role)
+                || "me_index".equals(role) || "size".equals(role))) {
+            // These methods were removed from the compact host route. Do not fall
+            // through to neighbouring names or report intentional absence as stale.
+            return "";
+        }
         return schemaString("symbols.bottom_tabs.current_methods." + role, "");
     }
 
@@ -1067,6 +1189,8 @@ public final class BottomTabsFeature extends Feature {
         final String sizeField;
         final String iconsField;
         final String preloadedField;
+        final String tabsField;
+        final boolean preserveIconArrays;
 
         CurrentTabSymbols(
                 String stateClassName,
@@ -1086,7 +1210,9 @@ public final class BottomTabsFeature extends Feature {
                 String meIndexField,
                 String sizeField,
                 String iconsField,
-                String preloadedField) {
+                String preloadedField,
+                String tabsField,
+                boolean preserveIconArrays) {
             this.stateClassName = stateClassName;
             this.enumClassName = enumClassName;
             this.groupTabField = groupTabField;
@@ -1105,6 +1231,8 @@ public final class BottomTabsFeature extends Feature {
             this.sizeField = sizeField;
             this.iconsField = iconsField;
             this.preloadedField = preloadedField;
+            this.tabsField = tabsField;
+            this.preserveIconArrays = preserveIconArrays;
         }
     }
 }

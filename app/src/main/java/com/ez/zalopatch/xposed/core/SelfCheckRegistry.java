@@ -138,7 +138,12 @@ public final class SelfCheckRegistry {
             values.put("target", target);
             values.put("install_count", installCount);
             values.put("hit_count", hitCount);
-            values.put("detail", detail);
+            // Route provenance is diagnostic text, never the artifact identity gate. Keeping it
+            // in detail also preserves it through the existing broadcast fallback transport.
+            String routeDetail = "route=" + evidence.getStringExtra("route_profile_source")
+                    + " route_profile_sha256=" + evidence.getStringExtra("route_profile_sha256");
+            values.put("detail", detail == null || detail.isEmpty() ? routeDetail
+                    : detail + "\n" + routeDetail);
             values.put("error", error);
             values.put("updated_at", System.currentTimeMillis());
             values.put("artifact_lightweight", evidence.getStringExtra("artifact_lightweight"));

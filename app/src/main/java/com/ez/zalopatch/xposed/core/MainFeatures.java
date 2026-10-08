@@ -3,6 +3,7 @@ package com.ez.zalopatch.xposed.core;
 import android.content.Context;
 
 import com.ez.zalopatch.DiagnosticsState;
+import com.ez.zalopatch.DexKitOverlay;
 import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.RuntimeEnvironmentReporter;
 import com.ez.zalopatch.SymbolSchema;
@@ -16,6 +17,7 @@ import com.ez.zalopatch.xposed.features.ChatFeature;
 import com.ez.zalopatch.xposed.features.InboxFeature;
 import com.ez.zalopatch.xposed.features.InteractionTraceFeature;
 import com.ez.zalopatch.xposed.features.MeCleanupFeature;
+import com.ez.zalopatch.xposed.features.MediaFeature;
 import com.ez.zalopatch.xposed.features.NotificationFeature;
 import com.ez.zalopatch.xposed.features.PasscodeGraceFeature;
 import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
@@ -90,18 +92,24 @@ public final class MainFeatures {
                     "neighbouring-release adoption not needed while an exact profile resolves",
                     "");
         }
-        // DexKit overlay: validated on-device descriptors merged over the neighbouring
-        // base (if any), adopted for this process. Families the overlay resolves arm
-        // from its preflight even when the fallback profile missed them.
+        // A partial exact profile stays selected while a neighbouring snapshot supplies
+        // auxiliary leaves to the composed overlay. Do not adopt that snapshot directly:
+        // it must never replace verified exact anchors or change exact artifact identity.
+        Adopted overlayBase = fallback;
+        if (exactValid && fallback == null
+                && !DexKitFamilyResolver.completeExactCoverage(hookActive, exactPreflight)) {
+            overlayBase = findNearestResolvingProfile(context, classLoader, hookActive);
+        }
+        // DexKit overlay: exact leaves retain precedence while discovered descriptors
+        // fill unavailable leaves over the neighbouring base for this process. Each
+        // feature uses the preflight of the tree its symbol lookups actually read.
         DexKitFamilyResolver.Result overlay = DexKitFamilyResolver.resolve(context, classLoader,
-                exactValid, fallback != null ? fallback.profile : null);
+                exactValid ? hookActive : null, exactPreflight,
+                overlayBase != null ? overlayBase.profile : null);
         if (overlay.adopted && overlay.preflight != null) {
-            if (preflight == null) {
-                // No exact or neighbouring profile resolved, but the overlay validated its
-                // own symbol sets. Arm features from that result instead of forcing the
-                // unsupported path; unresolved families stay unavailable inside it.
-                preflight = overlay.preflight;
-            }
+            // Adoption changes every hook-side symbol read, so its complete preflight
+            // replaces the previous snapshot, including auxiliary non-DexKit families.
+            preflight = overlay.preflight;
             mergeOverlayFamily(preflight, overlay.families);
         }
         features.add(new TelemetryFeature(classLoader,
@@ -169,6 +177,7 @@ public final class MainFeatures {
                         preflight.reason(preflight.backupScheduledErrors)));
             }
             addCallRecording(features, classLoader, preflight);
+            addMedia(features, classLoader, preflight);
             features.add(new CallRecordingProbeFeature(classLoader));
         } else {
             SelfCheckRegistry.markStatus("zalo_artifact",
@@ -238,6 +247,14 @@ public final class MainFeatures {
                 "structural preflight", preflight.reason(preflight.webviewErrors));
     }
 
+    private static void addMedia(List<Feature> features, ClassLoader classLoader,
+                                 SymbolPreflight.Result preflight) {
+        // The feature self-gates on its setting and reports stale when the media
+        // anchors are unmapped, so it always installs: refusing to install would hide
+        // the stale row that drives the next remap or catalog entry.
+        features.add(new MediaFeature(classLoader));
+    }
+
     /**
      * Records which anchor families would have resolved when no profile covers the installed Zalo
      * version. Nothing is hooked from a probe. Without it an unmapped version reports only that it
@@ -277,40 +294,50 @@ public final class MainFeatures {
      */
     private static Adopted adoptNearestResolvingProfile(Context context,
                                                         ClassLoader classLoader) {
-        try {
-            long installed = SymbolSchema.installedZaloVersionCode(context);
-            if (installed <= 0L) {
-                return null;
-            }
-            for (SymbolSchema.Active candidate
-                    : SymbolSchema.fallbackProfilesForHooks(context, installed)) {
-                SymbolPreflight.Result result = SymbolPreflight.inspect(candidate, classLoader);
-                if (result.resolved() == 0) {
-                    continue;
-                }
-                SymbolSchema.adoptForHooks(candidate, installed);
-                SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
-                        candidate.source + ": " + result.resolved() + "/" + result.total()
-                                + " resolved " + result.breakdown(),
-                        "no exact profile resolved; symbols taken from a neighbouring release",
-                        "");
-                return new Adopted(candidate, result);
-            }
+        Adopted candidate = findNearestResolvingProfile(context, classLoader, null);
+        if (candidate == null) {
             SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
                     "no neighbouring profile resolved", "", "");
             return null;
-        } catch (Throwable throwable) {
-            SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
-                    "fallback unavailable", "", throwable.getClass().getSimpleName());
-            return null;
         }
+        SymbolSchema.adoptForHooks(candidate.profile,
+                SymbolSchema.installedZaloVersionCode(context));
+        SelfCheckRegistry.markStatus(FEATURE_SYMBOL_FALLBACK, "ok",
+                candidate.profile.source + ": " + candidate.preflight.resolved() + "/"
+                        + candidate.preflight.total() + " resolved "
+                        + candidate.preflight.breakdown(),
+                "no exact profile resolved; symbols taken from a neighbouring release", "");
+        return candidate;
+    }
+
+    /** Selects a candidate without changing the hook schema cache or self-check identity. */
+    private static Adopted findNearestResolvingProfile(Context context,
+                                                       ClassLoader classLoader,
+                                                       SymbolSchema.Active partialExact) {
+        try {
+            long installed = SymbolSchema.installedZaloVersionCode(context);
+            if (installed <= 0L) return null;
+            for (SymbolSchema.Active candidate
+                    : SymbolSchema.fallbackProfilesForHooks(context, installed)) {
+                // An equally sparse release cannot fill missing exact bindings. Keep
+                // looking instead of losing the existing auxiliary composition base.
+                if (partialExact != null && !DexKitOverlay.hasSupplementalSymbols(
+                        partialExact.root.optJSONObject("symbols"),
+                        candidate.root.optJSONObject("symbols"))) continue;
+                SymbolPreflight.Result result = SymbolPreflight.inspect(candidate, classLoader);
+                if (result.resolved() > 0) return new Adopted(candidate, result);
+            }
+        } catch (Throwable ignored) {
+            // Failure leaves the exact profile selected. The overlay reports its own
+            // unresolved families after it checks the final composed tree.
+        }
+        return null;
     }
 
     /**
-     * Arms families the DexKit overlay resolved on top of the fallback preflight.
-     * Per-anchor precedence: exact profile (handled before this runs), then validated
-     * DexKit descriptors, then neighbouring symbols. Only families with a fingerprint
-     * definition merge today; the rest keep their fallback state.
+     * Supplements the composed tree's preflight with validated extended routes.
+     * These reader, builder, and category routes have independent guards but do not
+     * require every auxiliary symbol that the general schema preflight checks.
      */
     private static void mergeOverlayFamily(SymbolPreflight.Result preflight,
                                            DexKitFamilyResolver.FamilyStates overlay) {
@@ -356,7 +383,7 @@ public final class MainFeatures {
         }
     }
 
-    /** A neighbouring-release profile that preflighted clean, with the result that chose it. */
+    /** A neighbouring-release candidate and the structural preflight that selected it. */
     private static final class Adopted {        final SymbolSchema.Active profile;
         final SymbolPreflight.Result preflight;
 

@@ -113,6 +113,11 @@ final class TweakHookInfo {
                         + "#" + schema.string("symbols.chat.send_typing_method", "<send typing>")
                         + "()";
                 break;
+            case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
+                path = schema.string("symbols.media.state_classifier_class", "<media classifier>")
+                        + "#" + schema.string("symbols.media.state_classifier_method", "<classify>")
+                        + "()";
+                break;
             case Tweaks.KEY_AUTO_RECORD_CALLS:
                 path = "PeerJNI#zrtc_peer_start_record_audio() + CallCallback callbacks";
                 break;
@@ -249,6 +254,11 @@ final class TweakHookInfo {
                 return Arrays.asList(
                         schema.string("symbols.chat.message_repository_class", "<message repository>"),
                         "#" + schema.string("symbols.chat.send_typing_method", "<send typing>") + "()");
+            case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
+                return Arrays.asList(
+                        schema.string("symbols.media.state_classifier_class", "<media classifier>"),
+                        "#" + schema.string("symbols.media.state_classifier_method",
+                                "<classify>") + "()");
             case Tweaks.KEY_BACKUP_FREQUENT_PUSH:
                 return Arrays.asList(
                         schema.string("symbols.backup.interval_reader_class",

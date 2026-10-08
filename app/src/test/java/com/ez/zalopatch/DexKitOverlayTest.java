@@ -14,6 +14,41 @@ import static org.junit.Assert.assertTrue;
 /** JVM tests for the DexKit overlay merge and profile builder. */
 public final class DexKitOverlayTest {
     @Test
+    public void equallySparseNeighborCannotReplaceAuxiliaryBase() throws Exception {
+        JSONObject exact = new JSONObject("{\"inbox\":{\"conversation_field\":\"f\"},"
+                + "\"bottom_tabs\":{\"current_methods\":{}},"
+                + "\"me\":{\"zstyle_view_exclusive\":false}}");
+        JSONObject peer = new JSONObject(exact.toString());
+        peer.getJSONObject("inbox").put("conversation_field", "old");
+        peer.put("call_recording", new JSONObject()
+                .put("callback_class", "").put("callbacks", new JSONArray()));
+        assertFalse(DexKitOverlay.hasSupplementalSymbols(exact, peer));
+
+        JSONObject auxiliary = new JSONObject(peer.toString());
+        auxiliary.getJSONObject("call_recording").put("callback_class", "callback");
+        assertTrue(DexKitOverlay.hasSupplementalSymbols(exact, auxiliary));
+        JSONObject composed = DexKitOverlay.compose(exact, auxiliary,
+                new HashMap<String, String>(), "", "");
+        assertEquals("f", composed.getJSONObject("inbox").getString("conversation_field"));
+        assertEquals("callback", composed.getJSONObject("call_recording")
+                .getString("callback_class"));
+    }
+
+    @Test
+    public void supplementalLeavesRespectFalseZeroAndAtomicLists() throws Exception {
+        JSONObject exact = new JSONObject("{\"flags\":{\"enabled\":false,\"id\":0,"
+                + "\"methods\":[\"exact\"]},\"missing\":{\"name\":\"\",\"ids\":[]}}");
+        JSONObject candidate = new JSONObject("{\"flags\":{\"enabled\":true,\"id\":1,"
+                + "\"methods\":[\"other\"]}}");
+        assertFalse(DexKitOverlay.hasSupplementalSymbols(exact, candidate));
+        candidate.put("missing", new JSONObject().put("name", "qualified"));
+        assertTrue(DexKitOverlay.hasSupplementalSymbols(exact, candidate));
+        candidate.getJSONObject("missing").put("name", JSONObject.NULL)
+                .put("ids", new JSONArray().put(0));
+        assertTrue(DexKitOverlay.hasSupplementalSymbols(exact, candidate));
+    }
+
+    @Test
     public void mergePrefersDexkitOverBaseOverStable() throws Exception {
         JSONObject base = new JSONObject(
                 "{\"webview\":{\"companion_class\":\"com.zing.zalo.ui.zviews.old\","
@@ -104,6 +139,23 @@ public final class DexKitOverlayTest {
     }
 
     @Test
+    public void compactBottomTabsReplaceStaleMethodsWithoutInventingRemovedGetters() throws Exception {
+        Map<String, String> leaves = tabLeaves();
+        leaves.put("symbols.bottom_tabs.tabs_field", "a");
+        for (String role : new String[]{"refresh", "group_flag", "phonebook_index",
+                "more_index", "me_index", "size"}) leaves.remove("symbols.bottom_tabs." + role + "_method");
+        JSONObject merged = new JSONObject();
+        merged.put("bottom_tabs", new JSONObject().put("current_methods", new JSONObject().put("refresh", "stale")));
+        DexKitOverlay.synthesizeBottomTabs(merged, leaves);
+        JSONObject bottom = merged.getJSONObject("bottom_tabs");
+        assertTrue(!bottom.getJSONObject("current_methods").has("refresh"));
+        assertTrue(!bottom.getJSONObject("current_methods").has("size"));
+        JSONObject definition = bottom.getJSONArray("current_tab_symbols").getJSONObject(0);
+        assertEquals("a", definition.getString("tabs_field"));
+        assertTrue(definition.getBoolean("preserve_icon_arrays"));
+    }
+
+    @Test
     public void bottomTabsSynthesisEmitsCurrentStateClasses() throws Exception {
         JSONObject merged = DexKitOverlay.merge(new JSONObject(), tabLeaves(), null, null);
         JSONArray states = merged.getJSONObject("bottom_tabs")
@@ -153,6 +205,80 @@ public final class DexKitOverlayTest {
         assertTrue(!pure.has("me") || !pure.optJSONObject("me").has("setting_id_field"));
         assertTrue(!pure.has("inbox")
                 || !pure.optJSONObject("inbox").has("messages_view_adapter_field"));
+    }
+
+    @Test
+    public void partialExactDoesNotSuppressOtherDiscoveredFamilies() throws Exception {
+        JSONObject exact = new JSONObject("{\"inbox\":{\"uid_field\":\"b\"},"
+                + "\"webview\":{\"open_dispatch_method\":\"\"}}");
+        JSONObject neighbor = new JSONObject("{\"inbox\":{\"uid_field\":\"old\"},"
+                + "\"webview\":{\"open_dispatch_method\":\"old\"}}");
+        Map<String, String> discovered = new HashMap<>();
+        discovered.put("symbols.inbox.uid_field", "new");
+        discovered.put("symbols.webview.open_dispatch_method", "dispatch");
+        discovered.put("symbols.webview.companion_class", "companion");
+        JSONObject composed = DexKitOverlay.compose(exact, neighbor, discovered, "", "");
+        assertEquals("b", composed.getJSONObject("inbox").getString("uid_field"));
+        assertEquals("dispatch", composed.getJSONObject("webview")
+                .getString("open_dispatch_method"));
+        assertEquals("companion", composed.getJSONObject("webview")
+                .getString("companion_class"));
+        assertEquals("old", neighbor.getJSONObject("webview").getString("open_dispatch_method"));
+        assertEquals("", exact.getJSONObject("webview").getString("open_dispatch_method"));
+    }
+
+    @Test
+    public void partialExactRetainsNeighborAuxiliaryLeavesWithoutReplacingExact() throws Exception {
+        JSONObject exact = new JSONObject("{\"inbox\":{\"uid_field\":\"b\"}}");
+        JSONObject neighbor = new JSONObject("{\"inbox\":{\"uid_field\":\"old\","
+                + "\"messages_view_adapter_field\":\"H2\"},"
+                + "\"chat\":{\"reaction_marker_texts\":[\"reaction\"]},"
+                + "\"bottom_tabs\":{\"viewpager_field\":\"pager\"}}");
+        Map<String, String> discovered = new HashMap<>();
+        discovered.put("symbols.inbox.uid_field", "new");
+        discovered.put("symbols.webview.open_dispatch_method", "dispatch");
+        JSONObject composed = DexKitOverlay.compose(exact, neighbor, discovered, "", "");
+        assertEquals("b", composed.getJSONObject("inbox").getString("uid_field"));
+        assertEquals("H2", composed.getJSONObject("inbox")
+                .getString("messages_view_adapter_field"));
+        assertEquals("reaction", composed.getJSONObject("chat")
+                .getJSONArray("reaction_marker_texts").getString(0));
+        assertEquals("pager", composed.getJSONObject("bottom_tabs").getString("viewpager_field"));
+        assertEquals("dispatch", composed.getJSONObject("webview").getString("open_dispatch_method"));
+        assertEquals("old", neighbor.getJSONObject("inbox").getString("uid_field"));
+    }
+
+    @Test
+    public void exactZinstantBindWinsOverDedicatedCacheFields() throws Exception {
+        JSONObject exact = new JSONObject("{\"zinstant\":{\"ad_bind_method\":\"exact\"}}");
+        JSONObject composed = DexKitOverlay.compose(exact, null,
+                new HashMap<String, String>(), "discovered", "feed");
+        assertEquals("exact", composed.getJSONObject("zinstant").getString("ad_bind_method"));
+        assertEquals("feed", composed.getJSONObject("zinstant").getString("feed_bind_method"));
+    }
+
+    @Test
+    public void exactCandidateArrayIsPreservedAsAWhole() throws Exception {
+        JSONObject exact = new JSONObject("{\"bottom_tabs\":{\"current_tab_symbols\":["
+                + "{\"state_class\":\"exact.State\",\"enum_class\":\"exact.Enum\"}]}}");
+        JSONObject composed = DexKitOverlay.compose(exact, null, tabLeaves(), "", "");
+        JSONArray definitions = composed.getJSONObject("bottom_tabs")
+                .getJSONArray("current_tab_symbols");
+        assertEquals(1, definitions.length());
+        assertEquals("exact.State", definitions.getJSONObject(0).getString("state_class"));
+        assertEquals("exact.Enum", definitions.getJSONObject(0).getString("enum_class"));
+    }
+
+    @Test
+    public void nullAndEmptyExactLeavesDoNotEraseValidatedDiscovery() throws Exception {
+        JSONObject exact = new JSONObject("{\"webview\":{\"companion_class\":null},"
+                + "\"bottom_tabs\":{\"current_state_classes\":[]}}");
+        Map<String, String> discovered = tabLeaves();
+        discovered.put("symbols.webview.companion_class", "companion");
+        JSONObject composed = DexKitOverlay.compose(exact, null, discovered, "", "");
+        assertEquals("companion", composed.getJSONObject("webview").getString("companion_class"));
+        assertEquals("oh1.w", composed.getJSONObject("bottom_tabs")
+                .getJSONArray("current_state_classes").getString(0));
     }
 
     private Map<String, String> tabLeaves() {

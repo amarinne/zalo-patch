@@ -20,7 +20,9 @@
 - Rooted device with Android 8.0 (API 26) or newer.
 - LSPosed or another framework that supports LibXposed API 102.
 - Zalo selected in the module scope.
-- Zalo 26.08.02 (`versionCode 260802903`).
+- Zalo 26.10.01 (`versionCode 261001903` or `261001905`). Earlier supported versions appear in the compatibility catalog.
+
+For best experience, do not update Zalo.
 
 ## Build
 

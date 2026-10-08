@@ -23,6 +23,10 @@ import java.util.Set;
 import com.ez.zalopatch.xposed.core.XpHooks;
 import com.ez.zalopatch.xposed.core.XpReflect;
 
+import java.lang.reflect.Field;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 public final class ChatFeature extends Feature {
     private static final String FEATURE_REACTION_ROW = "messages.reaction_row";
     private static final String CHAT_ROW_CLASS = "com.zing.zalo.ui.chat.chatrow.ChatRow";
@@ -39,6 +43,48 @@ public final class ChatFeature extends Feature {
     private static final String FEATURE_REACTION_SYMBOLS = "messages.reaction_symbols";
     private boolean longPressCompatible = true;
     private String longPressCompatibilityError = "";
+
+    /**
+     * Cached armed fields per row runtime class. Same match rule as
+     * {@code XpReflect.getBooleanField}: first declared field with this name walking up
+     * the hierarchy, resolved once instead of scanned on every long press.
+     */
+    private static final Map<String, Field> ARMED_FIELDS = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> ARMED_FIELD_MISSES =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    private static Field armedFieldFor(Class<?> owner, String name) {
+        if (owner == null || name == null || name.isEmpty()) {
+            return null;
+        }
+        String key = owner.getName() + "#" + name;
+        Field hit = ARMED_FIELDS.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        if (ARMED_FIELD_MISSES.contains(key)) {
+            return null;
+        }
+        Field found = null;
+        for (Class<?> current = owner; current != null; current = current.getSuperclass()) {
+            for (Field candidate : current.getDeclaredFields()) {
+                if (name.equals(candidate.getName())) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found != null) {
+                break;
+            }
+        }
+        if (found == null) {
+            ARMED_FIELD_MISSES.add(key);
+            return null;
+        }
+        found.setAccessible(true);
+        ARMED_FIELDS.put(key, found);
+        return found;
+    }
 
     public ChatFeature(ClassLoader classLoader) {
         this(classLoader, true, "");
@@ -203,10 +249,18 @@ public final class ChatFeature extends Feature {
                 XpHooks.hookMethod(FEATURE_REACTION_ROW, method, new XpHooks.Before() {
                     @Override
                     public void before(XpHooks.HookParam param) throws Throwable {
-                        if (!XpReflect.getBooleanField(param.thisObject, armedField)) {
+                        // Null thisObject throws here exactly as the uncached
+                        // XpReflect path did (getClass on null).
+                        Field armed = armedFieldFor(param.thisObject.getClass(), armedField);
+                        if (armed == null) {
+                            throw new NoSuchFieldException(
+                                    param.thisObject.getClass().getName()
+                                            + "#" + armedField + " not found");
+                        }
+                        if (!armed.getBoolean(param.thisObject)) {
                             return;
                         }
-                        XpReflect.setBooleanField(param.thisObject, armedField, false);
+                        armed.setBoolean(param.thisObject, false);
                         param.setResult(null);
                         SelfCheckRegistry.markSuppressed(FEATURE_REACTION_ROW,
                                 CHAT_ROW_CLASS + "#" + methodName,

@@ -71,6 +71,7 @@ public final class Tweaks {
     public static final String KEY_CALL_RECORDING_PROBE = "calls.recording_probe";
     public static final String KEY_BACKUP_FREQUENT_PUSH = "backup.frequent_push";
     public static final String KEY_BACKUP_PUSH_INTERVAL = "backup.push_interval";
+    public static final String KEY_KEEP_EXPIRED_MEDIA = "messages.keep_expired_media";
     public static final String KEY_PASSCODE_GRACE = "security.passcode_grace";
     public static final String KEY_PASSCODE_GRACE_MS = "security.passcode_grace_ms";
 
@@ -149,7 +150,8 @@ public final class Tweaks {
                     new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW),
                     new Group(R.string.zp_group_external_links, KEY_OPEN_LINKS_EXTERNALLY),
                     new Group(R.string.zp_group_status_privacy,
-                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS));
+                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS),
+                    new Group(R.string.zp_group_media, KEY_KEEP_EXPIRED_MEDIA));
         }
         if (SECTION_CALLS.equals(section)) {
             return Collections.singletonList(
@@ -282,6 +284,9 @@ public final class Tweaks {
                     true, false),
             new Item(SECTION_CHAT, KEY_BLOCK_TYPING_STATUS,
                     R.string.zp_tweak_block_typing_status, R.string.zp_tweak_block_typing_status_summary,
+                    true, false),
+            new Item(SECTION_CHAT, KEY_KEEP_EXPIRED_MEDIA,
+                    R.string.zp_tweak_keep_expired_media, R.string.zp_tweak_keep_expired_media_summary,
                     true, false),
 
             new Item(SECTION_CALLS, KEY_AUTO_RECORD_CALLS,

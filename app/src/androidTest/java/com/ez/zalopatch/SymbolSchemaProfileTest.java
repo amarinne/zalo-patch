@@ -130,7 +130,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertFalse(active.valid);
         assertTrue(active.bundleValid);
         assertTrue(active.validation.contains("No exact bundled symbol profile"));
-        assertEquals("260602901, 260701901, 260801903, 260802903",
+        assertEquals("260602901, 260701901, 260801903, 260802903, 261001903, 261001905",
                 active.supportedVersionCodes);
     }
 
@@ -222,6 +222,43 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
             assertTrue("Invalid bundled profile for " + versionCode, active.valid);
             assertHookIdentities(active);
         }
+    }
+
+    public void testEmbeddedFallbackMatchesPackagedProfiles() {
+        assertEquals(bundleJson, BundledSymbolSchemaJson.json());
+    }
+
+    public void testOctoberMaintenanceHasExactArtifactAndReviewedRoutes() throws Exception {
+        SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 261001905L);
+        assertEquals(31, active.schemaRevision);
+        assertEquals("2fe8d3f2bbd3fc923bcf62e4b519e50661176ed79a51aac01be8b39c8ef3994c",
+                active.string("artifact.base_apk_sha256", ""));
+        assertHookIdentities(active);
+        assertOctoberReviewedRoutes(active);
+    }
+
+    public void testOctoberExactProfileKeepsReviewedRoutesAndOptionalGaps() throws Exception {
+        assertOctoberReviewedRoutes(SymbolSchema.select(bundleJson, "Test", 261001903L));
+    }
+
+    private void assertOctoberReviewedRoutes(SymbolSchema.Active active) throws Exception {
+        assertTrue(active.validation, active.valid);
+        assertEquals("fi1.w1", active.string("symbols.inbox.message_adapter_class", ""));
+        assertEquals("f", active.string("symbols.inbox.conversation_field", ""));
+        assertEquals("j", active.string("symbols.chat.reaction_long_press_method", ""));
+        assertEquals("H5", active.string("symbols.chat.reaction_long_press_armed_field", ""));
+        assertEquals("static-verified", active.string("artifact.verification", ""));
+        assertEquals(java.util.Arrays.asList("zh1.b0"),
+                active.strings("symbols.bottom_tabs.current_state_classes"));
+        assertTrue(active.root.getJSONObject("symbols").getJSONObject("bottom_tabs")
+                .getJSONArray("current_tab_symbols").getJSONObject(0)
+                .getBoolean("preserve_icon_arrays"));
+        assertEquals("ac2.p2", active.string("symbols.call_recording.callback_class", ""));
+        assertEquals("kj.a", active.string("symbols.call_recording.peer_manager_class", ""));
+        assertEquals("", active.string("symbols.call_recording.activity_ready_method", ""));
+        assertEquals("V", active.string("symbols.chat.send_typing_method", ""));
+        assertFalse(active.root.getJSONObject("symbols").getJSONObject("me")
+                .getBoolean("zstyle_view_exclusive"));
     }
 
     public void testCatalogRetainsEveryExactVersionAndSymbolCoverage() {
@@ -392,6 +429,25 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                     "No runtime hook".equals(info.path));
             if (Tweaks.KEY_BACKUP_FREQUENT_PUSH.equals(item.key) && !backupMapped) {
                 assertTrue(info.path.contains("<Zalo preference helper>"));
+                continue;
+            }
+            // Partial profiles expose missing bindings without inventing historical names.
+            if (Tweaks.KEY_KEEP_EXPIRED_MEDIA.equals(item.key)
+                    && active.string("symbols.media.state_classifier_class", "").isEmpty()) {
+                assertEquals("", active.string("symbols.media.state_classifier_method", ""));
+                assertTrue(info.path.contains("<media classifier>"));
+                continue;
+            }
+            if (Tweaks.KEY_BLOCK_TYPING_STATUS.equals(item.key)
+                    && active.string("symbols.chat.send_typing_method", "").isEmpty()) {
+                assertTrue(info.path.contains("<send typing>"));
+                continue;
+            }
+            if ((Tweaks.KEY_HIDE_DISCOVERY_TAB.equals(item.key)
+                    || Tweaks.KEY_HIDE_TIMELINE_TAB.equals(item.key)
+                    || Tweaks.KEY_KEEP_GROUP_TAB.equals(item.key))
+                    && active.strings("symbols.bottom_tabs.current_state_classes").isEmpty()) {
+                assertTrue(info.path.contains("<bottom-tab state>"));
                 continue;
             }
             for (String symbol : info.driftSymbols) {

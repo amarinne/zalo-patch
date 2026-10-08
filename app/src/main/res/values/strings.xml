@@ -83,7 +83,7 @@
     <string name="zp_tweak_keep_group">Keep Group tab</string>
     <string name="zp_tweak_keep_group_summary">Only when Zalo shows it.</string>
     <string name="zp_tweak_force_messages_home">Use Messages as home</string>
-    <string name="zp_tweak_force_messages_home_summary">Opens Messages after a tab change.</string>
+    <string name="zp_tweak_force_messages_home_summary">Opens Messages when launching Zalo. Other tabs remain usable.</string>
     <string name="zp_tweak_hide_qr_wallet">Hide QR Wallet</string>
     <string name="zp_tweak_hide_qr_wallet_summary">Hide the QR Wallet entry on the Me screen.</string>
     <string name="zp_tweak_hide_zcloud">Hide zCloud</string>
@@ -162,6 +162,9 @@
     <string name="zp_group_message_rendering">Message rendering</string>
     <string name="zp_group_external_links">External links</string>
     <string name="zp_group_status_privacy">Status privacy</string>
+    <string name="zp_group_media">Media</string>
+    <string name="zp_tweak_keep_expired_media">Keep expired files accessible</string>
+    <string name="zp_tweak_keep_expired_media_summary">Keeps on-device chat files usable after Zalo marks them expired. Does not restore missing files.</string>
     <string name="zp_group_call_recording">Call recording</string>
     <string name="zp_group_backup_schedule">Scheduled message backup</string>
     <string name="zp_group_security">App lock</string>

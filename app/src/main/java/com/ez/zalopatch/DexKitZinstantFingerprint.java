@@ -58,7 +58,7 @@ public final class DexKitZinstantFingerprint {
      * 13 = call peer manager anchored on the PeerJNI predicate invoker,
      * 14 = bottom-tab structural field gate without pinned member letters.
      */
-    public static final int QUERY_REVISION = 14;
+    public static final int QUERY_REVISION = 15;
     public static final String ANCHOR_AD_BIND = "zinstant.ad_bind_method";
     public static final String ANCHOR_FEED_BIND = "zinstant.feed_bind_method";
 

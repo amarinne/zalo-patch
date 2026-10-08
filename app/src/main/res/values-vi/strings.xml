@@ -62,7 +62,7 @@
     <string name="zp_tweak_keep_group">Giữ tab Nhóm</string>
     <string name="zp_tweak_keep_group_summary">Chỉ áp dụng khi Zalo hiển thị tab này.</string>
     <string name="zp_tweak_force_messages_home">Dùng Tin nhắn làm trang chính</string>
-    <string name="zp_tweak_force_messages_home_summary">Mở Tin nhắn sau khi chuyển tab.</string>
+    <string name="zp_tweak_force_messages_home_summary">Mở Tin nhắn khi khởi chạy Zalo. Các tab khác vẫn dùng được.</string>
     <string name="zp_tweak_hide_qr_wallet">Ẩn Ví QR</string>
     <string name="zp_tweak_hide_qr_wallet_summary">Ẩn Ví QR trong Cá nhân.</string>
     <string name="zp_tweak_hide_zcloud">Ẩn zCloud</string>
@@ -110,6 +110,9 @@
     <string name="zp_group_in_app_ads">Quảng cáo trong ứng dụng</string>
     <string name="zp_group_me_services">Cá nhân</string>
     <string name="zp_group_status_privacy">Quyền riêng tư trạng thái</string>
+    <string name="zp_group_media">Đa phương tiện</string>
+    <string name="zp_tweak_keep_expired_media">Giữ file hết hạn khả dụng</string>
+    <string name="zp_tweak_keep_expired_media_summary">Giữ file trong máy khả dụng sau khi Zalo đánh dấu hết hạn. Không khôi phục file đã mất.</string>
     <string name="zp_group_call_recording">Ghi âm cuộc gọi</string>
     <string name="zp_group_backup_schedule">Sao lưu tin nhắn định kỳ</string>
     <string name="zp_group_security">Khóa ứng dụng</string>
