@@ -67,7 +67,11 @@ final class SymbolCatalogContract {
                 || profile == null) {
             throw new IllegalArgumentException("catalog artifact mismatch");
         }
-        return new Entry(sequence, digest, profile.toString(), envelopeBytes);
+        String profileJson = profile.toString();
+        if (!SymbolSchema.select(profileJson, "Remote catalog " + sequence, versionCode).valid) {
+            throw new IllegalArgumentException("catalog profile invalid");
+        }
+        return new Entry(sequence, digest, profileJson, envelopeBytes);
     }
 
     private static PublicKey parsePublicKey(byte[] pemBytes) throws Exception {

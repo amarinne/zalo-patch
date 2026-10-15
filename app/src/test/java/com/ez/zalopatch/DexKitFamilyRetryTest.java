@@ -43,6 +43,13 @@ public final class DexKitFamilyRetryTest {
         assertEquals("ambiguous", read.families.get("inbox").status);
     }
 
+    @Test public void newlyAddedRemoteConfigFamilyIsPendingInOlderCacheEntries() {
+        Map<String, DexKitFamilyRetry.State> states = settled();
+        states.remove("remote_config");
+        DexKitCache.Entry older = entry(null, states);
+        assertTrue(DexKitFamilyRetry.pending(older).contains("remote_config"));
+    }
+
     @Test public void transientBudgetSurvivesRestartsAndStopsAfterThreeScans() throws Exception {
         Map<String, DexKitFamilyRetry.State> states = settled();
         DexKitFamilyRetry.State state = null;
@@ -103,6 +110,19 @@ public final class DexKitFamilyRetryTest {
                 Collections.singletonMap("symbols.me.query", "query_error")));
         assertEquals("no_match", DexKitFamilyRetry.status("bottom_tabs", Collections.emptyMap(),
                 Collections.singletonMap("symbols.bottom_tabs.state", "index_mapping_failed")));
+        Map<String, String> remoteConfig = new LinkedHashMap<>();
+        remoteConfig.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, "cfg.Reader");
+        remoteConfig.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, "read");
+        assertEquals("resolved", DexKitFamilyRetry.status("remote_config", remoteConfig,
+                Collections.emptyMap()));
+        assertEquals("no_match", DexKitFamilyRetry.status("remote_config",
+                Collections.emptyMap(), Collections.singletonMap(
+                        DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD,
+                        "no_shared_reader")));
+        assertEquals("ambiguous", DexKitFamilyRetry.status("remote_config",
+                Collections.emptyMap(), Collections.singletonMap(
+                        DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD,
+                        "ambiguous_shared_readers")));
     }
 
     @Test public void partialClassDumpFailureIsRetryableEvenWhenShapeSelectionFails() {

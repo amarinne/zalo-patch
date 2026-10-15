@@ -51,18 +51,13 @@ public final class NotificationRuleListActivity {
                     getResources().getQuantityString(
                             R.plurals.zp_rule_items_count, values.size(), values.size()));
             ZpSection section = ZpSection.in(current);
-            if (values.isEmpty()) {
-                section.add(PreferenceUi.info(context, getString(R.string.zp_rule_no_items),
-                        getString(R.string.zp_rule_no_items_summary)));
-            } else {
-                for (String value : values) {
-                    ZpRowPreference row = PreferenceUi.action(context, value);
-                    row.setOnPreferenceClickListener(preference -> {
-                        showEditDialog(value);
-                        return true;
-                    });
-                    section.add(row);
-                }
+            for (String value : values) {
+                ZpRowPreference row = PreferenceUi.action(context, value);
+                row.setOnPreferenceClickListener(preference -> {
+                    showEditDialog(value);
+                    return true;
+                });
+                section.add(row);
             }
             ZpRowPreference add = PreferenceUi.action(context,
                     getString(R.string.zp_rule_add_item),
@@ -138,7 +133,6 @@ public final class NotificationRuleListActivity {
                         Toast.LENGTH_SHORT).show();
                 return;
             }
-            SettingsChanges.markChanged(requireContext(), "notifications.custom_rules");
             buildScreen();
         }
 

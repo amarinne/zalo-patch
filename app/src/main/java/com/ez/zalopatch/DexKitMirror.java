@@ -5,31 +5,9 @@ import android.content.SharedPreferences;
 import android.util.Log;
 
 /**
- * Property-mirror transport for the DexKit pilot cache and scan budget.
- *
- * <p>On some devices (observed: Xiaomi 14 / HyperOS, Android 16) the Zalo process cannot
- * resolve the module content provider at all: {@code createPackageContext("com.ez.zalopatch")}
- * fails, provider queries return null, and provider calls throw
- * {@code IllegalArgumentException}. The provider path still works where it works (Fold3 /
- * Android 12, shell), so it stays first; this mirror is the fallback transport in both
- * directions:
- *
- * <ul>
- *   <li>Module to Zalo: the validated cache entry plus the scan budget are mirrored as
- *       blobs through {@link SettingsPropertyMirror} (root-gated write, world-readable
- *       read). The Zalo process reads them without touching the provider.</li>
- *   <li>Zalo to module: scan outcomes travel by explicit-component broadcast to
- *       {@code SelfCheckReceiver} (API 34+ shareIdentity, same pattern as the self-check
- *       fallback), where they go through the same {@link DexKitStore} validation as
- *       provider writes, then re-mirror.</li>
- * </ul>
- *
- * <p>Trust: mirror writes require root in the module process, the same gate as the
- * existing settings/artifact/rule mirror. The Zalo side accepts a mirrored entry only
- * when its cheap host-identity fields (versionCode, lastUpdateTime, APK size, query
- * revision, resolver format, module version) match the installed host; the code digest
- * is trusted as module-validated at scan time, and live preflight stays the
- * load-bearing check before any hook installs.
+ * Restart snapshot transport for the DexKit cache and scan budget, with a legacy property fallback.
+ * Scan outcomes still use the authorized provider or identity-sharing broadcast. Host identity,
+ * query/module revisions, validated code digests, and live preflight remain mandatory.
  */
 public final class DexKitMirror {
     static final String MIRROR_CACHE_KEY = "dexkit.cache";
@@ -112,7 +90,7 @@ public final class DexKitMirror {
         return readCacheEntry(new BlobIo() {
             @Override
             public String read(String key) {
-                return SettingsPropertyMirror.readBlob(key);
+                return HookConfig.readBlob(key);
             }
 
             @Override
@@ -136,7 +114,7 @@ public final class DexKitMirror {
 
     /** Reads the mirrored scan budget, or null when absent or malformed. */
     public static Budget readBudget() {
-        return decodeBudget(SettingsPropertyMirror.readBlob(MIRROR_BUDGET_KEY));
+        return decodeBudget(HookConfig.readBlob(MIRROR_BUDGET_KEY));
     }
 
     static Budget readBudget(BlobIo io) {
@@ -175,9 +153,7 @@ public final class DexKitMirror {
     }
 
     /**
-     * Module-process sync: mirrors the current cache entry and scan budget for the
-     * installed host. Best-effort; both writes are root-gated like the existing
-     * settings mirror.
+     * Module-process sync: refreshes cache and budget state without publishing pending settings.
      *
      * <p>The budget is seeded for the currently installed host scope (not the stored
      * scope, which is empty before the first scan), so the hook process can authorize
@@ -185,6 +161,23 @@ public final class DexKitMirror {
      * scope still matches; a host, query, or module change is a fresh budget.
      */
     static void sync(Context context) {
+        FrameworkConfig.refreshState(context);
+    }
+
+    static java.util.Map<String, String> snapshot(Context context) {
+        DexKitCache.Entry entry = DexKitStore.load(context);
+        SharedPreferences preferences = TweakStore.preferences(context);
+        Budget budget = seedBudget(
+                preferences.getString(DexKitStore.KEY_SCAN_SCOPE, ""),
+                preferences.getInt(DexKitStore.KEY_SCAN_FAILURES, 0),
+                preferences.getLong(DexKitStore.KEY_SCAN_LAST_ATTEMPT_MS, 0L), currentScope(context));
+        java.util.Map<String, String> values = new java.util.HashMap<>();
+        values.put(MIRROR_CACHE_KEY, entry == null ? "" : DexKitCache.serialize(entry));
+        values.put(MIRROR_BUDGET_KEY, encodeBudget(budget));
+        return values;
+    }
+
+    static void syncLegacy(Context context) {
         if (context == null) {
             return;
         }
@@ -210,9 +203,12 @@ public final class DexKitMirror {
     }
 
     /** True when the property mirror holds no usable cache entry. */
-    static boolean cacheMirrorEmpty() {
+    static boolean cacheMirrorEmpty(Context context) {
         try {
-            String json = SettingsPropertyMirror.readBlob(MIRROR_CACHE_KEY);
+            ConfigSnapshot snapshot = ConfigSnapshot.decode(TweakStore.preferences(context)
+                    .getString(ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
+            String json = snapshot == null ? SettingsPropertyMirror.readBlob(MIRROR_CACHE_KEY)
+                    : snapshot.values.get(MIRROR_CACHE_KEY);
             return json == null || json.isEmpty();
         } catch (Throwable ignored) {
             return false;

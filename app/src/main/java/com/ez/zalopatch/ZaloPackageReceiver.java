@@ -12,8 +12,7 @@ public final class ZaloPackageReceiver extends BroadcastReceiver {
             Context appContext = context.getApplicationContext();
             ZaloArtifactState.schedule(appContext, true);
             // A Zalo update changes the DexKit scan scope; re-mirror so the hook process
-            // sees a fresh budget instead of a stale one. Off the receiver thread: the
-            // mirror write shells out to su.
+            // sees a fresh budget instead of a stale one. Keep transport IPC off the receiver thread.
             final PendingResult result = goAsync();
             new Thread(() -> {
                 try {

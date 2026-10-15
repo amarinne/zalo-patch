@@ -8,21 +8,11 @@
     android:paddingTop="8dp"
     android:paddingEnd="@dimen/zp_page_padding">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@drawable/zp_notice_background"
-        android:padding="14dp"
-        android:text="@string/zp_history_privacy_notice"
-        android:textAppearance="?attr/textAppearanceBodyMedium"
-        android:textColor="@color/zp_text_secondary" />
-
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingTop="8dp">
+        android:orientation="horizontal">
 
         <TextView
             android:id="@+id/zp_history_storage"

@@ -43,7 +43,8 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             Tweaks.KEY_HIDE_QR_WALLET, Tweaks.KEY_HIDE_ZCLOUD,
             Tweaks.KEY_HIDE_ZSTYLE, Tweaks.KEY_HIDE_ZBUSINESS, Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS,
             Tweaks.KEY_RECORD_NOTIFICATION_HISTORY, Tweaks.KEY_AUTO_RECORD_CALLS,
-            NotificationRuleStore.PREF_KEY
+            Tweaks.KEY_HIDE_ZCLOUD_BANNER, Tweaks.KEY_HIDE_MEDIA_BOX,
+            NotificationRuleStore.PREF_KEY, SettingsStore.GENERATION, SettingsStore.PENDING
     };
     private Context context;
     private UiAutomation ui;
@@ -71,7 +72,7 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         String fixtures = args.getString("e2e_fixtures", "");
         if (!fixtures.isEmpty()) inboxFixtures = new JSONObject(new String(
                 android.util.Base64.decode(fixtures, android.util.Base64.DEFAULT), StandardCharsets.UTF_8));
-        if (!Arrays.asList("all", "navigation", "inbox", "notifications", "me", "settings").contains(suite)) {
+        if (!Arrays.asList("all", "navigation", "inbox", "notifications", "me", "settings", "startup").contains(suite)) {
             throw new Blocked("invalid_suite");
         }
         if (!"q2q".equals(shell("getprop ro.product.device").trim())) {
@@ -80,6 +81,11 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         PackageInfo installed = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
         if (installed.getLongVersionCode() != BuildConfig.VERSION_CODE) {
             throw new Blocked("test_module_version_mismatch");
+        }
+        if (context.getSharedPreferences("config_transport", Context.MODE_PRIVATE)
+                .getBoolean("remote_expected", false)
+                && !waitFor(FrameworkConfig::hasRemoteService)) {
+            throw new Blocked("framework_config_service_unavailable");
         }
     }
 
@@ -100,6 +106,7 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             if (selected("inbox")) inbox();
             if (selected("me")) me();
             if (selected("notifications")) notifications();
+            if ("startup".equals(suite)) startup();
         } finally {
             // Emit completion only after independently comparing restored owned values.
             restore();
@@ -129,6 +136,121 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
     }
 
     private boolean selected(String name) { return "all".equals(suite) || name.equals(suite); }
+
+    private static final String[] STARTUP_BUDGET = {
+            DexKitStore.KEY_SCAN_SCOPE, DexKitStore.KEY_SCAN_FAILURES,
+            DexKitStore.KEY_SCAN_LAST_ATTEMPT_MS, DexKitStore.KEY_SCAN_SLOT_MS
+    };
+
+    private void startup() throws Exception {
+        check("compatibility.self_check", "prior_build_cache_first_launch", "host_ui", () -> startupCase(false));
+        check("compatibility.self_check", "absent_cache_first_launch", "host_ui", () -> startupCase(true));
+    }
+
+    private void stopHost() throws Exception {
+        shell("am force-stop com.zing.zalo");
+        require(shell("pidof com.zing.zalo").trim().isEmpty(), "host_did_not_stop_before_cache_setup");
+    }
+
+    private String startupCache() throws Exception {
+        synchronized (DexKitStore.FILE_LOCK) {
+            File file = new File(context.getFilesDir(), DexKitStore.FILE_NAME);
+            if (!file.exists()) return null;
+            try (FileInputStream input = new AtomicFile(file).openRead()) {
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    require(bytes.size() + count <= DexKitCache.MAX_ENTRY_BYTES, "startup_cache_exceeds_limit");
+                    bytes.write(buffer, 0, count);
+                }
+                byte[] raw = bytes.toByteArray();
+                String value = new String(raw, StandardCharsets.UTF_8);
+                require(Arrays.equals(raw, value.getBytes(StandardCharsets.UTF_8)), "startup_cache_invalid_utf8");
+                return value;
+            }
+        }
+    }
+
+    private JSONObject startupBudget() throws Exception {
+        JSONObject values = new JSONObject();
+        Map<String, ?> prefs = TweakStore.preferences(context).getAll();
+        for (String key : STARTUP_BUDGET) values.put(key, encodeValue(prefs.get(key)));
+        return values;
+    }
+
+    private String hostRun() {
+        try (Cursor rows = context.getContentResolver().query(
+                Uri.parse("content://com.ez.zalopatch.config/self_check/symbol_schema"), null, null, null, null)) {
+            if (rows != null && rows.moveToFirst()) return rows.getString(rows.getColumnIndexOrThrow("run_id"));
+        }
+        return "";
+    }
+
+    private void startupCase(boolean absent) throws Exception {
+        stopHost();
+        if (absent) {
+            Bundle result = context.getContentResolver().call(Uri.parse("content://com.ez.zalopatch.config"),
+                    "clear_dexkit_cache", null, null);
+            require(result != null && result.getBoolean("cleared") && result.getBoolean("mirror_cleared"),
+                    "cache_clear_boundary_failed");
+            require(startupCache() == null && DexKitMirror.cacheMirrorEmpty(context), "fresh_cache_not_absent");
+        } else {
+            String original = startupCache();
+            if (original == null) throw new Blocked("genuine_prior_build_cache_unavailable");
+            DexKitCache.Entry entry = DexKitCache.parse(original);
+            PackageInfo host = context.getPackageManager().getPackageInfo("com.zing.zalo", 0);
+            String digest = TweakStore.preferences(context).getString(ZaloArtifactState.KEY_BASE_SHA256, "");
+            if (entry.moduleVersion >= BuildConfig.VERSION_CODE || entry.moduleVersion <= 0
+                    || !DexKitCache.bindsTo(entry, host.getLongVersionCode(), digest, host.lastUpdateTime,
+                    new File(host.applicationInfo.sourceDir).length(), DexKitZinstantFingerprint.QUERY_REVISION,
+                    DexKitCache.RESOLVER_FORMAT, entry.moduleVersion)) {
+                throw new Blocked("prior_build_cache_does_not_bind_current_host");
+            }
+        }
+        set(Tweaks.KEY_HIDE_DISCOVERY_TAB, true);
+        set(Tweaks.KEY_HIDE_TIMELINE_TAB, true);
+        set(Tweaks.KEY_KEEP_GROUP_TAB, true);
+        set(Tweaks.KEY_FORCE_MESSAGES_AS_HOME, true);
+        String priorRun = hostRun();
+        String cache = startupCache();
+        JSONObject budget = startupBudget();
+        restart(); // This is the only cold launch in this case. A retry cannot rescue it.
+        require(waitFor(() -> !hostRun().isEmpty() && !hostRun().equals(priorRun)), "fresh_host_run_unavailable");
+        String currentRun = hostRun();
+        compactTabs();
+        require(waitFor(this::messagePage), "first_launch_did_not_select_messages");
+        clickId("maintab_groups");
+        require(waitFor(this::groupPage), "first_launch_groups_redirected");
+        SystemClock.sleep(750);
+        require(groupPage(), "first_launch_late_redirect");
+        preservedPages();
+        try (Cursor rows = context.getContentResolver().query(
+                Uri.parse("content://com.ez.zalopatch.config/self_check"), null, null, null, null)) {
+            require(rows != null && rows.getCount() > 0, "startup_runtime_rows_missing");
+            boolean exact = false, tabs = false, inbox = false;
+            String generation = "";
+            while (rows.moveToNext()) {
+                require(currentRun.equals(rows.getString(rows.getColumnIndexOrThrow("run_id"))), "startup_old_runtime_evidence");
+                String rowGeneration = rows.getString(rows.getColumnIndexOrThrow("artifact_generation"));
+                require(rowGeneration != null && !rowGeneration.isEmpty(), "startup_artifact_generation_missing");
+                if (generation.isEmpty()) generation = rowGeneration;
+                require(generation.equals(rowGeneration), "startup_mixed_artifact_generations");
+                String status = rows.getString(rows.getColumnIndexOrThrow("status"));
+                require(!"failed".equals(status) && !"stale".equals(status), "first_launch_runtime_failure");
+                String feature = rows.getString(rows.getColumnIndexOrThrow("feature"));
+                String target = rows.getString(rows.getColumnIndexOrThrow("target"));
+                if ("dexkit_overlay".equals(feature)) exact = "disabled".equals(status) && "exact profile in use".equals(target);
+                if ("bottom_tabs.state".equals(feature)) tabs = "active".equals(status);
+                if ("inbox.filter".equals(feature)) inbox = "active".equals(status);
+                if ("dexkit_scan".equals(feature)) require("standby".equals(target), "first_launch_started_discovery");
+            }
+            require(exact && tabs && inbox, "first_launch_required_routes_missing");
+        }
+        require(java.util.Objects.equals(cache, startupCache()), "first_launch_wrote_discovery_cache");
+        for (String key : STARTUP_BUDGET) require(sameValue(TweakStore.preferences(context).getAll().get(key),
+                budget.getJSONObject(key)), "first_launch_changed_scan_budget");
+    }
 
     private void settings() throws Exception {
         check("settings.presentation", "section_setting_inventory", "module_ui", () -> {
@@ -312,6 +434,38 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
                 require(waitFor(this::messagePage), "stranger_fixture_back_failed");
             }
         });
+        check("inbox.category_chips", "chip_bar_disable_restore", "host_ui", () -> {
+            set(Tweaks.KEY_FILTER_POPOVER_CATEGORIES, true);
+            SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, 0);
+            restart();
+            require(waitFor(() -> selectedChip("All") && visibleText("Chats")), "chip_bar_baseline_missing");
+            set(Tweaks.KEY_FILTER_POPOVER_CATEGORIES, false);
+            restart();
+            require(waitFor(this::messagePage), "chip_bar_off_inbox_missing");
+            require(!selectedChip("All") && !selectedChip("Chats"), "disabled_chip_bar_still_selected");
+            require(!visibleText("All") && !visibleText("Chats"), "disabled_chip_bar_still_visible");
+            preservedPages();
+            set(Tweaks.KEY_FILTER_POPOVER_CATEGORIES, true);
+            restart();
+            require(waitFor(() -> selectedChip("All") && visibleText("Chats")), "chip_bar_not_restored");
+        });
+        check("inbox.zcloud_banner", "rendered_banner_roundtrip", "host_ui", () -> {
+            set(Tweaks.KEY_HIDE_ZCLOUD_BANNER, false);
+            restart();
+            require(waitFor(this::messagePage), "banner_baseline_inbox_missing");
+            AccessibilityNodeInfo banner = find(HOST + "fixed_banner_container", null);
+            boolean populated = banner != null && banner.getChildCount() > 0;
+            if (banner != null) banner.recycle();
+            if (!populated) throw new Blocked("native_populated_zcloud_banner_unavailable");
+            set(Tweaks.KEY_HIDE_ZCLOUD_BANNER, true);
+            restart();
+            require(waitFor(this::messagePage), "banner_hidden_inbox_missing");
+            require(!visibleId("fixed_banner_container"), "native_banner_still_visible");
+            preservedPages();
+            set(Tweaks.KEY_HIDE_ZCLOUD_BANNER, false);
+            restart();
+            require(waitFor(() -> visibleId("fixed_banner_container")), "native_banner_off_not_restored");
+        });
         check("inbox.category_chips", "default_and_toggle_roundtrip", "host_ui", () -> {
             SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, 1);
             restart();
@@ -430,12 +584,35 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             clickId("maintab_metab");
             require(waitFor(this::mePage), "cleanup_me_missing");
             JSONObject hidden = meSnapshot();
+            SystemClock.sleep(1200); // Let the independent bounded outcome observer settle.
             if (!hidden.optBoolean("zstyle_marker")) throw new Blocked("native_zstyle_current_binding_unavailable");
             require(hidden.optBoolean("hide_zstyle") && hidden.optBoolean("collapsed")
                     && hidden.optBoolean("attached") && hidden.optInt("height", -1) == 0
                     && hidden.optInt("visibility", -1) == 8,
                     "native_zstyle_geometry_not_collapsed");
+            set(Tweaks.KEY_HIDE_ZSTYLE, false);
+            restart();
+            clickId("maintab_metab");
+            require(waitFor(this::mePage), "restored_me_missing");
+            JSONObject restored = meSnapshot();
+            require(restored.optBoolean("zstyle_marker") && !restored.optBoolean("hide_zstyle")
+                    && restored.optInt("visibility", -1) == 0 && restored.optInt("height", 0) != 0
+                    && restored.optInt("measured_height", 0) > 0 && restored.optBoolean("shown"),
+                    "native_zstyle_off_not_restored");
+            set(Tweaks.KEY_HIDE_ZSTYLE, true);
+            restart();
+            clickId("maintab_metab");
+            require(waitFor(this::mePage), "lifecycle_me_missing");
         });
+        for (String[] row : new String[][]{
+                {Tweaks.KEY_HIDE_QR_WALLET, "rendered_qr_wallet", "QR Wallet", "Ví QR", "My QR"},
+                {Tweaks.KEY_HIDE_ZCLOUD, "rendered_zcloud", "zCloud", "ZCloud"},
+                {Tweaks.KEY_HIDE_ZBUSINESS, "rendered_zbusiness", "zBusiness", "Tài khoản kinh doanh"}}) {
+            check("me.cleanup", row[1], "host_ui", () -> meRowRoundtrip(row));
+        }
+        set(Tweaks.KEY_HIDE_ZSTYLE, true);
+        restart();
+        clickId("maintab_metab");
         final JSONObject[] lifecycle = {null};
         check("me.cleanup", "template_a_b_a", "host_ui", () -> {
             lifecycle[0] = meE2e("template_a_b_a", 15000);
@@ -459,6 +636,31 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         meE2e("cancel", 10000);
     }
 
+    private void meRowRoundtrip(String[] row) throws Exception {
+        // Keep B326's native renderer selected while isolating each ordinary Me row setting.
+        set(Tweaks.KEY_HIDE_ZSTYLE, true);
+        set(row[0], false);
+        restart();
+        clickId("maintab_metab");
+        require(waitFor(this::mePage), "me_row_baseline_missing");
+        String label = null;
+        for (int i = 2; i < row.length; i++) if (visibleText(row[i])) { label = row[i]; break; }
+        if (label == null) throw new Blocked("native_visible_row_unavailable:" + row[0]);
+        final String marker = label;
+        set(row[0], true);
+        restart();
+        clickId("maintab_metab");
+        require(waitFor(this::mePage), "me_row_enabled_page_missing");
+        SystemClock.sleep(1000);
+        require(!visibleText(marker), "me_row_still_visible:" + row[0]);
+        require(visibleText("My Documents") || visibleText("Cloud của tôi"), "me_documents_lost");
+        preservedPages();
+        set(row[0], false);
+        restart();
+        clickId("maintab_metab");
+        require(waitFor(() -> visibleText(marker)), "me_row_off_not_restored:" + row[0]);
+    }
+
     private JSONObject meSnapshot() throws Exception {
         JSONObject observed = null;
         long deadline = SystemClock.elapsedRealtime() + 10000;
@@ -479,23 +681,40 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
     private void notifications() throws Exception {
         check("notifications.promo_filter", "os_posting_filter_off", "host_os", () -> notificationCase(false));
         check("notifications.promo_filter", "os_posting_filter_on", "host_os", () -> notificationCase(true));
+        check("notifications.rule_editor", "custom_rules_os_roundtrip", "host_os", () -> {
+            NotificationRuleStore.RuleSet blocked = NotificationRuleStore.RuleSet.empty()
+                    .with(NotificationRuleStore.Type.KEYWORD_BLOCKLIST, Arrays.asList("New message fixture", "Nang cao"));
+            notificationCase(true, blocked, new HashSet<>(Arrays.asList("call", "backup")), "rules-block");
+            NotificationRuleStore.RuleSet exceptions = blocked
+                    .with(NotificationRuleStore.Type.KEYWORD_EXCEPTIONS, Arrays.asList("New message fixture", "Nang cao"));
+            notificationCase(true, exceptions, new HashSet<>(Arrays.asList("dm", "group", "promo", "call", "backup")), "rules-except");
+            notificationCase(true); // Removing custom rules restores the built-in policy.
+            notificationCase(false); // Disabling filtering restores all actual OS posts.
+        });
     }
 
     private void notificationCase(boolean enabled) throws Exception {
+        HashSet<String> expected = new HashSet<>(Arrays.asList("dm", "group", "call", "backup"));
+        if (!enabled) expected.add("promo");
+        notificationCase(enabled, NotificationRuleStore.RuleSet.empty(), expected, enabled ? "on" : "off");
+    }
+
+    private void notificationCase(boolean enabled, NotificationRuleStore.RuleSet rules,
+                                  HashSet<String> expected, String phase) throws Exception {
         set(Tweaks.KEY_RECORD_NOTIFICATION_HISTORY, false);
         set(Tweaks.KEY_AUTO_RECORD_CALLS, false);
         set(Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS, enabled);
-        require(NotificationRuleStore.save(context, NotificationRuleStore.RuleSet.empty()), "rule_fixture_profile_failed");
+        require(NotificationRuleStore.save(context, rules), "rule_fixture_profile_failed");
         root("setprop debug.zalopatch 1");
         restart();
-        String fixtureId = runId + (enabled ? "-on" : "-off");
+        String fixtureId = runId + "-" + phase;
         shell("am broadcast -a com.ez.zalopatch.behave.NOTIFICATION_E2E -p com.zing.zalo --es run_id " + fixtureId);
         JSONObject observed = null;
         long deadline = SystemClock.elapsedRealtime() + 15000;
         while (SystemClock.elapsedRealtime() < deadline) {
             try (Cursor rows = context.getContentResolver().query(Uri.parse("content://com.ez.zalopatch.config/self_check/notifications.observer"), null, null, null, null)) {
                 if (rows != null && rows.moveToFirst() && ("e2e:notifications:" + fixtureId).equals(rows.getString(rows.getColumnIndexOrThrow("target")))) {
-                    observed = new JSONObject(rows.getString(rows.getColumnIndexOrThrow("detail")));
+                    observed = new JSONObject(rows.getString(rows.getColumnIndexOrThrow("detail")).split("\n", 2)[0]);
                     break;
                 }
             }
@@ -507,8 +726,6 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         if (!observed.isNull("error")) throw new Blocked(observed.optString("error", "notification_fixture_unavailable"));
         require(observed.optBoolean("stable") && observed.optBoolean("notifications_enabled"), "notification_snapshot_not_stable");
         require(arraySet(observed.getJSONArray("attempted")).equals(new HashSet<>(Arrays.asList("dm", "group", "promo", "call", "backup"))), "fixture_attempts_incomplete");
-        HashSet<String> expected = new HashSet<>(Arrays.asList("dm", "group", "call", "backup"));
-        if (!enabled) expected.add("promo");
         require(arraySet(observed.getJSONArray("active")).equals(expected), "os_notification_outcome_wrong");
     }
 
@@ -540,6 +757,19 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             AccessibilityNodeInfo root = ui.getRootInActiveWindow();
             if (root != null) { collectIds(root, ids); root.recycle(); }
             value.put("visible_ids", new JSONArray(ids));
+            try (Cursor rows = context.getContentResolver().query(
+                    Uri.parse("content://com.ez.zalopatch.config/self_check"), null, null, null, null)) {
+                JSONArray contradictions = new JSONArray();
+                while (rows != null && rows.moveToNext()) {
+                    JSONObject outcome = OutcomeEvidence.parse(rows.getString(rows.getColumnIndexOrThrow("detail")));
+                    if (outcome != null) contradictions.put(new JSONObject()
+                            .put("feature", rows.getString(rows.getColumnIndexOrThrow("feature")))
+                            .put("status", rows.getString(rows.getColumnIndexOrThrow("status")))
+                            .put("run_id", rows.getString(rows.getColumnIndexOrThrow("run_id")))
+                            .put("evidence", outcome));
+                }
+                value.put("outcome_contradictions", contradictions);
+            }
         }
         Bundle result = new Bundle();
         result.putString("e2e_case", value.toString());
@@ -547,8 +777,7 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
     }
 
     private void set(String key, boolean value) {
-        SettingsStore.putBoolean(context, key, value);
-        SettingsChanges.markChanged(context, key);
+        if (!SettingsStore.putBoolean(context, key, value)) throw new IllegalStateException("setting_save_failed");
     }
     private void collectIds(AccessibilityNodeInfo node, java.util.Set<String> ids) {
         String id = node.getViewIdResourceName();
@@ -577,7 +806,7 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
     }
 
     private boolean groupPage() { return activeTab("groups") && visibleId("root_backgroundmain") && visibleId("recycler_view"); }
-    private boolean mePage() { return activeTab("metab") && visibleId("root_backgroundmain") && visibleId("recyclerView"); }
+    private boolean mePage() { return activeTab("metab") && visibleId("root_backgroundmain"); }
     private boolean messagePage() { return activeTab("message") && visibleId("recycler_view_msgList"); }
     private boolean tab(String name) { return visibleId("maintab_" + name); }
     private boolean activeTab(String name) {
@@ -659,6 +888,7 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
 
     private File snapshotFile() { return new File(context.getFilesDir(), "version-e2e-recovery.json"); }
     private void saveSnapshot() throws Exception {
+        if ("startup".equals(suite)) stopHost();
         JSONObject snapshot = new JSONObject();
         snapshot.put("run_id", runId);
         JSONObject settings = new JSONObject();
@@ -671,6 +901,20 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         snapshot.put("debug", shell("getprop debug.zalopatch").trim());
         snapshot.put("trace", shell("getprop debug.zalopatch.trace").trim());
         snapshot.put("me_run", shell("getprop debug.zalopatch.e2e_run").trim());
+        if ("startup".equals(suite)) {
+            JSONObject startup = new JSONObject();
+            String cache = startupCache();
+            // Parse before checkpointing so malformed bytes cannot be rewritten as text.
+            if (cache != null) DexKitCache.parse(cache);
+            startup.put("cache", cache == null ? JSONObject.NULL : cache);
+            startup.put("budget", startupBudget());
+            startup.put("published", new JSONObject(DexKitMirror.snapshot(context)));
+            String mirror = SettingsPropertyMirror.readBlob(DexKitMirror.MIRROR_CACHE_KEY);
+            startup.put("cache_mirror", mirror == null ? JSONObject.NULL : mirror);
+            mirror = SettingsPropertyMirror.readBlob(DexKitMirror.MIRROR_BUDGET_KEY);
+            startup.put("budget_mirror", mirror == null ? JSONObject.NULL : mirror);
+            snapshot.put("startup", startup);
+        }
         AtomicFile checkpoint = new AtomicFile(snapshotFile());
         FileOutputStream file = checkpoint.startWrite();
         try {
@@ -705,10 +949,31 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             snapshot = new JSONObject(readUtf8(input));
         }
         if (!runId.equals(snapshot.getString("run_id"))) throw new Blocked("recovery_identity_mismatch");
+        JSONObject startup = snapshot.optJSONObject("startup");
+        if (startup != null) {
+            stopHost();
+            synchronized (DexKitStore.FILE_LOCK) {
+                AtomicFile cache = new AtomicFile(new File(context.getFilesDir(), DexKitStore.FILE_NAME));
+                if (startup.isNull("cache")) {
+                    cache.delete();
+                } else {
+                    FileOutputStream file = cache.startWrite();
+                    try {
+                        file.write(startup.getString("cache").getBytes(StandardCharsets.UTF_8));
+                        cache.finishWrite(file);
+                    } catch (Exception failure) {
+                        cache.failWrite(file);
+                        throw failure;
+                    }
+                }
+            }
+        }
         SharedPreferences prefs = TweakStore.preferences(context);
         SharedPreferences.Editor editor = prefs.edit();
         JSONObject original = snapshot.getJSONObject("settings");
         for (String key : OWNED) putValue(editor, key, original.getJSONObject(key));
+        if (startup != null) for (String key : STARTUP_BUDGET)
+            putValue(editor, key, startup.getJSONObject("budget").getJSONObject(key));
         require(editor.commit(), "settings_restore_commit_failed");
         // Safety gates were off at entry. Preserve absent properties as the equivalent empty value.
         for (String name : new String[]{"debug", "trace"}) {
@@ -727,6 +992,26 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
             if ("absent".equals(original.getJSONObject(key).getString("type"))) editor.remove(key);
         }
         require(editor.commit(), "absent_setting_restore_failed");
+        if (startup != null) {
+            // The production restart seeds a current-build mirror budget. Restore the
+            // captured logical blobs after that sync, then compare each boundary.
+            restoreStartupMirror(startup, "cache_mirror", DexKitMirror.MIRROR_CACHE_KEY);
+            restoreStartupMirror(startup, "budget_mirror", DexKitMirror.MIRROR_BUDGET_KEY);
+            String expectedCache = startup.isNull("cache") ? null : startup.getString("cache");
+            require(java.util.Objects.equals(expectedCache, startupCache()), "startup_cache_restore_mismatch");
+            for (String key : STARTUP_BUDGET) require(sameValue(prefs.getAll().get(key),
+                    startup.getJSONObject("budget").getJSONObject(key)), "startup_budget_restore_mismatch");
+            if (startup.has("published")) {
+                ConfigSnapshot published = ConfigSnapshot.decode(prefs.getString(ConfigSnapshot.KEY, null),
+                        BuildConfig.VERSION_CODE);
+                require(published != null, "startup_snapshot_restore_missing");
+                JSONObject expected = startup.getJSONObject("published");
+                for (String key : new String[]{DexKitMirror.MIRROR_CACHE_KEY, DexKitMirror.MIRROR_BUDGET_KEY}) {
+                    require(expected.getString(key).equals(published.values.get(key)),
+                            "startup_snapshot_restore_mismatch:" + key);
+                }
+            }
+        }
         SharedPreferences pending = SettingsChanges.preferences(context);
         SharedPreferences.Editor state = pending.edit().clear();
         JSONObject originalPending = snapshot.getJSONObject("pending");
@@ -756,6 +1041,12 @@ public final class HostUiAcceptanceTest extends InstrumentationTestCase {
         }
         require(journalClear, "notification_orphan_cleanup_unverified");
         require(snapshotFile().delete(), "recovery_snapshot_delete_failed");
+    }
+    private void restoreStartupMirror(JSONObject snapshot, String field, String key) throws Exception {
+        String expected = snapshot.isNull(field) ? null : snapshot.getString(field);
+        require(SettingsPropertyMirror.writeBlob(key, expected == null ? "" : expected),
+                "startup_mirror_restore_failed");
+        require(java.util.Objects.equals(expected, SettingsPropertyMirror.readBlob(key)), "startup_mirror_restore_mismatch");
     }
     private String shell(String command) throws Exception {
         try (ParcelFileDescriptor descriptor = ui.executeShellCommand(command);

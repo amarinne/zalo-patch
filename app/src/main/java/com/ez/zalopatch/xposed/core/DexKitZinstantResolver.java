@@ -562,6 +562,7 @@ final class DexKitZinstantResolver {
      * module provider, observed on HyperOS / Android 16).
      */
     static CacheRead readCache(Context context, HostIdentity host) {
+        if (HookConfig.hasAuthoritativeSnapshot()) return readMirrorCache(host);
         CacheRead provider = readProviderCache(context);
         if (provider != null) {
             return provider;

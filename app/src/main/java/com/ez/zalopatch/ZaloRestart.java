@@ -19,6 +19,7 @@ final class ZaloRestart {
 
     enum Result {
         SENT,
+        MANUAL,
         ROOT_DENIED,
         FAILED
     }
@@ -53,6 +54,8 @@ final class ZaloRestart {
         }
     }
 
+    private static final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
+
     private ZaloRestart() {
     }
 
@@ -62,9 +65,17 @@ final class ZaloRestart {
 
     static void run(Context context, Target target, Callback callback) {
         Context appContext = context.getApplicationContext();
+        if (!running.compareAndSet(false, true)) {
+            new Handler(Looper.getMainLooper()).post(() -> callback.onResult(Result.FAILED));
+            return;
+        }
         new Thread(() -> {
-            Result result = restartBlocking(appContext, target);
-            new Handler(Looper.getMainLooper()).post(() -> callback.onResult(result));
+            Result result;
+            try { result = restartBlocking(appContext, target); }
+            catch (Throwable failure) { result = Result.FAILED; }
+            finally { running.set(false); }
+            Result completed = result;
+            new Handler(Looper.getMainLooper()).post(() -> callback.onResult(completed));
         }, "zalo-restart").start();
     }
 
@@ -102,30 +113,14 @@ final class ZaloRestart {
 
     private static Result restartBlocking(Context context, Target target) {
         try {
-            long changeGeneration = SettingsChanges.generation(context);
-            if (!TweakStore.syncProperties(context)) {
-                return Result.ROOT_DENIED;
-            }
+            if (!TweakStore.syncProperties(context)) return Result.FAILED;
             String command = target == null ? legacyCommand()
                     : target.isSingle() ? ZaloInstance.commandForUser(target.singleUserId())
                     : ZaloInstance.commandForAll(target.userIds());
-            Process process = new ProcessBuilder("su", "-c", command)
-                    .redirectErrorStream(true)
-                    .start();
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append('\n');
-                }
-            }
-            int exitCode = process.waitFor();
-            if (exitCode == 0) {
-                SettingsChanges.clearIfGeneration(context, changeGeneration);
-                return Result.SENT;
-            }
-            String message = output.toString().toLowerCase(Locale.US);
+            DiagnosticRootProcessRunner.Result commandResult = new DiagnosticRootProcessRunner().run(
+                    command, DiagnosticReportContract.COMMAND_TIMEOUT_MS);
+            if (commandResult.successful()) return Result.SENT;
+            String message = commandResult.output.toLowerCase(Locale.US);
             if (message.contains("denied") || message.contains("not allowed")
                     || message.contains("permission")) {
                 return Result.ROOT_DENIED;

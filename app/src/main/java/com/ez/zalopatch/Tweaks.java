@@ -8,7 +8,8 @@ public final class Tweaks {
     public enum Requirement {
         NONE,
         ROOT,
-        RESOURCE_HOOKS
+        RESOURCE_HOOKS,
+        SHARED_RECORDINGS
     }
     /**
      * The only preference file the hooked Zalo process can read. It is opened world-readable and
@@ -54,11 +55,16 @@ public final class Tweaks {
     public static final String KEY_OPEN_LINKS_EXTERNALLY = "messages.open_links_externally";
     public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
     public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
+    public static final String KEY_VIEW_STORIES_ANONYMOUSLY = "messages.view_stories_anonymously";
     public static final String KEY_KEEP_GROUP_TAB = "ui.keep_group_tab";
     public static final String KEY_FORCE_MESSAGES_AS_HOME = "ui.force_messages_as_home";
     public static final String KEY_HIDE_MESSAGE_ADS = "ads.hide_message_ads";
+    public static final String KEY_HIDE_STORY_ADS = "ads.hide_story_ads";
     public static final String KEY_HIDE_FEED_ADS = "ads.hide_feed_ads";
+    public static final String KEY_DISABLE_SPONSORED_PLACEMENTS = "ads.disable_sponsored_placements";
+    public static final String KEY_HIDE_VIDEO_ADS = "ads.hide_video_ads";
     public static final String KEY_HIDE_PROMO_SERVICES = "ads.hide_promo_services";
+    public static final String KEY_DISABLE_ADTIMA_OFFLINE_TRACKING = "ads.disable_adtima_offline_tracking";
     public static final String KEY_HIDE_PROMO_NOTIFICATIONS = "ads.hide_promo_notifications";
     public static final String KEY_RECORD_NOTIFICATION_HISTORY = "notifications.record_history";
     public static final String KEY_NOTIFICATION_HISTORY_RETENTION = "notifications.history_retention";
@@ -71,6 +77,7 @@ public final class Tweaks {
     public static final String KEY_CALL_RECORDING_PROBE = "calls.recording_probe";
     public static final String KEY_BACKUP_FREQUENT_PUSH = "backup.frequent_push";
     public static final String KEY_BACKUP_PUSH_INTERVAL = "backup.push_interval";
+    public static final String KEY_PREFER_ORIGINAL_PHOTO = "media.prefer_original_photo";
     public static final String KEY_KEEP_EXPIRED_MEDIA = "messages.keep_expired_media";
     public static final String KEY_PASSCODE_GRACE = "security.passcode_grace";
     public static final String KEY_PASSCODE_GRACE_MS = "security.passcode_grace_ms";
@@ -135,7 +142,8 @@ public final class Tweaks {
         }
         if (SECTION_ADS.equals(section)) {
             return Collections.singletonList(new Group(R.string.zp_group_in_app_ads,
-                    KEY_HIDE_MESSAGE_ADS, KEY_HIDE_FEED_ADS, KEY_HIDE_PROMO_SERVICES));
+                    KEY_HIDE_MESSAGE_ADS, KEY_HIDE_FEED_ADS, KEY_HIDE_STORY_ADS, KEY_HIDE_VIDEO_ADS,
+                    KEY_DISABLE_SPONSORED_PLACEMENTS, KEY_HIDE_PROMO_SERVICES, KEY_DISABLE_ADTIMA_OFFLINE_TRACKING));
         }
         if (SECTION_NOTIFICATIONS.equals(section)) {
             return Collections.singletonList(new Group(R.string.zp_filter_controls,
@@ -150,8 +158,9 @@ public final class Tweaks {
                     new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW),
                     new Group(R.string.zp_group_external_links, KEY_OPEN_LINKS_EXTERNALLY),
                     new Group(R.string.zp_group_status_privacy,
-                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS),
-                    new Group(R.string.zp_group_media, KEY_KEEP_EXPIRED_MEDIA));
+                            KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS,
+                            KEY_VIEW_STORIES_ANONYMOUSLY),
+                    new Group(R.string.zp_group_media, KEY_KEEP_EXPIRED_MEDIA, KEY_PREFER_ORIGINAL_PHOTO));
         }
         if (SECTION_CALLS.equals(section)) {
             return Collections.singletonList(
@@ -206,10 +215,10 @@ public final class Tweaks {
 
     public static final List<Item> ITEMS = Collections.unmodifiableList(Arrays.asList(
             new Item(SECTION_NAVIGATION, KEY_HIDE_DISCOVERY_TAB,
-                    R.string.zp_tweak_hide_discovery, R.string.zp_tweak_hide_discovery_summary,
+                    R.string.zp_tweak_hide_discovery, 0,
                     true, false),
             new Item(SECTION_NAVIGATION, KEY_HIDE_TIMELINE_TAB,
-                    R.string.zp_tweak_hide_timeline, R.string.zp_tweak_hide_timeline_summary,
+                    R.string.zp_tweak_hide_timeline, 0,
                     true, false),
             new Item(SECTION_NAVIGATION, KEY_KEEP_GROUP_TAB,
                     R.string.zp_tweak_keep_group, R.string.zp_tweak_keep_group_summary,
@@ -219,13 +228,13 @@ public final class Tweaks {
                     true, false),
 
             new Item(SECTION_ME, KEY_HIDE_QR_WALLET,
-                    R.string.zp_tweak_hide_qr_wallet, R.string.zp_tweak_hide_qr_wallet_summary,
+                    R.string.zp_tweak_hide_qr_wallet, 0,
                     true, false),
             new Item(SECTION_ME, KEY_HIDE_ZCLOUD,
-                    R.string.zp_tweak_hide_zcloud, R.string.zp_tweak_hide_zcloud_summary,
+                    R.string.zp_tweak_hide_zcloud, 0,
                     true, false),
             new Item(SECTION_ME, KEY_HIDE_ZSTYLE,
-                    R.string.zp_tweak_hide_zstyle, R.string.zp_tweak_hide_zstyle_summary,
+                    R.string.zp_tweak_hide_zstyle, 0,
                     true, false),
             new Item(SECTION_ME, KEY_HIDE_ZBUSINESS,
                     R.string.zp_tweak_hide_zbusiness, R.string.zp_tweak_hide_zbusiness_summary,
@@ -254,10 +263,10 @@ public final class Tweaks {
                     true, false),
 
             new Item(SECTION_INBOX, KEY_HIDE_MEDIA_BOX,
-                    R.string.zp_tweak_hide_media_box, R.string.zp_tweak_hide_media_box_summary,
+                    R.string.zp_tweak_hide_media_box, 0,
                     true, false),
             new Item(SECTION_INBOX, KEY_HIDE_ZCLOUD_BANNER,
-                    R.string.zp_tweak_hide_zcloud_banner, R.string.zp_tweak_hide_zcloud_banner_summary,
+                    R.string.zp_tweak_hide_zcloud_banner, 0,
                     true, false, Requirement.RESOURCE_HOOKS),
             new Item(SECTION_INBOX, KEY_FILTER_POPOVER_CATEGORIES,
                     R.string.zp_tweak_inbox_chip_bar, R.string.zp_tweak_inbox_chip_bar_summary,
@@ -285,13 +294,21 @@ public final class Tweaks {
             new Item(SECTION_CHAT, KEY_BLOCK_TYPING_STATUS,
                     R.string.zp_tweak_block_typing_status, R.string.zp_tweak_block_typing_status_summary,
                     true, false),
+            new Item(SECTION_CHAT, KEY_VIEW_STORIES_ANONYMOUSLY,
+                    R.string.zp_tweak_view_stories_anonymously,
+                    R.string.zp_tweak_view_stories_anonymously_summary,
+                    true, false),
             new Item(SECTION_CHAT, KEY_KEEP_EXPIRED_MEDIA,
                     R.string.zp_tweak_keep_expired_media, R.string.zp_tweak_keep_expired_media_summary,
                     true, false),
 
+            new Item(SECTION_CHAT, KEY_PREFER_ORIGINAL_PHOTO,
+                    R.string.zp_tweak_prefer_original_photo, R.string.zp_tweak_prefer_original_photo_summary,
+                    true, false),
+
             new Item(SECTION_CALLS, KEY_AUTO_RECORD_CALLS,
                     R.string.zp_tweak_auto_record_calls, R.string.zp_tweak_auto_record_calls_summary,
-                    true, false),
+                    true, false, Requirement.SHARED_RECORDINGS),
             new Item(SECTION_CALLS, KEY_CALL_RECORDING_NOTIFICATIONS,
                     R.string.zp_tweak_recording_notifications, R.string.zp_tweak_recording_notifications_summary,
                     true, false),
@@ -308,11 +325,25 @@ public final class Tweaks {
             new Item(SECTION_ADS, KEY_HIDE_MESSAGE_ADS,
                     R.string.zp_tweak_hide_message_ads, R.string.zp_tweak_hide_message_ads_summary,
                     true, false),
+            new Item(SECTION_ADS, KEY_HIDE_STORY_ADS,
+                    R.string.zp_tweak_hide_story_ads, R.string.zp_tweak_hide_story_ads_summary,
+                    true, false),
             new Item(SECTION_ADS, KEY_HIDE_FEED_ADS,
                     R.string.zp_tweak_hide_feed_ads, R.string.zp_tweak_hide_feed_ads_summary,
                     true, false),
+            new Item(SECTION_ADS, KEY_DISABLE_SPONSORED_PLACEMENTS,
+                    R.string.zp_tweak_disable_sponsored_placements,
+                    R.string.zp_tweak_disable_sponsored_placements_summary,
+                    true, false),
+            new Item(SECTION_ADS, KEY_HIDE_VIDEO_ADS,
+                    R.string.zp_tweak_hide_video_ads, R.string.zp_tweak_hide_video_ads_summary,
+                    true, false),
             new Item(SECTION_ADS, KEY_HIDE_PROMO_SERVICES,
                     R.string.zp_tweak_hide_promo_services, R.string.zp_tweak_hide_promo_services_summary,
+                    true, false),
+            new Item(SECTION_ADS, KEY_DISABLE_ADTIMA_OFFLINE_TRACKING,
+                    R.string.zp_tweak_disable_adtima_offline_tracking,
+                    R.string.zp_tweak_disable_adtima_offline_tracking_summary,
                     true, false),
             new Item(SECTION_NOTIFICATIONS, KEY_HIDE_PROMO_NOTIFICATIONS,
                     R.string.zp_tweak_hide_promo_notifications, R.string.zp_tweak_hide_promo_notifications_summary,

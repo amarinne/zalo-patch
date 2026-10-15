@@ -48,6 +48,12 @@ public final class ZaloPatchModule extends XposedModule {
         if (XpHooks.framework() == null) {
             XpHooks.attach(this);
         }
+        HookConfig.initRemote(new HookConfig.RemoteConfig() {
+            @Override public long properties() { return getFrameworkProperties(); }
+            @Override public String readSnapshot() {
+                return getRemotePreferences(ConfigSnapshot.GROUP).getString(ConfigSnapshot.KEY, null);
+            }
+        });
         HookConfig.init();
         try {
             SymbolSchema.setModuleApkPath(getModuleApplicationInfo().sourceDir);
@@ -141,6 +147,12 @@ public final class ZaloPatchModule extends XposedModule {
             XpLog.w(TAG + ": old hook cleanup failed: " + throwable);
         }
         XpHooks.attach(this);
+        HookConfig.initRemote(new HookConfig.RemoteConfig() {
+            @Override public long properties() { return getFrameworkProperties(); }
+            @Override public String readSnapshot() {
+                return getRemotePreferences(ConfigSnapshot.GROUP).getString(ConfigSnapshot.KEY, null);
+            }
+        });
         HookConfig.init();
         HookConfig.reload();
         try {

@@ -58,7 +58,9 @@ public final class SymbolSchema {
             if (cached == null || cachedHookVersionCode != installedVersionCode) {
                 cached = bundledForVersion(context, installedVersionCode);
                 if (!cached.valid) {
-                    Active remote = remoteFromProvider(context, installedVersionCode);
+                    Active remote = HookConfig.hasAuthoritativeSnapshot()
+                            ? SymbolCatalogMirror.read(installedVersionCode)
+                            : remoteFromProvider(context, installedVersionCode);
                     if (remote == null) {
                         remote = SymbolCatalogMirror.read(installedVersionCode);
                     }

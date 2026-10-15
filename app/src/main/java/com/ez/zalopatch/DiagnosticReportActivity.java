@@ -42,6 +42,12 @@ public final class DiagnosticReportActivity {
         return reportId != null && reportId.equals(reviewedReportId);
     }
 
+    static String receiptRetentionSummary(Context context, DiagnosticUploader.Receipt receipt) {
+        return receipt.rawExpiresAtUtc == null
+                ? context.getString(R.string.zp_diagnostic_retention_indefinite)
+                : context.getString(R.string.zp_diagnostic_retention_expiry, receipt.rawExpiresAtUtc);
+    }
+
     public static final class ReportFragment extends ZpPreferenceFragment {
         private static final int REQUEST_EXPORT = 5101;
         private static final String[] CATEGORY_VALUES = new String[]{
@@ -64,6 +70,7 @@ public final class DiagnosticReportActivity {
         private String statusMessage = "";
         private String successfulReportId;
         private String successfulJson;
+        private String successfulRetentionSummary;
         private String pendingExportJson;
         private String pendingExportName;
         private String reviewedReportId;
@@ -82,6 +89,7 @@ public final class DiagnosticReportActivity {
                 statusMessage = savedInstanceState.getString("status", "");
                 successfulReportId = savedInstanceState.getString("success_id");
                 successfulJson = savedInstanceState.getString("success_json");
+                successfulRetentionSummary = savedInstanceState.getString("success_retention");
                 pendingExportJson = savedInstanceState.getString("export_json");
                 pendingExportName = savedInstanceState.getString("export_name");
                 reviewedReportId = savedInstanceState.getString("reviewed_report_id");
@@ -103,6 +111,7 @@ public final class DiagnosticReportActivity {
             outState.putString("status", statusMessage);
             outState.putString("success_id", successfulReportId);
             outState.putString("success_json", successfulJson);
+            outState.putString("success_retention", successfulRetentionSummary);
             outState.putString("export_json", pendingExportJson);
             outState.putString("export_name", pendingExportName);
             outState.putString("reviewed_report_id", reviewedReportId);
@@ -295,7 +304,9 @@ public final class DiagnosticReportActivity {
                     });
                     actions.add(preview);
                     ZpRowPreference upload = PreferenceUi.action(context,
-                            getString(R.string.zp_diagnostic_upload));
+                            getString(R.string.zp_diagnostic_upload),
+                            getString(R.string.zp_diagnostic_upload_disclosure,
+                                    BuildConfig.DIAGNOSTIC_INTAKE_URL));
                     upload.setEnabled(DiagnosticReportActivity.canUpload(
                             draft.reportId, reviewedReportId));
                     upload.setOnPreferenceClickListener(preference -> {
@@ -326,6 +337,11 @@ public final class DiagnosticReportActivity {
                 if (successfulReportId != null) {
                     status.add(PreferenceUi.info(context,
                             getString(R.string.zp_diagnostic_report_id), successfulReportId));
+                    if (successfulRetentionSummary != null) {
+                        status.add(PreferenceUi.info(context,
+                                getString(R.string.zp_diagnostic_retention),
+                                successfulRetentionSummary));
+                    }
                     if (successfulJson != null) {
                         ZpRowPreference view = PreferenceUi.action(context,
                                 getString(R.string.zp_diagnostic_view_uploaded_json));
@@ -482,6 +498,7 @@ public final class DiagnosticReportActivity {
                     if (result.successful()) {
                         successfulReportId = result.receipt.reportId;
                         successfulJson = expected.json;
+                        successfulRetentionSummary = receiptRetentionSummary(context, result.receipt);
                         DiagnosticDraftStore.clear(context);
                         draft = null;
                         reviewedReportId = null;
@@ -638,6 +655,7 @@ public final class DiagnosticReportActivity {
             reviewedReportId = null;
             successfulReportId = null;
             successfulJson = null;
+            successfulRetentionSummary = null;
             statusMessage = "";
         }
 

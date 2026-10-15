@@ -230,7 +230,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
 
     public void testOctoberMaintenanceHasExactArtifactAndReviewedRoutes() throws Exception {
         SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 261001905L);
-        assertEquals(31, active.schemaRevision);
+        assertEquals(32, active.schemaRevision);
         assertEquals("2fe8d3f2bbd3fc923bcf62e4b519e50661176ed79a51aac01be8b39c8ef3994c",
                 active.string("artifact.base_apk_sha256", ""));
         assertHookIdentities(active);
@@ -438,6 +438,58 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                 assertTrue(info.path.contains("<media classifier>"));
                 continue;
             }
+            if (Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY.equals(item.key)
+                    && active.string(DexKitStoryFingerprint.ANCHOR_SEEN_CLASS, "").isEmpty()) {
+                assertMissingAnchors(active, java.util.Arrays.asList(
+                        DexKitStoryFingerprint.ANCHOR_SEEN_CLASS,
+                        DexKitStoryFingerprint.ANCHOR_SEEN_METHOD,
+                        DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS,
+                        DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD));
+                assertTrue(info.path.contains("<story request>"));
+                continue;
+            }
+            if (Tweaks.KEY_PREFER_ORIGINAL_PHOTO.equals(item.key)
+                    && active.string(DexKitOriginalPhotoFingerprint.PICKER, "").isEmpty()) {
+                assertMissingAnchors(active, DexKitOriginalPhotoFingerprint.ANCHORS);
+                assertEquals(DexKitOriginalPhotoFingerprint.MEDIA_ITEM
+                        + "#<apply quality>(int) + " + DexKitOriginalPhotoFingerprint.SHARE_VIEW
+                        + "#<photo share>(Bundle)", info.path);
+                continue;
+            }
+            if (Tweaks.KEY_HIDE_STORY_ADS.equals(item.key)
+                    && active.string(DexKitStoryAdFingerprint.ANCHOR_CLASS, "").isEmpty()) {
+                assertMissingAnchors(active, java.util.Arrays.asList(
+                        DexKitStoryAdFingerprint.ANCHOR_CLASS,
+                        DexKitStoryAdFingerprint.ANCHOR_BIND));
+                assertEquals("<story ad view>#<bind>() + constructors (after collapse)", info.path);
+                continue;
+            }
+            if (Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING.equals(item.key)
+                    && active.string(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS, "").isEmpty()) {
+                assertMissingAnchors(active, java.util.Arrays.asList(
+                        DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS,
+                        DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD,
+                        DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                        DexKitAdtimaFingerprint.TRACKING_GATE_METHOD));
+                assertEquals("<Adtima offline-window owner>#<offline window>()Z + "
+                        + "<Adtima tracking owner>#<tracking gate>()Z", info.path);
+                continue;
+            }
+            if (Tweaks.KEY_HIDE_VIDEO_ADS.equals(item.key)
+                    && active.string(DexKitVideoAdsFingerprint.Route.OUTSTREAM
+                            .anchor("view_class"), "").isEmpty()) {
+                java.util.ArrayList<String> missingSymbols = new java.util.ArrayList<>();
+                for (DexKitVideoAdsFingerprint.Route route
+                        : DexKitVideoAdsFingerprint.Route.values()) {
+                    assertMissingAnchors(active, java.util.Arrays.asList(route.anchors()));
+                    missingSymbols.add("<" + route.id + ">");
+                    missingSymbols.add("#<marker>()");
+                }
+                assertEquals("Qualified Zalo Video ad roots: constructor and native bind after-hooks",
+                        info.path);
+                assertEquals(missingSymbols, info.driftSymbols);
+                continue;
+            }
             if (Tweaks.KEY_BLOCK_TYPING_STATUS.equals(item.key)
                     && active.string("symbols.chat.send_typing_method", "").isEmpty()) {
                 assertTrue(info.path.contains("<send typing>"));
@@ -456,6 +508,13 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                 assertTrue("Displayed hook path omits drift symbol " + symbol + " for " + item.key,
                         info.path.contains(symbol));
             }
+        }
+    }
+
+    private void assertMissingAnchors(SymbolSchema.Active active, Iterable<String> anchors) {
+        for (String anchor : anchors) {
+            assertEquals("Partial dynamic binding in bundled profile: " + anchor,
+                    "", active.string(anchor, ""));
         }
     }
 

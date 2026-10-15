@@ -30,7 +30,7 @@ public final class DiagnosticsState {
                 .putBoolean(KEY_RUNTIME_DISCOVERY_REQUESTED, true)
                 .commit();
         TweakStore.initialize(context);
-        return committed;
+        return committed && FrameworkConfig.refreshState(context);
     }
 
     public static void clearRuntimeDiscoveryRequest(Context context) {
@@ -39,6 +39,7 @@ public final class DiagnosticsState {
                 .putBoolean(KEY_RUNTIME_DISCOVERY_REQUESTED, false)
                 .commit();
         TweakStore.initialize(context);
+        FrameworkConfig.refreshState(context);
     }
 
     public static void completeRuntimeDiscovery(Context context, long versionCode) {
@@ -47,6 +48,7 @@ public final class DiagnosticsState {
         editor.putLong(KEY_RUNTIME_DISCOVERY_LAST_VERSION_CODE, versionCode);
         editor.apply();
         TweakStore.initialize(context);
+        FrameworkConfig.refreshState(context);
     }
 
 }

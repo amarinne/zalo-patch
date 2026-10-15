@@ -8,12 +8,15 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -40,6 +43,7 @@ public final class CallRecordingStore {
     private static final String CORRUPT_DIRECTORY = "corrupt";
     private static final String RECOVERY_ATTEMPTS_PREFIX = "call_recording_recovery_attempts.";
     private static final int MAX_RECOVERY_ATTEMPTS = 3;
+    private static final int MAX_METADATA_BYTES = 16 * 1024;
     private static final String SHARED_DIRECTORY = "Recordings/Zalo Call Recordings";
     private static final Pattern PENDING_NAME = Pattern.compile(
             "zalo-call-(\\d{13})-(incoming|outgoing|unknown)-([0-9a-f]{8})\\.part");
@@ -50,6 +54,9 @@ public final class CallRecordingStore {
                     + "\\.processing\\.wav(?:\\.\\d+)?");
     private static final ExecutorService FINALIZER = Executors.newSingleThreadExecutor();
     private static final Set<String> QUEUED = Collections.synchronizedSet(new HashSet<String>());
+    // Copying must not wait behind a long AAC conversion while a broadcast is pending.
+    private static final CallRecordingTransfer TRANSFERS = new CallRecordingTransfer(
+            Executors.newSingleThreadExecutor(), QUEUED, CallRecordingStore::syncDirectory);
 
     public static final class Entry {
         public final Uri uri;
@@ -82,12 +89,14 @@ public final class CallRecordingStore {
                 Math.max(0L, startedAt), safeDirection, nonce);
     }
 
+    /** Returns descriptor ownership, not permission to delete the source. */
     static boolean enqueueImport(
             Context context,
             ParcelFileDescriptor source,
             String pendingName,
             String displayName,
-            String phoneNumber) {
+            String phoneNumber,
+            CallRecordingImportProtocol.Completion completion) throws Exception {
         Matcher matcher = PENDING_NAME.matcher(pendingName == null ? "" : pendingName);
         if (!matcher.matches()) {
             return false;
@@ -96,7 +105,24 @@ public final class CallRecordingStore {
         File processing = new File(privateDirectory(context), base + ".processing.wav");
         Metadata metadata = new Metadata(parseLong(matcher.group(1)), matcher.group(2),
                 safeDisplayName(displayName), safePhone(phoneNumber));
-        queueImport(context.getApplicationContext(), source, processing, metadata);
+        byte[] recoveryMetadata = encodeMetadata(metadata);
+        Context application = context.getApplicationContext();
+        TRANSFERS.enqueue(new ParcelFileDescriptor.AutoCloseInputStream(source),
+                processing, recoveryMetadata, CallRecordingTranscoder::isPcmWave, accepted -> {
+                    try {
+                        completion.onComplete(accepted);
+                    } finally {
+                        if (accepted) {
+                            try {
+                                queue(application, processing, metadata, false);
+                            } catch (RuntimeException rejected) {
+                                reportImportFailure(application);
+                            }
+                        } else {
+                            reportImportFailure(application);
+                        }
+                    }
+                });
         return true;
     }
 
@@ -218,63 +244,29 @@ public final class CallRecordingStore {
         if (!QUEUED.add(key)) {
             return false;
         }
-        FINALIZER.execute(() -> {
-            try {
-                if (finalizeNow(context, processing, metadata)) {
-                    clearRecoveryFailures(context, processing);
-                } else if (recovery) {
-                    recordRecoveryFailure(context, processing);
+        try {
+            FINALIZER.execute(() -> {
+                try {
+                    if (finalizeNow(context, processing, metadata)) {
+                        clearRecoveryFailures(context, processing);
+                    } else if (recovery) {
+                        recordRecoveryFailure(context, processing);
+                    }
+                } finally {
+                    QUEUED.remove(key);
                 }
-            } finally {
-                QUEUED.remove(key);
-            }
-        });
+            });
+        } catch (RuntimeException rejected) {
+            QUEUED.remove(key);
+            throw rejected;
+        }
         return true;
     }
 
-    private static void queueImport(
-            Context context,
-            ParcelFileDescriptor source,
-            File processing,
-            Metadata metadata) {
-        String key = processing.getAbsolutePath();
-        if (!QUEUED.add(key)) {
-            closeQuietly(source);
-            return;
-        }
-        FINALIZER.execute(() -> {
-            try (InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(source);
-                 OutputStream output = new FileOutputStream(processing)) {
-                copy(input, output);
-            } catch (Throwable throwable) {
-                if (processing.length() <= 0L) {
-                    processing.delete();
-                }
-                updateSelfCheck(context, "failed", 0,
-                        "Recording import failed; raw bytes preserved when available: "
-                                + throwable.getClass().getSimpleName());
-                CallRecordingNotifier.finishFailed(context);
-                QUEUED.remove(key);
-                return;
-            }
-            try {
-                if (!CallRecordingTranscoder.isPcmWave(processing)) {
-                    updateSelfCheck(context, "failed", 0,
-                            "Native WAV invalid after transfer; raw file preserved");
-                    CallRecordingNotifier.finishFailed(context);
-                    return;
-                }
-                writeMetadata(metadataFile(processing), metadata);
-                finalizeNow(context, processing, metadata);
-            } catch (Throwable throwable) {
-                updateSelfCheck(context, "failed", 0,
-                        "Recording finalization failed; raw file preserved: "
-                                + throwable.getClass().getSimpleName());
-                CallRecordingNotifier.finishFailed(context);
-            } finally {
-                QUEUED.remove(key);
-            }
-        });
+    private static void reportImportFailure(Context context) {
+        updateSelfCheck(context, "failed", 0,
+                "Recording import incomplete; source or recovery WAV preserved");
+        CallRecordingNotifier.finishFailed(context);
     }
 
     private static boolean finalizeNow(Context context, File wav, Metadata metadata) {
@@ -368,23 +360,31 @@ public final class CallRecordingStore {
         if (uri == null) {
             return null;
         }
-        try (InputStream input = new FileInputStream(source);
-             OutputStream output = resolver.openOutputStream(uri, "w")) {
-            if (output == null) {
-                throw new IOException("Shared output unavailable");
+        try {
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = resolver.openOutputStream(uri, "w")) {
+                if (output == null) {
+                    throw new IOException("Shared output unavailable");
+                }
+                copy(input, output);
             }
-            copy(input, output);
+            ContentValues complete = new ContentValues();
+            complete.put(MediaStore.Audio.Media.IS_PENDING, 0);
+            if (resolver.update(uri, complete, null, null) != 1) {
+                throw new IOException("Shared recording was not published");
+            }
+            return uri;
         } catch (Throwable throwable) {
-            resolver.delete(uri, null, null);
+            try {
+                resolver.delete(uri, null, null);
+            } catch (Throwable cleanupFailure) {
+                throwable.addSuppressed(cleanupFailure);
+            }
             if (throwable instanceof IOException) {
                 throw (IOException) throwable;
             }
             throw new IOException(throwable);
         }
-        ContentValues complete = new ContentValues();
-        complete.put(MediaStore.Audio.Media.IS_PENDING, 0);
-        resolver.update(uri, complete, null, null);
-        return uri;
     }
 
     static String buildDisplayName(long startedAt, String displayName, String phoneNumber) {
@@ -445,21 +445,36 @@ public final class CallRecordingStore {
         return new File(processing.getParentFile(), processing.getName() + ".json");
     }
 
-    private static void writeMetadata(File file, Metadata metadata) throws Exception {
+    private static void syncDirectory(File directory) throws IOException {
+        try {
+            FileDescriptor descriptor = Os.open(directory.getAbsolutePath(), OsConstants.O_RDONLY, 0);
+            try {
+                Os.fsync(descriptor);
+            } finally {
+                Os.close(descriptor);
+            }
+        } catch (ErrnoException exception) {
+            throw new IOException("Could not sync recording directory", exception);
+        }
+    }
+
+    private static byte[] encodeMetadata(Metadata metadata) throws Exception {
         JSONObject json = new JSONObject();
         json.put("started_at", metadata.startedAt);
         json.put("direction", metadata.direction);
         json.put("display_name", metadata.displayName);
         json.put("phone_number", metadata.phoneNumber);
-        try (FileOutputStream output = new FileOutputStream(file)) {
-            output.write(json.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_METADATA_BYTES) {
+            throw new IOException("Recording metadata exceeds the recovery limit");
         }
+        return bytes;
     }
 
     private static Metadata readMetadata(File file) throws Exception {
         byte[] bytes;
         try (FileInputStream input = new FileInputStream(file)) {
-            bytes = new byte[(int) Math.min(file.length(), 16 * 1024L)];
+            bytes = new byte[(int) Math.min(file.length(), MAX_METADATA_BYTES)];
             int count = input.read(bytes);
             if (count <= 0) {
                 throw new IOException("Metadata is empty");
@@ -492,16 +507,6 @@ public final class CallRecordingStore {
         int count;
         while ((count = input.read(buffer)) != -1) {
             output.write(buffer, 0, count);
-        }
-    }
-
-    private static void closeQuietly(ParcelFileDescriptor descriptor) {
-        if (descriptor == null) {
-            return;
-        }
-        try {
-            descriptor.close();
-        } catch (IOException ignored) {
         }
     }
 

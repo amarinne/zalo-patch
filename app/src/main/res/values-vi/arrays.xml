@@ -8,11 +8,18 @@
         <item>5000 thông báo</item>
         <item>Không giới hạn</item>
     </string-array>
+    <string-array name="zp_inbox_filter_entries">
+        <item>Tất cả</item>
+        <item>Trò chuyện</item>
+        <item>Nhóm</item>
+        <item>OA</item>
+        <item>Người lạ</item>
+    </string-array>
     <string-array name="zp_backup_interval_entries">
-        <item>Mỗi giờ</item>
-        <item>Mỗi 3 giờ</item>
-        <item>Mỗi 6 giờ</item>
-        <item>Mỗi 12 giờ</item>
+        <item>1 giờ</item>
+        <item>3 giờ</item>
+        <item>6 giờ</item>
+        <item>12 giờ</item>
     </string-array>
     <string-array name="zp_passcode_grace_entries">
         <item>30 giây</item>

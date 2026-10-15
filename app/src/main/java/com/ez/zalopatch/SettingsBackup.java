@@ -83,29 +83,10 @@ public final class SettingsBackup {
     public static int importJson(Context context, InputStream input) throws Exception {
         BackupData backup = decodeBackup(read(input));
         Map<String, Object> values = backup.settings;
-        SharedPreferences.Editor editor = TweakStore.preferences(context).edit();
-        for (Map.Entry<String, Object> entry : values.entrySet()) {
-            Settings.Setting<?> setting = Settings.find(entry.getKey());
-            if (setting == null || !portable(setting)) {
-                throw new IllegalArgumentException("Unknown setting: " + entry.getKey());
-            }
-            Object value = entry.getValue();
-            if (setting.type == Settings.Type.BOOLEAN) {
-                editor.putBoolean(entry.getKey(), (Boolean) value);
-            } else if (setting.type == Settings.Type.INT) {
-                editor.putInt(entry.getKey(), Settings.coerceInt(entry.getKey(), ((Number) value).intValue()));
-            }
-            // Record the actual key so pending-change counting stays a set union and an
-            // imported key that is later toggled by hand is not counted twice.
-            SettingsChanges.markChanged(context, entry.getKey());
-        }
-        editor.putInt(Tweaks.KEY_PREFS_SCHEMA_VERSION, Tweaks.PREFS_SCHEMA_VERSION);
-        if (backup.hasRules) {
-            NotificationRuleStore.put(editor, backup.rules);
-        }
-        if (!editor.commit()) {
-            throw new IOException("Preference write failed");
-        }
+        Map<String, Object> updates = new LinkedHashMap<>(values);
+        updates.put(Tweaks.KEY_PREFS_SCHEMA_VERSION, Tweaks.PREFS_SCHEMA_VERSION);
+        if (backup.hasRules) updates.put(NotificationRuleStore.PREF_KEY, NotificationRuleStore.encode(backup.rules));
+        if (!SettingsStore.save(context, updates)) throw new IOException("Preference write failed");
         TweakStore.initialize(context);
         return values.size() + (backup.hasRules ? backup.rules.total() : 0);
     }

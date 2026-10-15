@@ -17,6 +17,9 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
  * list divider is removed here.
  */
 public abstract class ZpPreferenceFragment extends PreferenceFragmentCompat {
+    private View restartBanner;
+    private View.OnLayoutChangeListener restartBannerLayout;
+
     @Override
     public void onDisplayPreferenceDialog(@NonNull Preference preference) {
         if (!(preference instanceof ZpListPreference)) {
@@ -69,6 +72,28 @@ public abstract class ZpPreferenceFragment extends PreferenceFragmentCompat {
         list.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
         int horizontal = getResources().getDimensionPixelSize(R.dimen.zp_page_padding);
         list.setPadding(horizontal, Math.round(8 * density), horizontal, Math.round(16 * density));
+        restartBanner = requireActivity().findViewById(R.id.zp_apply_bar);
+        if (restartBanner != null) {
+            Runnable reserveSpace = () -> {
+                // Keep the viewport fixed and retain clearance when the banner hides, so a
+                // reversal cannot move the row underneath the user's next tap.
+                int bottom = Math.max(list.getPaddingBottom(),
+                        restartBanner.getHeight() + Math.round(16 * density));
+                list.setPadding(horizontal, list.getPaddingTop(), horizontal, bottom);
+            };
+            restartBannerLayout = (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                    reserveSpace.run();
+            restartBanner.addOnLayoutChangeListener(restartBannerLayout);
+            reserveSpace.run();
+        }
         list.setItemAnimator(new DefaultItemAnimator());
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (restartBanner != null) restartBanner.removeOnLayoutChangeListener(restartBannerLayout);
+        restartBanner = null;
+        restartBannerLayout = null;
+        super.onDestroyView();
     }
 }

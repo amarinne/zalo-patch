@@ -73,7 +73,7 @@ final class DexKitBridgeRunner {
         RawHit(String className, String methodName, String returnTypeName, int paramCount,
                java.util.List<String> paramTypeNames, boolean isStatic) {
             this(className, methodName, returnTypeName, paramCount, paramTypeNames, isStatic,
-                    new java.util.ArrayList<RawHit>());
+                    new java.util.ArrayList<RawHit>(), new java.util.ArrayList<String>());
         }
 
         RawHit(String className, String methodName, String returnTypeName, int paramCount,
@@ -100,20 +100,26 @@ final class DexKitBridgeRunner {
         }
     }
 
-    /** Plain string-usage query spec; one group per id, Contains match. */
+    /** Plain string-usage query spec; one group per id, Contains or exact match. */
     static final class StringSpec {
         final String id;
         final String value;
         final boolean withInvokes;
+        final boolean exact;
 
         StringSpec(String id, String value) {
-            this(id, value, true);
+            this(id, value, true, false);
         }
 
         StringSpec(String id, String value, boolean withInvokes) {
+            this(id, value, withInvokes, false);
+        }
+
+        StringSpec(String id, String value, boolean withInvokes, boolean exact) {
             this.id = id == null ? "" : id;
             this.value = value == null ? "" : value;
             this.withInvokes = withInvokes;
+            this.exact = exact;
         }
     }
     /** Plain method-query spec; the bridge translates it to DexKit matchers. */
@@ -124,12 +130,21 @@ final class DexKitBridgeRunner {
         final Integer paramCount;
         final boolean withDetails;
         final Integer usingNumber;
+        /** Every listed string must be present exactly in the candidate method. */
+        final java.util.List<String> exactStrings;
         /**
          * When {@link #withDetails} is set, whether callee invokes are also read.
          * DexKit's native {@code getInvokes} aborts the process (JNI {@code java_array == null})
          * for some methods, so callers that only need used fields must leave this false.
          */
         final boolean withInvokes;
+        /** Require one exact string constant when non-null. */
+        final String exactString;
+        /** Require an invocation on this owner when non-null. */
+        final String invokeOwnerClass;
+        /** Require a call to this exact method descriptor when non-null. */
+        final String invokeDescriptor;
+        final String methodName;
 
         MethodSpec(String id, String ownerClass, String returnType, Integer paramCount) {
             this(id, ownerClass, returnType, paramCount, false, null, false);
@@ -147,6 +162,50 @@ final class DexKitBridgeRunner {
 
         MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
                    boolean withDetails, Integer usingNumber, boolean withInvokes) {
+            this(id, ownerClass, returnType, paramCount, withDetails, usingNumber,
+                    withInvokes, java.util.Collections.emptyList(), null, null);
+        }
+
+        MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
+                   boolean withDetails, Integer usingNumber, boolean withInvokes,
+                   String exactString) {
+            this(id, ownerClass, returnType, paramCount, withDetails, usingNumber,
+                    withInvokes, exactString == null ? java.util.Collections.emptyList()
+                            : java.util.Collections.singletonList(exactString), null, null);
+        }
+
+        MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
+                   boolean withDetails, Integer usingNumber, boolean withInvokes,
+                   String exactString, String invokeDescriptor) {
+            this(id, ownerClass, returnType, paramCount, withDetails, usingNumber,
+                    withInvokes, exactString == null ? java.util.Collections.emptyList()
+                            : java.util.Collections.singletonList(exactString), null, invokeDescriptor);
+        }
+
+        MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
+                   boolean withDetails, Integer usingNumber, boolean withInvokes,
+                   java.util.List<String> exactStrings) {
+            this(id, ownerClass, returnType, paramCount, withDetails, usingNumber,
+                    withInvokes, exactStrings, null, null);
+        }
+
+        MethodSpec(String id, String returnType, Integer paramCount, String methodName,
+                   java.util.List<String> exactStrings) {
+            this(id, null, returnType, paramCount, false, null, false,
+                    exactStrings, null, null, methodName);
+        }
+
+        MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
+                   boolean withDetails, Integer usingNumber, boolean withInvokes,
+                   java.util.List<String> exactStrings, String invokeOwnerClass, String invokeDescriptor) {
+            this(id, ownerClass, returnType, paramCount, withDetails, usingNumber,
+                    withInvokes, exactStrings, invokeOwnerClass, invokeDescriptor, null);
+        }
+
+        private MethodSpec(String id, String ownerClass, String returnType, Integer paramCount,
+                   boolean withDetails, Integer usingNumber, boolean withInvokes,
+                   java.util.List<String> exactStrings, String invokeOwnerClass,
+                   String invokeDescriptor, String methodName) {
             this.id = id == null ? "" : id;
             this.ownerClass = ownerClass;
             this.returnType = returnType;
@@ -154,6 +213,11 @@ final class DexKitBridgeRunner {
             this.withDetails = withDetails;
             this.usingNumber = usingNumber;
             this.withInvokes = withInvokes;
+            this.exactStrings = new java.util.ArrayList<>(exactStrings);
+            this.exactString = exactStrings.size() == 1 ? exactStrings.get(0) : null;
+            this.invokeOwnerClass = invokeOwnerClass;
+            this.invokeDescriptor = invokeDescriptor;
+            this.methodName = methodName;
         }
     }
 
@@ -394,7 +458,9 @@ final class DexKitBridgeRunner {
                 batch.addSearchGroup(org.luckypray.dexkit.query.matchers.StringMatchersGroup
                         .create().groupName(spec.id).usingStrings(
                                 java.util.Collections.singletonList(spec.value),
-                                org.luckypray.dexkit.query.enums.StringMatchType.Contains,
+                                spec.exact
+                                        ? org.luckypray.dexkit.query.enums.StringMatchType.Equals
+                                        : org.luckypray.dexkit.query.enums.StringMatchType.Contains,
                                 false));
                 results.put(spec.id, new QueryResult(0, "not run"));
             }
@@ -453,8 +519,7 @@ final class DexKitBridgeRunner {
                         normalizeParamTypes(callee.getParamTypeNames()),
                         (callee.getModifiers() & 0x0008) != 0));
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { }
         return new RawHit(method.getClassName(), method.getName(),
                 method.getReturnTypeName(), method.getParamCount(),
                 normalizeParamTypes(method.getParamTypeNames()),
@@ -479,6 +544,23 @@ final class DexKitBridgeRunner {
                 matcher.usingNumbers(
                         java.util.Collections.singletonList((Number) spec.usingNumber));
             }
+            if (spec.methodName != null && !spec.methodName.isEmpty()) {
+                matcher.name(spec.methodName,
+                        org.luckypray.dexkit.query.enums.StringMatchType.Equals, false);
+            }
+            if (!spec.exactStrings.isEmpty()) {
+                matcher.usingStrings(spec.exactStrings,
+                        org.luckypray.dexkit.query.enums.StringMatchType.Equals, false);
+            }
+            if (spec.invokeOwnerClass != null && !spec.invokeOwnerClass.isEmpty()) {
+                matcher.addInvoke(org.luckypray.dexkit.query.matchers.MethodMatcher.create()
+                        .declaredClass(org.luckypray.dexkit.query.matchers.ClassMatcher.create()
+                                .className(spec.invokeOwnerClass)));
+            }
+            if (spec.invokeDescriptor != null) {
+                matcher.addInvoke(org.luckypray.dexkit.query.matchers.MethodMatcher
+                        .create(spec.invokeDescriptor));
+            }
             org.luckypray.dexkit.result.MethodDataList found = bridge.findMethod(
                     org.luckypray.dexkit.query.FindMethod.create().matcher(matcher));
             QueryResult result = new QueryResult(found.size(), "");
@@ -495,6 +577,27 @@ final class DexKitBridgeRunner {
             String error = throwable.getClass().getSimpleName()
                     + (throwable.getMessage() == null ? "" : ": " + throwable.getMessage());
             return new QueryResult(0, error);
+        }
+    }
+
+    /** Narrow caller query for a previously qualified member; details stay bounded. */
+    static QueryResult findCallingMethods(String apkPath, String owner, String name) {
+        try (org.luckypray.dexkit.DexKitBridge bridge = org.luckypray.dexkit.DexKitBridge.create(apkPath)) {
+            org.luckypray.dexkit.query.matchers.MethodMatcher callee =
+                    org.luckypray.dexkit.query.matchers.MethodMatcher.create()
+                            .declaredClass(owner).name(name);
+            org.luckypray.dexkit.result.MethodDataList found = bridge.findMethod(
+                    org.luckypray.dexkit.query.FindMethod.create().matcher(
+                            org.luckypray.dexkit.query.matchers.MethodMatcher.create().invokeMethods(
+                                    org.luckypray.dexkit.query.matchers.MethodsMatcher.create().add(callee))));
+            if (found.size() > MAX_DETAIL_HITS) return new QueryResult(found.size(), "too_many_candidates");
+            QueryResult result = new QueryResult(found.size(), "");
+            for (org.luckypray.dexkit.result.MethodData method : found) {
+                result.hits.add(toRawHitWithDetails(method, true));
+            }
+            return result;
+        } catch (Throwable error) {
+            return new QueryResult(0, error.getClass().getSimpleName());
         }
     }
 

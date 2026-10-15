@@ -6,6 +6,40 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class DiagnosticReportingTest extends AndroidTestCase {
+    public void testFiniteReceiptDisplaysTheServiceExpiry() throws Exception {
+        String expires = "2027-01-11T07:00:00Z";
+        DiagnosticUploader.Receipt receipt = syntheticReceipt("finite", expires);
+
+        String text = DiagnosticReportActivity.receiptRetentionSummary(getContext(), receipt);
+
+        assertTrue(text.contains(expires));
+        assertFalse(text.contains("indefinite"));
+        assertTrue(text.contains("does not confirm deletion"));
+    }
+
+    public void testLegacyReceiptDisclosesIndefiniteRetention() throws Exception {
+        DiagnosticUploader.Receipt receipt = syntheticReceipt("indefinite", JSONObject.NULL);
+
+        String text = DiagnosticReportActivity.receiptRetentionSummary(getContext(), receipt);
+
+        assertTrue(text.contains("indefinite retention"));
+        assertTrue(text.contains("No automatic expiry"));
+        assertFalse(text.contains("90"));
+    }
+
+    /** Uses a synthetic response without uploads or preference changes. */
+    private static DiagnosticUploader.Receipt syntheticReceipt(String policy, Object expires)
+            throws Exception {
+        String reportId = "R1-00000000000000000000000001";
+        JSONObject json = new JSONObject().put("reportId", reportId)
+                .put("receivedAtUtc", "2026-10-13T07:00:00Z")
+                .put("rawExpiresAtUtc", expires).put("retentionPolicy", policy);
+        DiagnosticUploader.Result result = DiagnosticUploader.mapResponse(
+                201, json.toString(), reportId);
+        assertTrue(result.successful());
+        return result.receipt;
+    }
+
     public void testMetadataEnvelopeUsesSharedIntakeContractWithoutPrivatePayloadFields()
             throws Exception {
         DiagnosticReportFactory.Draft draft = DiagnosticReportFactory.createMetadataOnly(
@@ -88,6 +122,33 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
             assertEquals("IllegalArgumentException", event.getString("errorType"));
             assertEquals("unknown_authority", event.getString("errorCode"));
             assertFalse(event.toString().contains("com.ez.zalopatch.config"));
+        } finally {
+            RuntimeStatusTraceStore.restore(getContext(), previous);
+        }
+    }
+
+    public void testOutcomeEvidenceSurvivesTraceWithoutPayloads() throws Exception {
+        String previous = RuntimeStatusTraceStore.raw(getContext());
+        try {
+            RuntimeStatusTraceStore.restore(getContext(), "[]");
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put("status", "stale");
+            values.put("target", "outcome:me_full_zinstant");
+            values.put("detail", new JSONObject().put("outcome", "visible_after_hide")
+                    .put("route", "me_full_zinstant").put("marker_present", true).put("samples", 2)
+                    .put("width", 300).put("height", 100).put("message", "private-payload")
+                    .put("contact", "private-contact").toString() + "\nconfig_source=fixture");
+            values.put("error", "OutcomeDrift: visible_after_hide");
+            values.put("artifact_generation", "artifact");
+            values.put("profile_sha256", "schema");
+            values.put("run_id", "run");
+            RuntimeStatusTraceStore.record(getContext(), "me_cleanup.zstyle", values);
+            JSONObject event = RuntimeStatusTraceStore.load(getContext()).get(0);
+            assertEquals("visible_after_hide", event.getString("errorCode"));
+            assertEquals(300, event.getJSONObject("outcomeEvidence").getInt("width"));
+            assertEquals("schema", event.getString("profileSha256"));
+            assertFalse(event.toString().contains("private-"));
+            assertFalse(event.toString().contains("config_source"));
         } finally {
             RuntimeStatusTraceStore.restore(getContext(), previous);
         }

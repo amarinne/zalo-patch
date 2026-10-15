@@ -21,11 +21,69 @@ final class SettingsChanges {
     private SettingsChanges() {
     }
 
-    /** Distinct changed settings keys. Every writer records its real key, so this is exact. */
+    private static final String ACTIVE = "active_config_snapshot";
+
+    static ConfigSnapshot active(Context context) {
+        String encoded = preferences(context).getString(ACTIVE, null);
+        ConfigSnapshot snapshot = ConfigSnapshot.decode(encoded, BuildConfig.VERSION_CODE);
+        return snapshot != null ? snapshot : ConfigSnapshot.previous(encoded, BuildConfig.VERSION_CODE);
+    }
+
+    static boolean needsRestart(Context context) {
+        ConfigSnapshot active = active(context);
+        return active == null || active.moduleVersion != BuildConfig.VERSION_CODE || pendingCount(context) > 0;
+    }
+
+    /** Compare saved intent with the snapshot acknowledged by Zalo, never a restart command. */
     static int pendingCount(Context context) {
-        return preferences(context)
-                .getStringSet(KEY_PENDING_KEYS, java.util.Collections.emptySet())
-                .size();
+        synchronized (SettingsStore.LOCK) {
+            ConfigSnapshot active = active(context);
+            if (active == null) {
+                Set<String> keys = new HashSet<>(preferences(context).getStringSet(
+                        KEY_PENDING_KEYS, java.util.Collections.emptySet()));
+                keys.addAll(TweakStore.preferences(context).getStringSet(
+                        SettingsStore.PENDING, java.util.Collections.emptySet()));
+                keys.remove(Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION);
+                return keys.size();
+            }
+            int count = 0;
+            for (Settings.Setting<?> setting : Settings.all()) {
+                if (!setting.requiresRestart()) continue;
+                String saved = setting.type == Settings.Type.BOOLEAN
+                        ? String.valueOf(SettingsStore.getBoolean(context, setting.key))
+                        : String.valueOf(SettingsStore.getInt(context, setting.key));
+                String loaded = active.values.getOrDefault(setting.key, String.valueOf(setting.defaultValue));
+                if (!saved.equals(loaded)) count++;
+            }
+            try {
+                String saved = NotificationRuleStore.encode(NotificationRuleStore.load(context));
+                String loaded = NotificationRuleStore.encode(NotificationRuleStore.decode(
+                        active.values.get(NotificationRuleStore.MIRROR_KEY)));
+                if (!saved.equals(loaded)) count++;
+            } catch (Exception invalid) { count++; }
+            return count;
+        }
+    }
+
+    static boolean runtimeBoolean(Context context, String key) {
+        ConfigSnapshot active = active(context);
+        return active == null ? Settings.defaultBoolean(key)
+                : Boolean.parseBoolean(active.values.getOrDefault(key, String.valueOf(Settings.defaultBoolean(key))));
+    }
+
+    static boolean acknowledge(Context context, ConfigSnapshot snapshot) {
+        synchronized (SettingsStore.LOCK) {
+            try {
+                SharedPreferences preferences = preferences(context);
+                String before = preferences.getString(ACTIVE, null);
+                if (preferences.edit().putString(ACTIVE, snapshot.settingsOnly().encode()).commit()) return true;
+                SharedPreferences.Editor rollback = preferences.edit();
+                if (before == null) rollback.remove(ACTIVE);
+                else rollback.putString(ACTIVE, before);
+                rollback.commit();
+                return false;
+            } catch (Exception invalid) { return false; }
+        }
     }
 
     static synchronized void markChanged(Context context, String key) {
@@ -38,12 +96,13 @@ final class SettingsChanges {
         keys.add(key);
         preferences.edit()
                 .putStringSet(KEY_PENDING_KEYS, keys)
-                .putLong(KEY_GENERATION, preferences.getLong(KEY_GENERATION, 0L) + 1L)
-                .apply();
+                .putLong(KEY_GENERATION, generation(context) + 1L)
+                .commit();
     }
 
     static long generation(Context context) {
-        return preferences(context).getLong(KEY_GENERATION, 0L);
+        return Math.max(preferences(context).getLong(KEY_GENERATION, 0L),
+                TweakStore.preferences(context).getLong(SettingsStore.GENERATION, 0L));
     }
 
     static synchronized void clearIfGeneration(Context context, long generation) {
@@ -54,7 +113,7 @@ final class SettingsChanges {
         preferences(context).edit()
                 .remove(KEY_PENDING_COUNT)
                 .remove(KEY_PENDING_KEYS)
-                .apply();
+                .commit();
     }
 
     static SharedPreferences preferences(Context context) {

@@ -35,6 +35,11 @@ final class RuntimeStatusTraceStore {
             if (callRecording) {
                 event.put("detail", safeCallDetail(values.getAsString("detail")));
             }
+            JSONObject outcome = OutcomeEvidence.parse(values.getAsString("detail"));
+            if (outcome != null) {
+                event.put("outcomeEvidence", outcome);
+                event.put("profileSha256", safe(values.getAsString("profile_sha256"), 64));
+            }
             event.put("errorType", errorType(values.getAsString("error")));
             event.put("errorCode", errorCode(values.getAsString("error")));
             event.put("updatedAt", Math.max(0L, longValue(values, "updated_at")));
@@ -74,6 +79,8 @@ final class RuntimeStatusTraceStore {
             values.put("status", status);
             values.put("target", preferences.getString(prefix + "target", ""));
             values.put("error", preferences.getString(prefix + "error", ""));
+            values.put("detail", preferences.getString(prefix + "detail", ""));
+            values.put("profile_sha256", preferences.getString(prefix + "profile_sha256", ""));
             values.put("updated_at", preferences.getLong(prefix + "updated_at", 0L));
             values.put("artifact_generation", preferences.getString(
                     prefix + "artifact_generation", ""));
@@ -135,6 +142,7 @@ final class RuntimeStatusTraceStore {
 
     private static String errorCode(String error) {
         String lower = error == null ? "" : error.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("outcomedrift:")) return "visible_after_hide";
         if (lower.contains("unknown authority")) return "unknown_authority";
         if (lower.contains("classnotfound")) return "class_not_found";
         if (lower.contains("nosuchmethod")) return "no_such_method";

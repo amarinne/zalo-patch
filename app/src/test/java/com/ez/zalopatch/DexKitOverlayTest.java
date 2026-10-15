@@ -13,6 +13,39 @@ import static org.junit.Assert.assertTrue;
 
 /** JVM tests for the DexKit overlay merge and profile builder. */
 public final class DexKitOverlayTest {
+    private static final String STORY_CLASS = DexKitStoryFingerprint.ANCHOR_SEEN_CLASS;
+    private static final String STORY_METHOD = DexKitStoryFingerprint.ANCHOR_SEEN_METHOD;
+
+    private static JSONObject storySymbols(String owner, String method) throws Exception {
+        return new JSONObject().put("stories", new JSONObject()
+                .put("seen_request_class", owner).put("seen_request_method", method));
+    }
+
+    @Test
+    public void neighbourShapesDoNotAuthorizeNewRoutes() throws Exception {
+        assertFalse(DexKitOverlay.qualifiesBindings(null, storySymbols("host.Request", "r"),
+                new HashMap<>(), STORY_CLASS, STORY_METHOD));
+    }
+
+    @Test
+    public void currentHostDiscoveryAuthorizesOnlyTheComposedBinding() throws Exception {
+        Map<String, String> discovered = new HashMap<>();
+        discovered.put(STORY_CLASS, "host.Request");
+        discovered.put(STORY_METHOD, "r");
+        assertTrue(DexKitOverlay.qualifiesBindings(null, storySymbols("host.Request", "r"),
+                discovered, STORY_CLASS, STORY_METHOD));
+        assertFalse(DexKitOverlay.qualifiesBindings(null, storySymbols("host.Request", "other"),
+                discovered, STORY_CLASS, STORY_METHOD));
+    }
+
+    @Test
+    public void completeExactBindingsRemainAuthoritative() throws Exception {
+        JSONObject exact = storySymbols("host.Request", "r");
+        assertTrue(DexKitOverlay.qualifiesBindings(exact, exact, null, STORY_CLASS, STORY_METHOD));
+        assertFalse(DexKitOverlay.qualifiesBindings(storySymbols("host.Request", ""), exact,
+                null, STORY_CLASS, STORY_METHOD));
+    }
+
     @Test
     public void equallySparseNeighborCannotReplaceAuxiliaryBase() throws Exception {
         JSONObject exact = new JSONObject("{\"inbox\":{\"conversation_field\":\"f\"},"
@@ -84,6 +117,29 @@ public final class DexKitOverlayTest {
         assertEquals(6, withBase.getJSONObject("me").getInt("qr_wallet_item_id"));
         assertEquals("get", withBase.getJSONObject("zinstant")
                 .getJSONArray("network_methods").getString(0));
+    }
+
+    @Test
+    public void remoteConfigReaderUsesDexkitOverlayAndPopulatedExactLeavesWin()
+            throws Exception {
+        Map<String, String> discovered = new HashMap<>();
+        discovered.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, "cfg.Reader");
+        discovered.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, "read");
+
+        JSONObject composed = DexKitOverlay.compose(new JSONObject(), new JSONObject(),
+                discovered, "", "");
+        JSONObject remote = composed.getJSONObject("remote_config");
+        assertEquals("cfg.Reader", remote.getString("int_reader_class"));
+        assertEquals("read", remote.getString("int_reader_method"));
+
+        JSONObject exact = new JSONObject(
+                "{\"remote_config\":{\"int_reader_class\":\"exact.Reader\","
+                        + "\"int_reader_method\":\"exactRead\"}}");
+        JSONObject exactWins = DexKitOverlay.compose(exact, new JSONObject(), discovered,
+                "", "");
+        JSONObject exactRemote = exactWins.getJSONObject("remote_config");
+        assertEquals("exact.Reader", exactRemote.getString("int_reader_class"));
+        assertEquals("exactRead", exactRemote.getString("int_reader_method"));
     }
 
     @Test

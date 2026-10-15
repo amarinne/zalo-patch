@@ -56,9 +56,15 @@ public final class DexKitZinstantFingerprint {
      * 11 = inbox deleted-group store anchored on the table literal,
      * 12 = call callback implementation anchored on the ZRTC base relation,
      * 13 = call peer manager anchored on the PeerJNI predicate invoker,
-     * 14 = bottom-tab structural field gate without pinned member letters.
+     * 14 = bottom-tab structural field gate without pinned member letters,
+     * 15 = compact October tab state,
+     * 16 = sponsored config, story-view serializers, and native Original-photo relationships.
+     * 17 = Adtima offline-window and active-view Boolean gates.
+     * 18 = dedicated story-ad bind semantic query.
+     * 19 = independent Zalo Video ad-view candidates,
+     * 20 = combined six-feature query set and both framework adapters.
      */
-    public static final int QUERY_REVISION = 15;
+    public static final int QUERY_REVISION = 22;
     public static final String ANCHOR_AD_BIND = "zinstant.ad_bind_method";
     public static final String ANCHOR_FEED_BIND = "zinstant.feed_bind_method";
 

@@ -201,8 +201,7 @@ public final class ZaloArtifactState {
             cachedLightweight = identity.lightweightKey;
             TweakStore.initialize(context);
             HookConfig.reload();
-            TweakStore.mirrorArtifactState(preferences);
-            SymbolCatalogMirror.sync(context, identity.versionCode);
+            FrameworkConfig.refreshState(context);
             return new Result(status, identity.lightweightKey, identity.generation, error,
                     evidence);
         } catch (Throwable throwable) {
@@ -219,7 +218,7 @@ public final class ZaloArtifactState {
                     .putLong(KEY_CHECKED_AT, System.currentTimeMillis())
                     .commit();
             HookConfig.reload();
-            TweakStore.mirrorArtifactState(preferences);
+            FrameworkConfig.refreshState(context);
             return new Result("failed", "", "", error, EVIDENCE_NONE);
         }
     }

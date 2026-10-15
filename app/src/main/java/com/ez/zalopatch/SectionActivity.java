@@ -41,16 +41,17 @@ public final class SectionActivity {
         private ZpMainSwitchPreference telemetryMaster;
         private boolean recordingCountLoading;
         private boolean resourceRequirementMet;
+        private long recordingPermissionGeneration = -1L;
         private final ActivityResultLauncher<String> recordingNotificationPermissionLauncher =
                 registerForActivityResult(
                         new ActivityResultContracts.RequestPermission(), granted -> {
-                            if (!granted) {
-                                return;
-                            }
-                            TweakStore.setEnabled(requireContext(),
-                                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS, true);
-                            SettingsChanges.markChanged(requireContext(),
-                                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS);
+                            long requestedGeneration = recordingPermissionGeneration;
+                            recordingPermissionGeneration = -1L;
+                            if (!granted || requestedGeneration < 0L || !isAdded()
+                                    || SettingsChanges.generation(requireContext()) != requestedGeneration) return;
+                            boolean saved = SettingsStore.confirmSaved(requireContext(), TweakStore.setEnabled(requireContext(),
+                                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS, true));
+                            if (!saved) return;
                             ZpSwitchPreference preference = switches.get(
                                     Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS);
                             if (preference != null) {
@@ -68,7 +69,14 @@ public final class SectionActivity {
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+            if (savedInstanceState != null) recordingPermissionGeneration = savedInstanceState.getLong(
+                    "recording_permission_generation", -1L);
             buildScreen();
+        }
+
+        @Override public void onSaveInstanceState(Bundle outState) {
+            super.onSaveInstanceState(outState);
+            outState.putLong("recording_permission_generation", recordingPermissionGeneration);
         }
 
         @Override
@@ -385,9 +393,8 @@ public final class SectionActivity {
                 } catch (NumberFormatException ignored) {
                     return false;
                 }
-                SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, value);
-                SettingsChanges.markChanged(context, Tweaks.KEY_DEFAULT_INBOX_FILTER);
-                return true;
+                return SettingsStore.confirmSaved(context,
+                        SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, value));
             });
             return preference;
         }
@@ -404,10 +411,8 @@ public final class SectionActivity {
                     .SimpleSummaryProvider.getInstance());
             preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
                 try {
-                    SettingsStore.putInt(context, key,
-                            Integer.parseInt(String.valueOf(newValue)));
-                    SettingsChanges.markChanged(context, key);
-                    return true;
+                    return SettingsStore.confirmSaved(context, SettingsStore.putInt(context, key,
+                            Integer.parseInt(String.valueOf(newValue))));
                 } catch (NumberFormatException ignored) {
                     return false;
                 }
@@ -453,11 +458,10 @@ public final class SectionActivity {
             telemetryMaster.setChecked(allTelemetryDisabled(context));
             telemetryMaster.setOnPreferenceChangeListener((changedPreference, newValue) -> {
                 boolean disabled = (Boolean) newValue;
+                Map<String, Object> updates = new HashMap<>();
+                for (String key : Tweaks.TELEMETRY_KEYS) updates.put(key, disabled);
+                if (!SettingsStore.confirmSaved(context, SettingsStore.save(context, updates))) return false;
                 for (String key : Tweaks.TELEMETRY_KEYS) {
-                    if (TweakStore.isEnabled(context, key) != disabled) {
-                        SettingsChanges.markChanged(context, key);
-                    }
-                    TweakStore.setEnabled(context, key, disabled);
                     ZpSwitchPreference child = switches.get(key);
                     if (child != null) {
                         child.setChecked(disabled);
@@ -508,12 +512,13 @@ public final class SectionActivity {
                 boolean enabled = (Boolean) newValue;
                 if (Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS.equals(item.key)
                         && enabled && !notificationPermissionGranted(context)) {
+                    recordingPermissionGeneration = SettingsChanges.generation(context);
                     recordingNotificationPermissionLauncher.launch(
                             Manifest.permission.POST_NOTIFICATIONS);
                     return false;
                 }
-                TweakStore.setEnabled(context, item.key, enabled);
-                SettingsChanges.markChanged(context, item.key);
+                if (!SettingsStore.confirmSaved(context,
+                        TweakStore.setEnabled(context, item.key, enabled))) return false;
                 if (telemetryMaster != null && item.key.startsWith("telemetry.")) {
                     telemetryMaster.setChecked(allTelemetryDisabled(context));
                 }
@@ -563,6 +568,8 @@ public final class SectionActivity {
         private Preference unavailableRequirementPreference(Context context, Tweaks.Item item) {
             int requirementRes = item.requirement == Tweaks.Requirement.ROOT
                     ? R.string.zp_requirement_root
+                    : item.requirement == Tweaks.Requirement.SHARED_RECORDINGS
+                    ? R.string.zp_requirement_recording_storage
                     : R.string.zp_requirement_resource_hooks;
             String behavior = item.summaryRes == 0 ? "" : getString(item.summaryRes);
             String summary = behavior.isEmpty()
@@ -572,6 +579,7 @@ public final class SectionActivity {
             Preference preference = PreferenceUi.unavailable(context,
                     getString(item.titleRes), summary);
             preference.setKey(item.key);
+            if (item.requirement == Tweaks.Requirement.SHARED_RECORDINGS) preference.setEnabled(false);
             return preference;
         }
 
@@ -641,6 +649,13 @@ public final class SectionActivity {
             if (Tweaks.KEY_BLOCK_TYPING_STATUS.equals(key)) {
                 return new String[]{Tweaks.KEY_BLOCK_TYPING_STATUS};
             }
+            if (Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY.equals(key)) {
+                return new String[]{"messages.view_stories_anonymously.seen",
+                        "messages.view_stories_anonymously.suggested"};
+            }
+            if (Tweaks.KEY_PREFER_ORIGINAL_PHOTO.equals(key)) {
+                return new String[]{key, key + ".picker", key + ".share"};
+            }
             if (Tweaks.KEY_KEEP_EXPIRED_MEDIA.equals(key)) {
                 return new String[]{Tweaks.KEY_KEEP_EXPIRED_MEDIA};
             }
@@ -683,11 +698,24 @@ public final class SectionActivity {
             if (Tweaks.KEY_HIDE_MESSAGE_ADS.equals(key)) {
                 return new String[]{"zinstant.message_ad"};
             }
+            if (Tweaks.KEY_HIDE_STORY_ADS.equals(key)) {
+                return new String[]{Tweaks.KEY_HIDE_STORY_ADS};
+            }
             if (Tweaks.KEY_HIDE_FEED_ADS.equals(key)) {
                 return new String[]{"zinstant.feed_ad"};
             }
+            if (Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS.equals(key)) {
+                return new String[]{"ads.sponsored_placements"};
+            }
+            if (Tweaks.KEY_HIDE_VIDEO_ADS.equals(key)) {
+                return new String[]{"video_ads.outstream", "video_ads.template", "video_ads.native",
+                        "video_ads.photo_item", "video_ads.video_item"};
+            }
             if (Tweaks.KEY_HIDE_PROMO_SERVICES.equals(key)) {
                 return new String[]{"zinstant.network", "zinstant.script"};
+            }
+            if (Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING.equals(key)) {
+                return new String[]{"adtima.offline_window", "adtima.tracking_gate"};
             }
             return new String[0];
         }

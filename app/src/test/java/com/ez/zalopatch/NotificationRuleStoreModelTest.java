@@ -46,6 +46,18 @@ public final class NotificationRuleStoreModelTest {
 
         assertEquals(0, resolved.total());
     }
+
+    @Test
+    public void clearedPresentMirrorDoesNotRestoreStaleProviderRules() throws Exception {
+        String provider = NotificationRuleStore.encode(new NotificationRuleStore.RuleSet(
+                Arrays.asList("block"), Arrays.asList("allow"),
+                Arrays.asList("blocked account"), Arrays.asList("allowed account")));
+        for (String property : Arrays.asList("", " \n\t ",
+                NotificationRuleStore.encode(NotificationRuleStore.RuleSet.empty()))) {
+            assertEquals(0, NotificationRuleStore.resolve(property, provider).total());
+        }
+    }
+
     @Test
     public void rulesAreTrimmedAndDeduplicated() {
         NotificationRuleStore.RuleSet rules = new NotificationRuleStore.RuleSet(

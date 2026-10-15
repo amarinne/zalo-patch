@@ -23,10 +23,24 @@ public final class SymbolPreflightResultTest {
     }
 
     @Test
+    public void eachVideoAdRouteCountsIndependently() {
+        for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
+                : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
+            SymbolPreflight.Result result = new SymbolPreflight.Result();
+            result.videoAds.put(route, true);
+            assertEquals(route.id, 1, result.resolved());
+        }
+    }
+
+    @Test
     public void completeResultResolvesEveryDeclaredFamily() throws Exception {
         SymbolPreflight.Result result = new SymbolPreflight.Result();
         for (Field family : SymbolPreflight.Result.class.getDeclaredFields()) {
             if (family.getType() == boolean.class) family.setBoolean(result, true);
+        }
+        for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
+                : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
+            result.videoAds.put(route, true);
         }
         assertEquals(result.total(), result.resolved());
     }

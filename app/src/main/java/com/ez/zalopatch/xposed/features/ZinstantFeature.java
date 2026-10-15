@@ -25,6 +25,8 @@ public final class ZinstantFeature extends Feature {
     private static final String ZINSTANT_FEED_ADS_CLASS = "com.zing.zalo.social.presentation.timeline.components.ads.FeedItemZInstantAds";
     private static final String ZINSTANT_COMMUNICATOR_CLASS = "com.zing.zalo.zinstant.utils.ZinstantCommunicatorHelper";
     private static final String ZINSTANT_SCRIPT_HELPER_CLASS = "com.zing.zalo.zinstant.utils.ScriptHelperImpl";
+    private final com.ez.zalopatch.xposed.core.UiOutcomeObserver messageOutcome = new com.ez.zalopatch.xposed.core.UiOutcomeObserver();
+    private final com.ez.zalopatch.xposed.core.UiOutcomeObserver feedOutcome = new com.ez.zalopatch.xposed.core.UiOutcomeObserver();
     private boolean hideMessageAds;
     private boolean hideFeedAds;
     private boolean hidePromoServices;
@@ -113,6 +115,7 @@ public final class ZinstantFeature extends Feature {
                 @Override
                 public void after(XpHooks.HookParam param) {
                     if (shouldHideMessageAds()) {
+                        messageOutcome.afterBind(FEATURE_MESSAGE_AD, "message_ad", (View) param.thisObject, () -> true);
                         collapseView((View) param.thisObject);
                         SelfCheckRegistry.markSuppressed(FEATURE_MESSAGE_AD, ZINSTANT_AD_ITEM_VIEW_CLASS, "constructor collapse");
                     }
@@ -138,6 +141,7 @@ public final class ZinstantFeature extends Feature {
                 @Override
                 public void after(XpHooks.HookParam param) {
                     if (shouldHideFeedAds()) {
+                        feedOutcome.afterBind(FEATURE_FEED_AD, "feed_ad", (View) param.thisObject, () -> true);
                         collapseView((View) param.thisObject);
                         SelfCheckRegistry.markSuppressed(FEATURE_FEED_AD, ZINSTANT_FEED_ADS_CLASS, "constructor collapse");
                     }
@@ -172,6 +176,8 @@ public final class ZinstantFeature extends Feature {
                 @Override
                 public void before(XpHooks.HookParam param) {
                     if (enabled.getAsBoolean() && param.thisObject instanceof View) {
+                        (FEATURE_MESSAGE_AD.equals(feature) ? messageOutcome : feedOutcome).afterBind(feature,
+                                FEATURE_MESSAGE_AD.equals(feature) ? "message_ad" : "feed_ad", (View) param.thisObject, () -> true);
                         collapseView((View) param.thisObject);
                         param.setResult(null);
                         SelfCheckRegistry.markSuppressed(feature, clazz.getName() + "#" + method.getName(), "bind collapse");

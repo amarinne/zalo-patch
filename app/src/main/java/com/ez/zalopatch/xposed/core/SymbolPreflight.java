@@ -1,7 +1,11 @@
 package com.ez.zalopatch.xposed.core;
 
 import com.ez.zalopatch.DexKitCallFingerprint;
+import com.ez.zalopatch.DexKitAdtimaFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
+import com.ez.zalopatch.DexKitStoryFingerprint;
+import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
+import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.xposed.features.CallRecordingLifecycle;
 
@@ -70,6 +74,17 @@ final class SymbolPreflight {
             result.statusPrivacyErrors.add(familyError("status_privacy", throwable));
         }
         try {
+            result.storySeen = checkStoryRequest(schema, classLoader, false, result.storySeenErrors);
+        } catch (Throwable throwable) {
+            result.storySeenErrors.add(familyError("story_seen", throwable));
+        }
+        try {
+            result.storySuggested = checkStoryRequest(
+                    schema, classLoader, true, result.storySuggestedErrors);
+        } catch (Throwable throwable) {
+            result.storySuggestedErrors.add(familyError("story_suggested", throwable));
+        }
+        try {
             result.passcodeGrace = checkPasscodeGrace(
                     schema, classLoader, result.passcodeGraceErrors);
         } catch (Throwable throwable) {
@@ -92,6 +107,12 @@ final class SymbolPreflight {
                     schema, classLoader, result.telemetryDaoErrors);
         } catch (Throwable throwable) {
             result.telemetryDaoErrors.add(familyError("telemetry_dao", throwable));
+        }
+        try {
+            result.remoteConfig = checkRemoteConfig(
+                    schema, classLoader, result.remoteConfigErrors);
+        } catch (Throwable throwable) {
+            result.remoteConfigErrors.add(familyError("remote_config", throwable));
         }
         try {
             result.callRecording = checkCallRecording(
@@ -122,7 +143,50 @@ final class SymbolPreflight {
         } catch (Throwable throwable) {
             result.zinstantSymbolsErrors.add(familyError("zinstant_symbols", throwable));
         }
+        try {
+            java.util.Map<String, String> descriptors = new java.util.LinkedHashMap<>();
+            for (String anchor : DexKitOriginalPhotoFingerprint.ANCHORS) descriptors.put(anchor, schema.string(anchor, ""));
+            DexKitOriginalPhotoFingerprint.bind(descriptors, classLoader);
+            result.originalPhoto = true;
+        } catch (Throwable error) {
+            result.originalPhotoErrors.add(familyError("original_photo", error));
+        }
+        try {
+            result.adtima = checkAdtimaGates(schema, classLoader, result.adtimaErrors);
+        } catch (Throwable throwable) {
+            result.adtimaErrors.add(familyError("adtima", throwable));
+        }
+        try {
+            result.storyAds = checkDexkitStoryAds(classLoader,
+                    schema.string(DexKitStoryAdFingerprint.ANCHOR_CLASS, ""),
+                    schema.string(DexKitStoryAdFingerprint.ANCHOR_BIND, ""), result.storyAdsErrors);
+        } catch (Throwable throwable) {
+            result.storyAdsErrors.add(familyError("story_ads", throwable));
+        }
+        for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
+                : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
+            List<String> errors = result.videoAdsErrors.get(route);
+            result.videoAds.put(route, VideoAdsTargets.check(classLoader, route,
+                    VideoAdsTargets.bindings(schema, route), errors));
+        }
         return result;
+    }
+
+    static boolean checkDexkitStoryAds(ClassLoader loader, String ownerName,
+                                       String bindName, List<String> errors) {
+        if (ownerName == null || ownerName.isEmpty() || bindName == null || bindName.isEmpty()) {
+            errors.add("story-ad binder is unavailable");
+            return false;
+        }
+        try {
+            Class<?> owner = Class.forName(ownerName, false, loader);
+            Method binder = DexKitStoryAdFingerprint.binding(owner, bindName);
+            if (android.view.View.class.isAssignableFrom(owner) && binder != null) return true;
+            errors.add("story-ad owner, constructors, or binder signature changed");
+        } catch (Throwable throwable) {
+            errors.add(familyError("story_ads", throwable));
+        }
+        return false;
     }
 
     private static String familyError(String family, Throwable throwable) {
@@ -217,6 +281,10 @@ final class SymbolPreflight {
         if (tabMe != null) {
             method(tabMe, schema.string("symbols.me.current_builder_method", ""),
                     ArrayList.class, 1, errors);
+            String fullZinstant = schema.string("symbols.me.full_zinstant_predicate_method", "");
+            if (!fullZinstant.isEmpty()) {
+                method(tabMe, fullZinstant, Boolean.TYPE, 0, errors);
+            }
         }
         // Item identity is runtime-derived (observed builder products / item shape);
         // the pinned item class is retired. The id/title/summary field names must
@@ -380,6 +448,19 @@ final class SymbolPreflight {
                     Void.TYPE, new ArrayList<>(), ArrayList.class);
             field(ack, schema.string("symbols.chat.seen_ack_type_field", ""),
                     Integer.TYPE, new ArrayList<>());
+        }
+        return errors.isEmpty();
+    }
+
+    private static boolean checkStoryRequest(SymbolSchema.Active schema, ClassLoader loader,
+                                              boolean suggested, List<String> errors) {
+        String owner = schema.string(suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS
+                : DexKitStoryFingerprint.ANCHOR_SEEN_CLASS, "");
+        String name = schema.string(suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD
+                : DexKitStoryFingerprint.ANCHOR_SEEN_METHOD, "");
+        Class<?> type = load(owner, loader, errors);
+        if (type != null && DexKitStoryFingerprint.requestMethod(type, name, suggested) == null) {
+            errors.add(owner + "#" + name + " story request signature changed");
         }
         return errors.isEmpty();
     }
@@ -797,6 +878,47 @@ final class SymbolPreflight {
             return false;
         }
     }
+
+    /** Live signature check for both Adtima Boolean gates after semantic DexKit resolution. */
+    static boolean checkDexkitAdtimaGates(ClassLoader loader,
+            String windowClass, String windowMethod, String trackingClass, String trackingMethod,
+            List<String> errors) {
+        if (windowClass == null || windowClass.isEmpty() || windowMethod == null
+                || windowMethod.isEmpty() || trackingClass == null || trackingClass.isEmpty()
+                || trackingMethod == null || trackingMethod.isEmpty()) {
+            errors.add("Adtima gate anchors incomplete");
+            return false;
+        }
+        checkStaticBooleanNoArgs(loader, windowClass, windowMethod, errors);
+        checkStaticBooleanNoArgs(loader, trackingClass, trackingMethod, errors);
+        if ((windowClass + "#" + windowMethod).equals(trackingClass + "#" + trackingMethod)) {
+            errors.add("offline-window and tracking gates are not distinct");
+        }
+        return errors.isEmpty();
+    }
+
+    private static void checkStaticBooleanNoArgs(ClassLoader loader, String className,
+                                                  String methodName, List<String> errors) {
+        try {
+            Class<?> owner = Class.forName(className, false, loader);
+            Method method = owner.getDeclaredMethod(methodName);
+            if (!Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != Boolean.TYPE) {
+                errors.add(className + "#" + methodName + " is not static boolean()");
+            }
+        } catch (Throwable throwable) {
+            errors.add(className + "#" + methodName + " signature missing");
+        }
+    }
+
+    private static boolean checkAdtimaGates(SymbolSchema.Active schema, ClassLoader loader,
+                                            List<String> errors) {
+        return checkDexkitAdtimaGates(loader,
+                schema.string(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS, ""),
+                schema.string(DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD, ""),
+                schema.string(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS, ""),
+                schema.string(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD, ""), errors);
+    }
     static boolean checkDexkitCallPeer(ClassLoader loader, String className, String accessor,
                                        String containerField, String handleField,
                                        List<String> errors) {
@@ -914,6 +1036,25 @@ final class SymbolPreflight {
             staticMethodExact(reader,
                     schema.string("symbols.passcode.prefs_int_reader_method", ""),
                     Integer.TYPE, errors, Integer.TYPE, String.class, Boolean.TYPE);
+        }
+        return errors.isEmpty();
+    }
+
+    /** Shared keyed config reader: exact static {@code (String, int) -> int} shape. */
+    private static boolean checkRemoteConfig(SymbolSchema.Active schema, ClassLoader loader,
+                                             List<String> errors) {
+        String className = schema.string(
+                "symbols.remote_config.int_reader_class", "");
+        String methodName = schema.string(
+                "symbols.remote_config.int_reader_method", "");
+        if (className.isEmpty() || methodName.isEmpty()) {
+            errors.add("remote config integer reader anchor missing");
+            return false;
+        }
+        Class<?> reader = load(className, loader, errors);
+        if (reader != null) {
+            staticMethodExact(reader, methodName, Integer.TYPE, errors,
+                    String.class, Integer.TYPE);
         }
         return errors.isEmpty();
     }
@@ -1191,6 +1332,19 @@ final class SymbolPreflight {
     }
 
     static final class Result {
+        final java.util.EnumMap<com.ez.zalopatch.DexKitVideoAdsFingerprint.Route, Boolean> videoAds =
+                new java.util.EnumMap<>(com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.class);
+        final java.util.EnumMap<com.ez.zalopatch.DexKitVideoAdsFingerprint.Route, List<String>> videoAdsErrors =
+                new java.util.EnumMap<>(com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.class);
+
+        Result() {
+            for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
+                    : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
+                videoAds.put(route, false);
+                videoAdsErrors.put(route, new ArrayList<>());
+            }
+        }
+
         boolean inboxMedia;
         boolean inboxCategories;
         boolean me;
@@ -1198,15 +1352,21 @@ final class SymbolPreflight {
         boolean zinstantMessage;
         boolean zinstantFeed;
         boolean statusPrivacy;
+        boolean storySeen;
+        boolean storySuggested;
         boolean passcodeGrace;
         boolean backupScheduled;
         boolean webviewExternalize;
         boolean telemetryDao;
+        boolean remoteConfig;
         boolean callRecording;
         boolean inboxRows;
         boolean bottomTabsSymbols;
         boolean chatReaction;
         boolean zinstantSymbols;
+        boolean originalPhoto;
+        boolean adtima;
+        boolean storyAds;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
@@ -1214,15 +1374,21 @@ final class SymbolPreflight {
         final List<String> zinstantMessageErrors = new ArrayList<>();
         final List<String> zinstantFeedErrors = new ArrayList<>();
         final List<String> statusPrivacyErrors = new ArrayList<>();
+        final List<String> storySeenErrors = new ArrayList<>();
+        final List<String> storySuggestedErrors = new ArrayList<>();
         final List<String> passcodeGraceErrors = new ArrayList<>();
         final List<String> backupScheduledErrors = new ArrayList<>();
         final List<String> webviewErrors = new ArrayList<>();
         final List<String> telemetryDaoErrors = new ArrayList<>();
+        final List<String> remoteConfigErrors = new ArrayList<>();
         final List<String> inboxRowsErrors = new ArrayList<>();
         final List<String> bottomTabsSymbolsErrors = new ArrayList<>();
         final List<String> chatReactionErrors = new ArrayList<>();
         final List<String> zinstantSymbolsErrors = new ArrayList<>();
         final List<String> callRecordingErrors = new ArrayList<>();
+        final List<String> originalPhotoErrors = new ArrayList<>();
+        final List<String> adtimaErrors = new ArrayList<>();
+        final List<String> storyAdsErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -1238,20 +1404,27 @@ final class SymbolPreflight {
             if (zinstantMessage) count++;
             if (zinstantFeed) count++;
             if (statusPrivacy) count++;
+            if (storySeen) count++;
+            if (storySuggested) count++;
             if (passcodeGrace) count++;
             if (backupScheduled) count++;
             if (webviewExternalize) count++;
             if (telemetryDao) count++;
+            if (remoteConfig) count++;
             if (callRecording) count++;
             if (inboxRows) count++;
             if (bottomTabsSymbols) count++;
             if (chatReaction) count++;
             if (zinstantSymbols) count++;
+            if (originalPhoto) count++;
+            if (adtima) count++;
+            if (storyAds) count++;
+            for (Boolean resolved : videoAds.values()) if (Boolean.TRUE.equals(resolved)) count++;
             return count;
         }
 
         int total() {
-            return 16;
+            return 22 + com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values().length;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -1264,15 +1437,25 @@ final class SymbolPreflight {
             append(value, "zinstant_message", zinstantMessage);
             append(value, "zinstant_feed", zinstantFeed);
             append(value, "status_privacy", statusPrivacy);
+            append(value, "story_seen", storySeen);
+            append(value, "story_suggested", storySuggested);
             append(value, "passcode_grace", passcodeGrace);
             append(value, "backup_scheduled", backupScheduled);
             append(value, "webview_externalize", webviewExternalize);
             append(value, "telemetry_dao", telemetryDao);
+            append(value, "remote_config", remoteConfig);
             append(value, "call_recording", callRecording);
             append(value, "inbox_rows", inboxRows);
             append(value, "bottom_tabs_symbols", bottomTabsSymbols);
             append(value, "chat_reaction", chatReaction);
             append(value, "zinstant_symbols", zinstantSymbols);
+            append(value, "original_photo", originalPhoto);
+            append(value, "adtima", adtima);
+            append(value, "story_ads", storyAds);
+            for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
+                    : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
+                append(value, route.family(), Boolean.TRUE.equals(videoAds.get(route)));
+            }
             return value.toString();
         }
 

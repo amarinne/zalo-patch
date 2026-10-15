@@ -35,6 +35,10 @@ public final class Settings {
             this.implemented = implemented;
             this.visible = visible;
         }
+
+        boolean requiresRestart() {
+            return visible && !Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION.equals(key);
+        }
     }
 
     private static final List<Setting<?>> SETTINGS;

@@ -1,6 +1,7 @@
 package com.ez.zalopatch.xposed.core;
 
-import io.github.libxposed.api.XposedInterface;
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
@@ -9,61 +10,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/**
- * Project-owned hook adapter around LibXposed API 102.
- *
- * <p>The legacy API 82 contract exposed split before/after callbacks with early return,
- * result replacement, and throwable inspection. API 102 exposes a single interceptor chain
- * instead, so every feature expresses its hooks through {@link Before} and {@link After}
- * against {@link HookParam} and this class translates them onto one {@code intercept}
- * implementation per hooked executable. This is the only place that touches the raw
- * framework hook types, which keeps feature logic readable and gives hot reload one
- * registry to replace or remove hooks from.
- *
- * <p>Semantics preserved from the legacy contract:
- *
- * <ul>
- *   <li>{@code setResult} inside {@link Before} skips the original call (early return);
- *       {@link After} still runs, matching {@code XC_MethodHook} behavior.</li>
- *   <li>{@code setResult} inside {@link After} replaces the returned value and clears a
- *       pending throwable.</li>
- *   <li>A callback that throws does not break the host call: the failure is logged and
- *       the chain continues as if the hook were absent (legacy protective mode).</li>
- *   <li>{@code hookAllMethods} arms every declared overload sharing a name, and
- *       {@code hookAllConstructors} arms every declared constructor.</li>
- * </ul>
- *
- * <p>Every installed hook carries a stable id of {@code featureId + "|" + executable},
- * so reinstalling the same feature deterministically replaces its previous hooks
- * instead of stacking duplicates.
- */
+/** Legacy API 82 adapter for the explicit LSPatch artifact. */
 public final class XpHooks {
-    private static volatile XposedInterface api;
-    private static final CopyOnWriteArrayList<XposedInterface.HookHandle> HANDLES =
-            new CopyOnWriteArrayList<>();
-
-    private XpHooks() {
-    }
-
-    /** Attaches the framework interface for the current module generation. */
-    public static void attach(XposedInterface framework) {
-        api = framework;
-        XpLog.attach(framework);
-    }
-
-    public static XposedInterface framework() {
-        return api;
-    }
-
-    /** Runtime Xposed API version, or 0 when no framework is attached. */
-    public static int apiVersion() {
-        try {
-            XposedInterface framework = api;
-            return framework == null ? 0 : Math.max(0, framework.getApiVersion());
-        } catch (Throwable ignored) {
-            return 0;
-        }
-    }
+    private static final CopyOnWriteArrayList<XC_MethodHook.Unhook> HANDLES = new CopyOnWriteArrayList<>();
+    private XpHooks() {}
+    public static int apiVersion() { return XposedBridge.getXposedVersion(); }
 
     /** Before-callback: runs before the original call; {@code setResult} skips it. */
     public interface Before {
@@ -77,14 +28,14 @@ public final class XpHooks {
 
     /** Single installed hook; replaces {@code XC_MethodHook.Unhook} at call sites. */
     public static final class Handle {
-        private volatile XposedInterface.HookHandle raw;
+        private volatile XC_MethodHook.Unhook raw;
 
-        private Handle(XposedInterface.HookHandle raw) {
+        private Handle(XC_MethodHook.Unhook raw) {
             this.raw = raw;
         }
 
         public void unhook() {
-            XposedInterface.HookHandle handle = raw;
+            XC_MethodHook.Unhook handle = raw;
             if (handle != null) {
                 try {
                     handle.unhook();
@@ -137,94 +88,43 @@ public final class XpHooks {
         }
     }
 
-    private static final class Adapter implements XposedInterface.Hooker {
-        private final String owner;
-        private final Before before;
-        private final After after;
-
-        Adapter(String owner, Before before, After after) {
-            this.owner = owner;
-            this.before = before;
-            this.after = after;
-        }
-
-        @Override
-        public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            List<Object> chainArgs = chain.getArgs();
-            Object[] args = chainArgs == null
-                    ? new Object[0]
-                    : chainArgs.toArray(new Object[0]);
-            HookParam param = new HookParam(chain.getThisObject(), args, chain.getExecutable());
-            if (before != null) {
+    private static Handle install(String owner, Executable executable, Before before, After after) {
+        // Each callback owns its state even when multiple hooks share an owner and method.
+        String stateKey = "zalopatch:" + java.util.UUID.randomUUID();
+        XC_MethodHook.Unhook raw = XposedBridge.hookMethod(executable, new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam call) {
+                HookParam param = new HookParam(call.thisObject, call.args, executable);
+                call.setObjectExtra(stateKey, param);
+                if (before == null) return;
                 try {
                     before.before(param);
-                } catch (Throwable callbackFailure) {
-                    XpLog.w("[" + owner + "] before hook failed, continuing: "
-                            + callbackFailure);
-                    param.resultReady = false;
-                    param.throwable = null;
+                    if (param.throwable != null) call.setThrowable(param.throwable);
+                    else if (param.resultReady) call.setResult(param.result);
+                } catch (Throwable failure) {
+                    XpLog.w("[" + owner + "] before hook failed, continuing: " + failure);
                 }
+                // Legacy protective mode retains argument edits even when a callback throws.
+                call.args = param.args;
             }
-            if (!param.resultReady) {
-                try {
-                    param.result = chain.proceed(param.args);
-                } catch (Throwable callFailure) {
-                    param.throwable = callFailure;
-                }
-                try {
-                    // Constructor interception reports the new instance only after
-                    // the call completes; methods report the same receiver again.
-                    param.thisObject = chain.getThisObject();
-                } catch (Throwable ignored) {
-                }
-            }
-            if (after != null) {
-                Object resultBeforeCallback = param.result;
-                boolean resultReadyBeforeCallback = param.resultReady;
-                Throwable throwableBeforeCallback = param.throwable;
+            @Override protected void afterHookedMethod(MethodHookParam call) {
+                if (after == null) return;
+                HookParam param = (HookParam) call.getObjectExtra(stateKey);
+                if (param == null) param = new HookParam(call.thisObject, call.args, executable);
+                param.thisObject = call.thisObject;
+                param.args = call.args;
+                param.result = call.getResult();
+                param.throwable = call.getThrowable();
+                param.resultReady = false;
                 try {
                     after.after(param);
-                } catch (Throwable callbackFailure) {
-                    XpLog.w("[" + owner + "] after hook failed, continuing: "
-                            + callbackFailure);
-                    // Legacy protective mode discards partial result or throwable
-                    // changes made by an after-callback that then fails.
-                    param.result = resultBeforeCallback;
-                    param.resultReady = resultReadyBeforeCallback;
-                    param.throwable = throwableBeforeCallback;
+                    if (param.throwable != null) call.setThrowable(param.throwable);
+                    else if (param.resultReady) call.setResult(param.result);
+                } catch (Throwable failure) {
+                    // Apply result changes only after successful callback completion.
+                    XpLog.w("[" + owner + "] after hook failed, continuing: " + failure);
                 }
             }
-            if (param.throwable != null) {
-                throw param.throwable;
-            }
-            return param.result;
-        }
-    }
-
-    private static XposedInterface requireApi() {
-        XposedInterface framework = api;
-        if (framework == null) {
-            throw new IllegalStateException("XpHooks used before framework attach");
-        }
-        return framework;
-    }
-
-    private static String hookId(String owner, Executable executable) {
-        return owner + "|" + executable;
-    }
-
-    private static Handle install(
-            String owner, Executable executable, Before before, After after) {
-        XposedInterface framework = requireApi();
-        Adapter adapter = new Adapter(owner, before, after);
-        XposedInterface.HookHandle raw;
-        try {
-            raw = framework.hook(executable)
-                    .setId(hookId(owner, executable))
-                    .intercept(adapter);
-        } catch (RuntimeException installFailure) {
-            throw installFailure;
-        }
+        });
         HANDLES.add(raw);
         return new Handle(raw);
     }
@@ -301,6 +201,22 @@ public final class XpHooks {
         return hookMethod(owner, method, null, after);
     }
 
+    /** Hooks one qualified constructor without arming other overloads. */
+    public static Handle hookConstructor(String owner, Constructor<?> constructor, Before before) {
+        return hookConstructor(owner, constructor, before, null);
+    }
+
+    public static Handle hookConstructor(String owner, Constructor<?> constructor,
+                                         Before before, After after) {
+        if (constructor == null) throw new IllegalArgumentException("Cannot hook a null constructor");
+        try {
+            constructor.setAccessible(true);
+            return install(owner, constructor, before, after);
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException("Failed to hook " + constructor, failure);
+        }
+    }
+
     /** Hooks every declared constructor, like legacy hookAllConstructors. */
     public static List<Handle> hookAllConstructors(Class<?> clazz, Before before, After after) {
         return hookAllConstructors("hook", clazz, before, after);
@@ -317,6 +233,7 @@ public final class XpHooks {
                 constructor.setAccessible(true);
                 installed.add(install(owner, constructor, before, after));
             } catch (Throwable installFailure) {
+                for (Handle handle : installed) handle.unhook();
                 throw new IllegalStateException(
                         "Failed to hook " + clazz.getName() + "#<init>", installFailure);
             }
@@ -371,11 +288,8 @@ public final class XpHooks {
      */
     public static Object invokeOriginal(Method method, Object receiver, Object... args)
             throws Throwable {
-        XposedInterface framework = requireApi();
         try {
-            return framework.getInvoker(method)
-                    .setType(XposedInterface.Invoker.Type.ORIGIN)
-                    .invoke(receiver, args);
+            return XposedBridge.invokeOriginalMethod(method, receiver, args);
         } catch (java.lang.reflect.InvocationTargetException thrown) {
             Throwable cause = thrown.getCause();
             throw cause != null ? cause : thrown;
@@ -383,7 +297,7 @@ public final class XpHooks {
     }
 
     public static void unhookAll() {
-        for (XposedInterface.HookHandle raw : HANDLES) {
+        for (XC_MethodHook.Unhook raw : HANDLES) {
             try {
                 raw.unhook();
             } catch (Throwable ignored) {

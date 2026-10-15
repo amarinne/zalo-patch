@@ -12,6 +12,7 @@ public final class ZpApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        FrameworkConfig.initialize(this);
         RuntimeStatusTraceStore.archiveCurrent(this);
         UiSettings.ensureDefaultLanguage(this);
     }

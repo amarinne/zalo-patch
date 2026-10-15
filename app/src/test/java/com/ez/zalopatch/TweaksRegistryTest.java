@@ -2,6 +2,8 @@ package com.ez.zalopatch;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -16,6 +18,21 @@ import java.util.Map;
 import java.util.Set;
 
 public final class TweaksRegistryTest {
+    @Test
+    public void integratedCandidatesRemainDefaultOffAndPortable() {
+        for (String key : new String[]{Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS,
+                Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY, Tweaks.KEY_PREFER_ORIGINAL_PHOTO,
+                Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING, Tweaks.KEY_HIDE_STORY_ADS,
+                Tweaks.KEY_HIDE_VIDEO_ADS}) {
+            assertTrue(key, Tweaks.isImplemented(key));
+            assertFalse(key, Tweaks.defaultEnabled(key));
+            Settings.Setting<?> setting = Settings.find(key);
+            assertNotNull(key, setting);
+            assertFalse(key, (Boolean) setting.defaultValue);
+            assertTrue(key, SettingsBackup.portable(setting));
+        }
+    }
+
     @Test
     public void itemKeysAreUnique() {
         Set<String> keys = new HashSet<>();
@@ -54,6 +71,40 @@ public final class TweaksRegistryTest {
                         stringResources.contains(group.titleRes));
             }
         }
+    }
+
+    @Test
+    public void sponsoredPlacementToggleIsDefaultOffAndPortable() {
+        String key = Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS;
+        org.junit.Assert.assertTrue(Tweaks.isImplemented(key));
+        org.junit.Assert.assertFalse(Tweaks.defaultEnabled(key));
+        boolean foundItem = false;
+        for (Tweaks.Item item : Tweaks.ITEMS) {
+            if (key.equals(item.key)) {
+                foundItem = true;
+                org.junit.Assert.assertEquals(Tweaks.Requirement.NONE, item.requirement);
+            }
+        }
+        org.junit.Assert.assertTrue(foundItem);
+        Settings.Setting<?> setting = Settings.find(key);
+        org.junit.Assert.assertNotNull(setting);
+        org.junit.Assert.assertEquals(Settings.Type.BOOLEAN, setting.type);
+        org.junit.Assert.assertFalse((Boolean) setting.defaultValue);
+        org.junit.Assert.assertTrue(SettingsBackup.portable(setting));
+    }
+
+    @Test
+    public void storyAdSettingUsesPortableDefaultOffRegistry() {
+        Tweaks.Item item = null;
+        for (Tweaks.Item candidate : Tweaks.ITEMS) {
+            if (Tweaks.KEY_HIDE_STORY_ADS.equals(candidate.key)) item = candidate;
+        }
+        assertNotNull(item);
+        assertEquals(Tweaks.SECTION_ADS, item.section);
+        assertFalse(item.defaultEnabled);
+        assertTrue(item.implemented);
+        assertEquals(Tweaks.Requirement.NONE, item.requirement);
+        assertNotNull(Settings.find(Tweaks.KEY_HIDE_STORY_ADS));
     }
 
     private static List<String> sections() throws IllegalAccessException {

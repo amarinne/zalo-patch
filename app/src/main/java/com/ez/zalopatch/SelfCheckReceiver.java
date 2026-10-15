@@ -88,7 +88,7 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
             Object extra = intent.getParcelableExtra(EXTRA_VALUES);
             if (!(extra instanceof ContentValues)) return;
             ContentValues values = (ContentValues) extra;
-            if (SettingsStore.getBoolean(context, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
+            if (SettingsChanges.runtimeBoolean(context, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
                 try {
                     long id = new NotificationHistoryStore(context).record(values);
                     if (id >= 0L || id == -2L) {
@@ -153,6 +153,7 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
         values.put("module_version_code", intent.getIntExtra("module_version_code", -1));
         values.put("profile_sha256", intent.getStringExtra("profile_sha256"));
         values.put("run_id", intent.getStringExtra("run_id"));
+        values.put("config_snapshot_id", intent.getStringExtra("config_snapshot_id"));
         return values;
     }
 

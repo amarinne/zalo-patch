@@ -87,8 +87,6 @@ public final class NotificationFilterActivity {
             });
             reviewSection.add(suppressed);
 
-            screen.addPreference(PreferenceUi.footer(context,
-                    getString(R.string.zp_filter_footer), ""));
             refreshSnapshotAsync();
         }
 
@@ -158,9 +156,8 @@ public final class NotificationFilterActivity {
             preference.chips(notificationTrackingChips(context, key));
             toggles.put(key, preference);
             preference.setOnPreferenceChangeListener((changed, newValue) -> {
-                TweakStore.setEnabled(context, key, (Boolean) newValue);
-                SettingsChanges.markChanged(context, key);
-                return true;
+                return SettingsStore.confirmSaved(context,
+                        TweakStore.setEnabled(context, key, (Boolean) newValue));
             });
             return preference;
         }
@@ -213,9 +210,9 @@ public final class NotificationFilterActivity {
             retention.setValue(String.valueOf(store.retentionLimit()));
             retention.setOnPreferenceChangeListener((preference, newValue) -> {
                 int value = Integer.parseInt(String.valueOf(newValue));
-                SettingsStore.putInt(context, Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION, value);
+                if (!SettingsStore.confirmSaved(context, SettingsStore.putInt(context,
+                        Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION, value))) return false;
                 store.enforceRetention();
-                SettingsChanges.markChanged(context, Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION);
                 return true;
             });
             return retention;

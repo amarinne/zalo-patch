@@ -14,7 +14,7 @@ final class SymbolCatalogCache {
     private SymbolCatalogCache() {
     }
 
-    static SymbolCatalogContract.Entry load(Context context, long versionCode) {
+    static synchronized SymbolCatalogContract.Entry load(Context context, long versionCode) {
         if (context == null || versionCode <= 0L) {
             return null;
         }
@@ -29,10 +29,16 @@ final class SymbolCatalogCache {
     }
 
     static boolean save(Context context, ZaloArtifactIdentity identity, byte[] envelope) {
-        if (context == null || identity == null) return false;
+        return identity != null && save(context, identity.versionCode, envelope);
+    }
+
+    static synchronized boolean save(Context context, long versionCode, byte[] envelope) {
+        if (context == null || versionCode <= 0L) return false;
         try {
-            SymbolCatalogContract.verify(envelope, publicKey(context), identity.versionCode,
-                    BuildConfig.VERSION_CODE);
+            SymbolCatalogContract.Entry candidate = SymbolCatalogContract.verify(
+                    envelope, publicKey(context), versionCode, BuildConfig.VERSION_CODE);
+            // Compare before startWrite so a replay cannot discard the last verified profile.
+            if (!canReplace(load(context, versionCode), candidate)) return false;
             AtomicFile file = atomicFile(context);
             FileOutputStream output = file.startWrite();
             try {
@@ -50,7 +56,13 @@ final class SymbolCatalogCache {
         }
     }
 
-    static void clear(Context context) {
+    static boolean canReplace(SymbolCatalogContract.Entry current,
+                              SymbolCatalogContract.Entry candidate) {
+        return current == null || candidate.sequence > current.sequence
+                || (candidate.sequence == current.sequence && candidate.digest.equals(current.digest));
+    }
+
+    static synchronized void clear(Context context) {
         if (context == null) return;
         atomicFile(context).delete();
         SymbolSchema.invalidate();

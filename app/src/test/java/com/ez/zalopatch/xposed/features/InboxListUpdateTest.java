@@ -2,6 +2,7 @@ package com.ez.zalopatch.xposed.features;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Method;
@@ -11,6 +12,40 @@ import java.util.List;
 import org.junit.Test;
 
 public final class InboxListUpdateTest {
+    @Test
+    public void categoryAndEmptyReplaysRestoreAllRowObjectsInNativeOrder() throws Exception {
+        Adapter adapter = new Adapter();
+        Object chat = new Object();
+        Object group = new Object();
+        Object oa = new Object();
+        Object unrelated = new Object();
+        List<Object> incoming = Arrays.asList(chat, group, oa, unrelated, null);
+        InboxListUpdate update = new InboxListUpdate(
+                Adapter.class.getDeclaredMethod("update", List.class, boolean.class),
+                adapter, new Object[]{incoming, true});
+
+        // The caller chooses membership; this seam must retain the exact native rows.
+        update.method.invoke(update.adapter, update.withItems(new ArrayList<>(Arrays.asList(group))));
+        assertEquals(1, adapter.items.size());
+        assertSame(group, adapter.items.get(0));
+        adapter.items.clear();
+        update.method.invoke(update.adapter, update.withItems(new ArrayList<>(update.source)));
+        assertEquals(incoming.size(), adapter.items.size());
+        for (int i = 0; i < incoming.size(); i++) {
+            assertSame(incoming.get(i), adapter.items.get(i));
+        }
+
+        update.method.invoke(update.adapter, update.withItems(new ArrayList<>()));
+        assertTrue(adapter.items.isEmpty());
+        update.method.invoke(update.adapter, update.withItems(new ArrayList<>(update.source)));
+        assertEquals(incoming.size(), adapter.items.size());
+        for (int i = 0; i < incoming.size(); i++) {
+            assertSame(incoming.get(i), adapter.items.get(i));
+        }
+        assertTrue(adapter.animated);
+        assertEquals(0, adapter.otherSetterCalls);
+    }
+
     @Test
     public void replaysObservedOverloadWithItsOriginalExtraArguments() throws Exception {
         Adapter adapter = new Adapter();

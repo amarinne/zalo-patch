@@ -113,6 +113,21 @@ final class TweakHookInfo {
                         + "#" + schema.string("symbols.chat.send_typing_method", "<send typing>")
                         + "()";
                 break;
+            case Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY:
+                path = schema.string(DexKitStoryFingerprint.ANCHOR_SEEN_CLASS, "<story request>")
+                        + "#" + schema.string(DexKitStoryFingerprint.ANCHOR_SEEN_METHOD, "<seen>")
+                        + "(int,String) + "
+                        + schema.string(DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS,
+                                "<suggested story request>")
+                        + "#" + schema.string(DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD,
+                                "<suggested seen>") + "(int,int,String)";
+                break;
+            case Tweaks.KEY_PREFER_ORIGINAL_PHOTO:
+                path = DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#"
+                        + schema.string(DexKitOriginalPhotoFingerprint.APPLY, "<apply quality>")
+                        + "(int) + " + DexKitOriginalPhotoFingerprint.SHARE_VIEW + "#"
+                        + schema.string(DexKitOriginalPhotoFingerprint.SHARE, "<photo share>") + "(Bundle)";
+                break;
             case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
                 path = schema.string("symbols.media.state_classifier_class", "<media classifier>")
                         + "#" + schema.string("symbols.media.state_classifier_method", "<classify>")
@@ -145,15 +160,42 @@ final class TweakHookInfo {
                         "symbols.zinstant.ad_bind_method", "<bind>")
                         + " + Activity#onResume()";
                 break;
+            case Tweaks.KEY_HIDE_STORY_ADS:
+                path = method(schema, DexKitStoryAdFingerprint.ANCHOR_CLASS,
+                        "<story ad view>", DexKitStoryAdFingerprint.ANCHOR_BIND, "<bind>")
+                        + " + constructors (after collapse)";
+                break;
             case Tweaks.KEY_HIDE_FEED_ADS:
                 path = method(schema, "symbols.zinstant.feed_ads_class",
                         "com.zing.zalo.social.presentation.timeline.components.ads.FeedItemZInstantAds",
                         "symbols.zinstant.feed_bind_method", "<bind>")
                         + " + Activity#onResume()";
                 break;
+            case Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS:
+                String readerClass = schema.string(
+                        "symbols.remote_config.int_reader_class", "");
+                String readerMethod = schema.string(
+                        "symbols.remote_config.int_reader_method", "");
+                path = (readerClass.isEmpty() ? "DexKit keyed config reader" : readerClass)
+                        + (readerMethod.isEmpty() ? "" : "#" + readerMethod)
+                        + "(String,int)int";
+                break;
+            case Tweaks.KEY_HIDE_VIDEO_ADS:
+                path = "Qualified Zalo Video ad roots: constructor and native bind after-hooks";
+                break;
             case Tweaks.KEY_HIDE_PROMO_SERVICES:
                 path = "ZinstantCommunicatorHelper#sendHttpRequest()/get()/post()"
                         + " + ScriptHelperImpl#downloadScripts()";
+                break;
+            case Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING:
+                path = method(schema, DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS,
+                        "<Adtima offline-window owner>",
+                        DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD, "<offline window>")
+                        + "Z + "
+                        + method(schema, DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                                "<Adtima tracking owner>",
+                                DexKitAdtimaFingerprint.TRACKING_GATE_METHOD, "<tracking gate>")
+                        + "Z";
                 break;
             case Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS:
             case Tweaks.KEY_RECORD_NOTIFICATION_HISTORY:
@@ -232,9 +274,39 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_MESSAGE_ADS:
                 return Collections.singletonList("#" + schema.string(
                         "symbols.zinstant.ad_bind_method", "<bind>") + "()");
+            case Tweaks.KEY_HIDE_STORY_ADS:
+                return Arrays.asList(schema.string(DexKitStoryAdFingerprint.ANCHOR_CLASS,
+                        "<story ad view>"), "#" + schema.string(
+                        DexKitStoryAdFingerprint.ANCHOR_BIND, "<bind>") + "()");
             case Tweaks.KEY_HIDE_FEED_ADS:
                 return Collections.singletonList("#" + schema.string(
                         "symbols.zinstant.feed_bind_method", "<bind>") + "()");
+            case Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS:
+                List<String> readerSymbols = new java.util.ArrayList<>();
+                String readerClass = schema.string(
+                        "symbols.remote_config.int_reader_class", "");
+                String readerMethod = schema.string(
+                        "symbols.remote_config.int_reader_method", "");
+                if (!readerClass.isEmpty()) readerSymbols.add(readerClass);
+                if (!readerMethod.isEmpty()) readerSymbols.add("#" + readerMethod);
+                return readerSymbols;
+            case Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING:
+                return Arrays.asList(
+                        schema.string(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS,
+                                "<Adtima offline-window owner>"),
+                        "#" + schema.string(DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD,
+                                "<offline window>") + "()Z",
+                        schema.string(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                                "<Adtima tracking owner>"),
+                        "#" + schema.string(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD,
+                                "<tracking gate>") + "()Z");
+            case Tweaks.KEY_HIDE_VIDEO_ADS:
+                java.util.ArrayList<String> videoAnchors = new java.util.ArrayList<>();
+                for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+                    videoAnchors.add(schema.string(route.anchor("view_class"), "<" + route.id + ">"));
+                    videoAnchors.add("#" + schema.string(route.anchor("marker_method"), "<marker>") + "()");
+                }
+                return videoAnchors;
             case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
                 return Arrays.asList(
                         schema.string("symbols.webview.companion_class", "<webview dispatcher>"),
@@ -254,6 +326,22 @@ final class TweakHookInfo {
                 return Arrays.asList(
                         schema.string("symbols.chat.message_repository_class", "<message repository>"),
                         "#" + schema.string("symbols.chat.send_typing_method", "<send typing>") + "()");
+            case Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY:
+                return Arrays.asList(
+                        schema.string(DexKitStoryFingerprint.ANCHOR_SEEN_CLASS, "<story request>"),
+                        "#" + schema.string(DexKitStoryFingerprint.ANCHOR_SEEN_METHOD,
+                                "<seen>") + "(int,String)",
+                        schema.string(DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS,
+                                "<suggested story request>"),
+                        "#" + schema.string(DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD,
+                                "<suggested seen>") + "(int,int,String)");
+            case Tweaks.KEY_PREFER_ORIGINAL_PHOTO:
+                return Arrays.asList(
+                        schema.string(DexKitOriginalPhotoFingerprint.PICKER, "<photo picker>"),
+                        "#" + schema.string(DexKitOriginalPhotoFingerprint.GET_QUALITY, "<quality>") + "()",
+                        "#" + schema.string(DexKitOriginalPhotoFingerprint.APPLY, "<apply quality>") + "(int)",
+                        schema.string(DexKitOriginalPhotoFingerprint.OUTGOING, "<photo conversion>"),
+                        "#" + schema.string(DexKitOriginalPhotoFingerprint.SHARE, "<photo share>") + "(Bundle)");
             case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
                 return Arrays.asList(
                         schema.string("symbols.media.state_classifier_class", "<media classifier>"),

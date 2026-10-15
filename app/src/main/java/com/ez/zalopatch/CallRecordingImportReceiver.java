@@ -4,10 +4,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 
-/** Receives a Binder capability from Zalo and queues its recording for private conversion. */
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Acknowledges a Binder recording only after its private recovery copy is complete. */
 public final class CallRecordingImportReceiver extends BroadcastReceiver {
     public static final String EXTRA_SOURCE_BINDER = "source_binder";
     public static final String EXTRA_PENDING_NAME = "pending_name";
@@ -26,30 +30,54 @@ public final class CallRecordingImportReceiver extends BroadcastReceiver {
         if (sourceBinder == null) {
             return;
         }
+        PendingResult pending = goAsync();
+        AtomicBoolean finished = new AtomicBoolean();
+        Handler handler = new Handler(Looper.getMainLooper());
+        Runnable finishBroadcast = () -> {
+            if (finished.compareAndSet(false, true) && pending != null) {
+                pending.finish();
+            }
+        };
+        // A stalled disk must not cause a broadcast ANR. Releasing this lifetime grant
+        // never acknowledges the import; a killed worker still leaves the source intact.
+        handler.postDelayed(finishBroadcast, 8_000L);
+        AtomicBoolean completed = new AtomicBoolean();
+        CallRecordingImportProtocol.Completion completion = accepted -> {
+            if (!completed.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                CallRecordingImportProtocol.complete(sourceBinder, accepted);
+            } catch (Throwable ignored) {
+                // The copied WAV remains recoverable if the sender's Binder has died.
+            } finally {
+                handler.removeCallbacks(finishBroadcast);
+                finishBroadcast.run();
+            }
+        };
         ParcelFileDescriptor source = null;
-        boolean accepted = false;
+        boolean queued = false;
         try {
             CallRecordingImportProtocol.OpenedSource opened =
                     CallRecordingImportProtocol.open(sourceBinder);
             source = opened == null ? null : opened.descriptor;
             if (source != null
                     && CallRecordingImportProtocol.callerAllowed(context, opened.sourceUid)) {
-                accepted = CallRecordingStore.enqueueImport(context.getApplicationContext(),
+                queued = CallRecordingStore.enqueueImport(context.getApplicationContext(),
                         source,
                         extras.getString(EXTRA_PENDING_NAME, ""),
                         extras.getString(EXTRA_DISPLAY_NAME, "Zalo contact"),
-                        extras.getString(EXTRA_PHONE_NUMBER, ""));
-                if (accepted) {
+                        extras.getString(EXTRA_PHONE_NUMBER, ""), completion);
+                if (queued) {
                     source = null;
                 }
             }
         } catch (Throwable ignored) {
-            accepted = false;
+            queued = false;
         } finally {
             closeQuietly(source);
-            try {
-                CallRecordingImportProtocol.complete(sourceBinder, accepted);
-            } catch (Throwable ignored) {
+            if (!queued) {
+                completion.onComplete(false);
             }
         }
     }

@@ -68,21 +68,28 @@ public final class TweakStore {
         return SettingsStore.getBoolean(context, key);
     }
 
-    public static void setEnabled(Context context, String key, boolean enabled) {
-        SettingsStore.putBoolean(context, key, enabled);
-        makeReadable(context);
+    public static boolean setEnabled(Context context, String key, boolean enabled) {
+        return SettingsStore.putBoolean(context, key, enabled);
     }
 
     public static boolean syncProperties(Context context) {
-        SettingsStore.initialize(context);
+        synchronized (FrameworkConfig.class) {
+            if (!FrameworkConfig.apply(context)) return false;
+            return FrameworkConfig.usesRemoteTransport() || syncLegacyProperties(context);
+        }
+    }
+
+    private static boolean syncLegacyProperties(Context context) {
+        ConfigSnapshot published = ConfigSnapshot.decode(preferences(context).getString(
+                ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
+        if (published == null) return false;
         boolean success = true;
         for (Settings.Setting<?> setting : Settings.all()) {
+            String value = published.values.get(setting.key);
             if (setting.type == Settings.Type.BOOLEAN) {
-                success &= SettingsPropertyMirror.writeBoolean(
-                        setting.key, SettingsStore.getBoolean(context, setting.key));
+                if (!SettingsPropertyMirror.writeBoolean(setting.key, Boolean.parseBoolean(value))) return false;
             } else if (setting.type == Settings.Type.INT) {
-                success &= SettingsPropertyMirror.writeInt(
-                        setting.key, SettingsStore.getInt(context, setting.key));
+                if (!SettingsPropertyMirror.writeInt(setting.key, Integer.parseInt(value))) return false;
             }
         }
         // Hook authorization runs inside Zalo, where the module provider and shared preferences
@@ -92,27 +99,31 @@ public final class TweakStore {
         // artifact strings such as the error text are free-form human sentences that can never
         // satisfy the shell-safe alphabet. Letting them veto the sync misreports a healthy root
         // as denied and makes Restart Zalo impossible.
-        mirrorArtifactState(preferences(context));
+        mirrorArtifactStateLegacy(preferences(context));
         try {
             success &= SettingsPropertyMirror.writeBlob(NotificationRuleStore.MIRROR_KEY,
-                    NotificationRuleStore.encode(NotificationRuleStore.load(context)));
+                    published.values.get(NotificationRuleStore.MIRROR_KEY));
         } catch (Exception ignored) {
             success = false;
         }
         // DexKit pilot transport: the Zalo process may be unable to reach the module
         // provider (observed on HyperOS / Android 16), so the validated cache entry and
         // scan budget ride the same root-gated mirror. Best-effort; never fails settings.
-        DexKitMirror.sync(context);
-        SymbolCatalogMirror.sync(context, SymbolSchema.installedZaloVersionCode(context));
+        DexKitMirror.syncLegacy(context);
+        SymbolCatalogMirror.syncLegacy(context, SymbolSchema.installedZaloVersionCode(context));
+        try {
+            // This compact, checksummed snapshot binds legacy settings to their startup ack.
+            // Publish it last; never tag a mixture of independently written properties as active.
+            success &= SettingsPropertyMirror.writeBlob(ConfigSnapshot.LEGACY_KEY, published.propertySnapshot().encode());
+        } catch (Exception invalid) { success = false; }
         return success;
     }
 
     /**
      * Keys {@link com.ez.zalopatch.ZaloArtifactState#forHooks} reads through {@link HookConfig},
-     * which prefers the property mirror over the provider. Reconcile must refresh these whenever
+     * which freezes the authoritative snapshot at startup. Reconcile must refresh these whenever
      * it rewrites the preferences, or the hook process keeps authorizing against the previous
-     * profile hash while the provider gate (reading preferences directly) passes — observed when
-     * catalog sequence 28 replaced the profile hash without a Restart Zalo sync.
+     * profile hash after the next restart. The current process retains its startup snapshot.
      */
     static final String[] ARTIFACT_MIRROR_KEYS = {
             ZaloArtifactState.KEY_STATUS,
@@ -124,7 +135,7 @@ public final class TweakStore {
     };
 
     /** Best-effort, change-detected mirror refresh of the hook-authorization artifact keys. */
-    static void mirrorArtifactState(SharedPreferences preferences) {
+    static void mirrorArtifactStateLegacy(SharedPreferences preferences) {
         for (String key : ARTIFACT_MIRROR_KEYS) {
             String value = preferences.getString(key, "");
             String mirrored = SettingsPropertyMirror.read(key);

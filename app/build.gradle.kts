@@ -7,6 +7,8 @@ import java.security.KeyStore
 import java.security.KeyStoreException
 import java.security.PrivateKey
 import java.util.Locale
+import java.util.Properties
+import java.util.zip.ZipFile
 
 plugins {
     id("com.android.application")
@@ -91,25 +93,30 @@ gradle.taskGraph.whenReady(
     }
 )
 
+val lspatch = providers.gradleProperty("lspatch").map { it.toBooleanStrict() }.orElse(false).get()
+
 android {
     namespace = "com.ez.zalopatch"
-    compileSdk = 34
+    // Service 102 requires Android 37 headers; runtime minimum and target stay unchanged.
+    compileSdk = 37
     useLibrary("android.test.base")
     useLibrary("android.test.runner")
 
     defaultConfig {
         applicationId = "com.ez.zalopatch"
+        buildConfigField("boolean", "LSPATCH", lspatch.toString())
         // LibXposed API 102 declares API 26 as its minimum; the API 24/25 range
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 319
-        versionName = "0.4.315"
+        versionCode = 333
+        versionName = "0.4.329"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
         testInstrumentationRunnerArguments["class"] = listOf(
             "com.ez.zalopatch.SettingsBackupTest",
+            "com.ez.zalopatch.FrameworkConfigTest",
             "com.ez.zalopatch.NotificationHistoryStoreTest",
             "com.ez.zalopatch.CallRecordingTranscoderTest",
             "com.ez.zalopatch.SymbolSchemaProfileTest",
@@ -157,7 +164,11 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.srcDir(layout.buildDirectory.dir("generated/source/symbolSchema/main"))
+            java.srcDir(layout.buildDirectory.dir("generated/source/symbolSchema/main").get().asFile)
+            java.srcDir(if (lspatch) "src/lspatch/java" else "src/modern/java")
+            resources.srcDir(if (lspatch) "src/lspatch/resources" else "src/modern/resources")
+            assets.srcDir(if (lspatch) "src/lspatch/assets" else "src/modern/assets")
+            manifest.srcFile(if (lspatch) "src/lspatch/AndroidManifest.xml" else "src/main/AndroidManifest.xml")
         }
     }
 }
@@ -302,8 +313,57 @@ dependencies {
     // Provenance and pilot scope: recorded in the module project's internal documentation.
     implementation("org.luckypray:dexkit:2.2.0")
 
-    compileOnly("io.github.libxposed:api:102.0.0")
+    if (lspatch) {
+        compileOnly("de.robv.android.xposed:api:82")
+        testRuntimeOnly("de.robv.android.xposed:api:82")
+    } else {
+        compileOnly("io.github.libxposed:api:102.0.0")
+        testRuntimeOnly("io.github.libxposed:api:102.0.0")
+    }
+    implementation("io.github.libxposed:service:102.0.0")
     testImplementation("junit:junit:4.13.2")
-    testRuntimeOnly("io.github.libxposed:api:102.0.0")
     testImplementation("org.json:json:20240303")
+}
+
+// Check the actual artifact consumed by the loader, rather than only source metadata.
+tasks.register("verifyFrameworkArtifact") {
+    val artifactPath = providers.gradleProperty("frameworkArtifact")
+    if (!artifactPath.isPresent) dependsOn("assembleDebug")
+    doLast {
+        val apk = artifactPath.orNull?.let { file(it) }
+            ?: layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
+        ZipFile(apk).use { zip ->
+            fun content(name: String): String? = zip.getEntry(name)?.let {
+                zip.getInputStream(it).use { stream -> stream.readBytes().toString(Charsets.UTF_8) }
+            }
+            val legacyEntry = "com.ez.zalopatch.ModuleEntry"
+            val modernEntry = "com.ez.zalopatch.ZaloPatchModule"
+            val entry = if (lspatch) legacyEntry else modernEntry
+            val init = if (lspatch) "assets/xposed_init" else "META-INF/xposed/java_init.list"
+            check(content(init)?.trim() == entry) { "Wrong loader entry for $init" }
+            val other = if (lspatch) "META-INF/xposed/java_init.list" else "assets/xposed_init"
+            check(content(other) == null) { "Opposing loader contract present: $other" }
+            if (!lspatch) {
+                check(content("META-INF/xposed/scope.list")?.trim() == "com.zing.zalo")
+                val properties = Properties().apply {
+                    load(content("META-INF/xposed/module.prop")!!.reader())
+                }
+                check(properties.getProperty("minApiVersion") == "102")
+                check(properties.getProperty("targetApiVersion") == "102")
+            }
+            val dex = zip.entries().asSequence()
+                .filter { it.name.matches(Regex("classes([0-9]+)?\\.dex")) }
+                .map { zip.getInputStream(it).use { stream -> stream.readBytes().toString(Charsets.ISO_8859_1) } }
+                .toList().joinToString("")
+            check(dex.contains("L" + entry.replace('.', '/') + ";")) { "Loader class missing" }
+            val forbidden = if (lspatch) "Lio/github/libxposed/api/" else "Lde/robv/android/xposed/"
+            check(!dex.contains(forbidden)) { "Opposing API linked or bundled: $forbidden" }
+            check(!dex.contains("L" + (if (lspatch) modernEntry else legacyEntry).replace('.', '/') + ";"))
+        }
+        val contract = if (lspatch) "lspatch" else "modern"
+        val named = layout.buildDirectory.file("verified/$contract/zalo-patch-$contract-${apk.name.removePrefix("app-")}").get().asFile
+        named.parentFile.mkdirs()
+        apk.copyTo(named, overwrite = true)
+        println("Verified $contract loader artifact: $named")
+    }
 }

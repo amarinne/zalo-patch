@@ -16,6 +16,40 @@ public final class SettingsUiSmokeTest
         super(StatusActivity.class);
     }
 
+    public void testOutcomeObserverDetectsBypassButRejectsRebindAndAbsentTargets() throws Exception {
+        StatusActivity activity = getActivity();
+        java.util.concurrent.CountDownLatch detected = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<String> reports = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        boolean[] bindingCurrent = {true};
+        getInstrumentation().runOnMainSync(() -> {
+            android.widget.LinearLayout layout = new android.widget.LinearLayout(activity);
+            layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+            activity.setContentView(layout);
+            for (String scenario : new String[]{"bypass", "hidden", "absent", "rebound", "detached", "transparent"}) {
+                android.widget.TextView view = new android.widget.TextView(activity);
+                view.setText("Fixed test marker");
+                layout.addView(view, new android.widget.LinearLayout.LayoutParams(200, 80));
+                view.post(() -> {
+                    com.ez.zalopatch.xposed.core.UiOutcomeObserver observer =
+                            new com.ez.zalopatch.xposed.core.UiOutcomeObserver((feature, route, evidence) -> {
+                                reports.add(feature);
+                                if ("bypass".equals(feature) && OutcomeEvidence.parse(evidence) != null) detected.countDown();
+                            });
+                    observer.afterBind(scenario, "me_full_zinstant", view,
+                            () -> !"absent".equals(scenario) && (!"rebound".equals(scenario) || bindingCurrent[0]));
+                    // Suppression is deliberately bypassed only for the positive regression control.
+                    if ("hidden".equals(scenario)) view.setVisibility(android.view.View.GONE);
+                    if ("transparent".equals(scenario)) view.setAlpha(0);
+                    if ("detached".equals(scenario)) layout.removeView(view);
+                    if ("rebound".equals(scenario)) view.postDelayed(() -> bindingCurrent[0] = false, 750);
+                });
+            }
+        });
+        assertTrue("Visible bypass must produce a contradiction", detected.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        android.os.SystemClock.sleep(300);
+        assertEquals(java.util.Collections.singletonList("bypass"), reports);
+    }
+
     public void testDependencyPagesOpenInSingleHost() {
         StatusActivity activity = getActivity();
         open(activity, SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_INBOX));
@@ -120,6 +154,64 @@ public final class SettingsUiSmokeTest
         assertTrue(ZpRowStyle.shouldStackValue(configuration));
     }
 
+    public void testLargeTextDoesNotClipRowValuesOrStatusChips() {
+        StatusActivity activity = getActivity();
+        getInstrumentation().runOnMainSync(() -> {
+            for (String language : new String[] {"en", "vi"}) {
+                android.content.res.Configuration configuration =
+                        new android.content.res.Configuration(
+                                activity.getResources().getConfiguration());
+                configuration.setLocale(java.util.Locale.forLanguageTag(language));
+                configuration.screenWidthDp = 320;
+                configuration.fontScale = 2f;
+                Context context = new android.view.ContextThemeWrapper(
+                        activity.createConfigurationContext(configuration), R.style.Theme_ZaloPatch);
+                float density = context.getResources().getDisplayMetrics().density;
+                android.view.LayoutInflater inflater = android.view.LayoutInflater.from(context);
+                android.view.View row = inflater.inflate(R.layout.zp_preference_row, null, false);
+                ZpRowPreference preference = PreferenceUi.info(context,
+                        context.getString(R.string.zp_runtime_environment_title), null)
+                        .value(context.getString(R.string.zp_runtime_environment_summary,
+                                "LSPosed", context.getString(R.string.zp_capability_observed)));
+                preference.onBindViewHolder(
+                        androidx.preference.PreferenceViewHolder.createInstanceForTests(row));
+                measureForText(row, Math.round(288 * density));
+                assertTextFullyVisible(row.findViewById(R.id.zp_row_value));
+
+                ZpFlowLayout chips = new ZpFlowLayout(context);
+                android.widget.TextView chip = (android.widget.TextView) inflater.inflate(
+                        R.layout.zp_status_chip, chips, false);
+                chip.setText(context.getString(R.string.zp_status_installed, 12));
+                chips.addView(chip);
+                measureForText(chips, Math.round(100 * density));
+                assertTextFullyVisible(chip);
+            }
+        });
+    }
+
+    private static void measureForText(android.view.View view, int width) {
+        view.measure(android.view.View.MeasureSpec.makeMeasureSpec(
+                        width, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                        0, android.view.View.MeasureSpec.UNSPECIFIED));
+        view.layout(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
+    }
+
+    private static void assertTextFullyVisible(android.widget.TextView text) {
+        android.text.Layout layout = text.getLayout();
+        assertNotNull(layout);
+        assertTrue("The large-text fixture must need more than one line", layout.getLineCount() > 1);
+        int availableWidth = text.getWidth() - text.getCompoundPaddingLeft()
+                - text.getCompoundPaddingRight();
+        for (int line = 0; line < layout.getLineCount(); line++) {
+            assertEquals("Text must not be ellipsized", 0, layout.getEllipsisCount(line));
+            assertTrue("Text must fit horizontally", layout.getLineMax(line) <= availableWidth + 1);
+        }
+        assertEquals(text.getText().length(), layout.getLineEnd(layout.getLineCount() - 1));
+        assertTrue("Text must fit vertically", layout.getHeight() <= text.getHeight()
+                - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
+    }
+
     public void testRecycledRowClearsMissingSummary() {
         StatusActivity activity = getActivity();
         android.view.View row = android.view.LayoutInflater.from(activity)
@@ -177,7 +269,7 @@ public final class SettingsUiSmokeTest
         assertFalse(row.isFocusable());
     }
 
-    public void testMainRestartFallsBackToAppInfoWithoutRoot() {
+    public void testDashboardRestartShowsFallbackSummaryWithRootDenied() {
         StatusActivity activity = getActivity();
         SharedPreferences ui = SettingsChanges.preferences(activity);
         Map<String, ?> originalUi = new HashMap<>(ui.getAll());
@@ -186,28 +278,187 @@ public final class SettingsUiSmokeTest
             assertTrue(ui.edit().clear().commit());
             RootAccess.setForTest(activity, RootAccess.State.DENIED);
             SettingsChanges.markChanged(activity, "test.pending");
-            getInstrumentation().runOnMainSync(() -> activity.refreshApplyBar(false));
+            getInstrumentation().runOnMainSync(() -> {
+                // Fixture resets must not leave an older hide animation pending.
+                activity.findViewById(R.id.zp_apply_bar).animate().cancel();
+                activity.refreshApplyBar(false);
+            });
             StatusActivity.DashboardFragment fragment =
                     new StatusActivity.DashboardFragment();
             open(activity, fragment);
             Preference restart = fragment.findPreference(StatusActivity.INTERNAL_RESTART);
             Preference root = fragment.findPreference(StatusActivity.INTERNAL_ROOT_ACCESS);
+            Preference apply = fragment.findPreference("internal.apply_settings");
 
             assertNotNull(restart);
+            assertNull(apply);
             assertTrue(restart.isVisible());
             assertTrue(restart.isEnabled());
-            assertEquals("Without root, opens Zalo app info for manual force stop.",
+            assertEquals("Root restarts Zalo automatically. Without root, force stop and reopen it.",
                     String.valueOf(restart.getSummary()));
             assertNull(root);
             assertEquals(android.view.View.VISIBLE,
                     activity.findViewById(R.id.zp_apply_bar).getVisibility());
-            assertEquals("1 change pending",
+            assertEquals("Settings saved. Restart Zalo to activate.",
                     String.valueOf(((android.widget.TextView) activity.findViewById(
                             R.id.zp_apply_message)).getText()));
+            assertEquals("Restart Zalo",
+                    String.valueOf(((android.widget.Button) activity.findViewById(
+                            R.id.zp_apply_button)).getText()));
             assertTrue(activity.findViewById(R.id.zp_apply_button).isEnabled());
         } finally {
             RootAccess.restoreForTest(activity, originalRoot);
             restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testUnknownRuntimeOffersRestartWithoutPendingEdits() throws Exception {
+        StatusActivity activity = getActivity();
+        SharedPreferences prefs = TweakStore.preferences(activity);
+        SharedPreferences ui = SettingsChanges.preferences(activity);
+        Map<String, ?> original = new HashMap<>(prefs.getAll());
+        Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        try {
+            assertTrue(prefs.edit().remove(SettingsStore.PENDING).putString(ConfigSnapshot.KEY, new ConfigSnapshot(
+                    java.util.Collections.emptyMap(), "future", 0, BuildConfig.VERSION_CODE + 1).encode()).commit());
+            assertTrue(ui.edit().clear().commit());
+            getInstrumentation().runOnMainSync(() -> {
+                activity.findViewById(R.id.zp_apply_bar).animate().cancel();
+                activity.refreshApplyBar(false);
+                assertEquals(android.view.View.VISIBLE, activity.findViewById(R.id.zp_apply_bar).getVisibility());
+                assertEquals("Settings saved. Restart Zalo to activate.", String.valueOf(
+                        ((android.widget.TextView) activity.findViewById(R.id.zp_apply_message)).getText()));
+                assertTrue(activity.findViewById(R.id.zp_apply_button).isEnabled());
+            });
+            assertEquals(0, SettingsChanges.pendingCount(activity));
+        } finally {
+            restorePreferences(prefs, original);
+            restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testFailedRootCheckDoesNotOpenAppInfoOrLoseChanges() {
+        StatusActivity activity = getActivity();
+        SharedPreferences ui = SettingsChanges.preferences(activity);
+        Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        SharedPreferences tweaks = TweakStore.preferences(activity);
+        Map<String, ?> originalTweaks = new HashMap<>(tweaks.getAll());
+        Map<String, ?> originalRoot = RootAccess.snapshotForTest(activity);
+        android.app.Instrumentation.ActivityMonitor appInfoMonitor =
+                getInstrumentation().addMonitor(
+                        new android.content.IntentFilter(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS),
+                        new android.app.Instrumentation.ActivityResult(
+                                android.app.Activity.RESULT_OK, null), true);
+        try {
+            assertTrue(ui.edit().clear().commit());
+            assertTrue(tweaks.edit().remove(SettingsStore.PENDING).commit());
+            SettingsChanges.markChanged(activity, "test.pending.a");
+            SettingsChanges.markChanged(activity, "test.pending.b");
+            long generation = SettingsChanges.generation(activity);
+            for (RootAccess.State state : new RootAccess.State[] {
+                    RootAccess.State.DENIED, RootAccess.State.ABSENT}) {
+                RootAccess.setForTest(activity, state);
+                // Inject the external result into the production continuation. A real root
+                // request could restart Zalo on a rooted phone and leak work past restoration.
+                getInstrumentation().runOnMainSync(() -> {
+                    activity.finishRestartRootCheck(state);
+                    assertTrue(activity.findViewById(R.id.zp_apply_button).isEnabled());
+                });
+                assertEquals(0, appInfoMonitor.getHits());
+                assertEquals(2, SettingsChanges.pendingCount(activity));
+                assertEquals(generation, SettingsChanges.generation(activity));
+            }
+        } finally {
+            getInstrumentation().removeMonitor(appInfoMonitor);
+            RootAccess.restoreForTest(activity, originalRoot);
+            restorePreferences(tweaks, originalTweaks);
+            restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testFinishingActivityIgnoresRestartRootResult() {
+        StatusActivity activity = getActivity();
+        Map<String, ?> before = new HashMap<>(SettingsChanges.preferences(activity).getAll());
+        getInstrumentation().runOnMainSync(() -> {
+            activity.finish();
+            activity.finishRestartRootCheck(RootAccess.State.DENIED);
+        });
+        assertEquals(before, SettingsChanges.preferences(activity).getAll());
+    }
+
+    public void testAcceptedToggleSavesImmediatelyAndReversalClearsActivationDifference() throws Exception {
+        StatusActivity activity = getActivity();
+        SharedPreferences prefs = TweakStore.preferences(activity);
+        SharedPreferences ui = SettingsChanges.preferences(activity);
+        Map<String, ?> original = new HashMap<>(prefs.getAll());
+        Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        String published = prefs.getString(ConfigSnapshot.KEY, null);
+        String key = Tweaks.KEY_HIDE_DISCOVERY_TAB;
+        boolean initial = SettingsStore.getBoolean(activity, key);
+        try {
+            Map<String, String> loaded = new HashMap<>();
+            for (Settings.Setting<?> setting : Settings.all()) {
+                loaded.put(setting.key, setting.type == Settings.Type.BOOLEAN
+                        ? String.valueOf(SettingsStore.getBoolean(activity, setting.key))
+                        : String.valueOf(SettingsStore.getInt(activity, setting.key)));
+            }
+            loaded.put(NotificationRuleStore.MIRROR_KEY, NotificationRuleStore.encode(NotificationRuleStore.load(activity)));
+            assertTrue(SettingsChanges.acknowledge(activity, new ConfigSnapshot(loaded,
+                    "toggle-runtime-fixture", SettingsChanges.generation(activity), BuildConfig.VERSION_CODE)));
+            SectionActivity.SettingsFragment fragment = SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_NAVIGATION);
+            open(activity, fragment);
+            Preference toggle = fragment.findPreference(key);
+            assertNotNull(toggle);
+            getInstrumentation().runOnMainSync(() -> {
+                assertTrue(toggle.getOnPreferenceChangeListener().onPreferenceChange(toggle, !initial));
+                assertEquals(!initial, SettingsStore.getBoolean(activity, key));
+                assertEquals(1, SettingsChanges.pendingCount(activity));
+                activity.refreshApplyBar(false);
+                assertEquals("Restart Zalo", String.valueOf(((android.widget.Button) activity.findViewById(R.id.zp_apply_button)).getText()));
+                assertTrue(toggle.getOnPreferenceChangeListener().onPreferenceChange(toggle, initial));
+                assertEquals(0, SettingsChanges.pendingCount(activity));
+                activity.refreshApplyBar(false);
+                assertEquals(android.view.View.GONE, activity.findViewById(R.id.zp_apply_bar).getVisibility());
+            });
+            assertEquals(published, prefs.getString(ConfigSnapshot.KEY, null));
+        } finally {
+            restorePreferences(prefs, original);
+            restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testRestartStateSurvivesActivityRecreationWithoutAnotherWorker() {
+        StatusActivity activity = getActivity();
+        SettingsRestart[] retained = new SettingsRestart[1];
+        android.app.Instrumentation.ActivityMonitor monitor = getInstrumentation().addMonitor(
+                StatusActivity.class.getName(), null, false);
+        StatusActivity recreated = null;
+        try {
+            getInstrumentation().runOnMainSync(() -> {
+                retained[0] = new androidx.lifecycle.ViewModelProvider(activity).get(SettingsRestart.class);
+                // Inject a waiting worker state without requesting root or restarting the host.
+                retained[0].state.setValue(new SettingsRestart.State(SettingsRestart.Phase.RESTART, null, null));
+                assertFalse(activity.findViewById(R.id.zp_apply_button).isEnabled());
+                activity.recreate();
+            });
+            recreated = (StatusActivity) monitor.waitForActivityWithTimeout(5000);
+            assertNotNull(recreated);
+            StatusActivity current = recreated;
+            getInstrumentation().waitForIdleSync();
+            getInstrumentation().runOnMainSync(() -> {
+                assertSame(retained[0], new androidx.lifecycle.ViewModelProvider(current).get(SettingsRestart.class));
+                assertFalse(current.findViewById(R.id.zp_apply_button).isEnabled());
+                assertEquals(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,
+                        current.findViewById(R.id.zp_settings_content).getImportantForAccessibility());
+            });
+        } finally {
+            StatusActivity current = recreated;
+            getInstrumentation().runOnMainSync(() -> {
+                if (retained[0] != null) retained[0].state.setValue(new SettingsRestart.State(SettingsRestart.Phase.IDLE, null, null));
+                if (current != null) current.finish();
+            });
+            getInstrumentation().removeMonitor(monitor);
         }
     }
 
@@ -246,12 +497,8 @@ public final class SettingsUiSmokeTest
         SharedPreferences tweaks = activity.getSharedPreferences(
                 Tweaks.PREFS_NAME, Context.MODE_PRIVATE);
         SharedPreferences ui = SettingsChanges.preferences(activity);
-        Map<String, Boolean> originalTelemetry = new HashMap<>();
+        Map<String, ?> originalTweaks = new HashMap<>(tweaks.getAll());
         Map<String, ?> originalUi = new HashMap<>(ui.getAll());
-        for (String key : Tweaks.TELEMETRY_KEYS) {
-            originalTelemetry.put(key, tweaks.getBoolean(key, Tweaks.defaultEnabled(key)));
-        }
-
         try {
             UiSettings.setDisplayMode(activity, UiSettings.MODE_DETAILED);
             SharedPreferences.Editor seed = tweaks.edit();
@@ -316,11 +563,59 @@ public final class SettingsUiSmokeTest
             }
         } finally {
             UiSettings.setDisplayMode(activity, originalDisplayMode);
-            SharedPreferences.Editor restoreTweaks = tweaks.edit();
-            for (Map.Entry<String, Boolean> entry : originalTelemetry.entrySet()) {
-                restoreTweaks.putBoolean(entry.getKey(), entry.getValue());
+            restorePreferences(tweaks, originalTweaks);
+            restorePreferences(ui, originalUi);
+        }
+    }
+
+    public void testTelemetryMasterGenerationCannotAcknowledgeUnsavedValues() throws Exception {
+        StatusActivity activity = getActivity();
+        SharedPreferences tweaks = TweakStore.preferences(activity);
+        SharedPreferences ui = SettingsChanges.preferences(activity);
+        Map<String, ?> originalTweaks = new HashMap<>(tweaks.getAll());
+        Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        ConfigSnapshot[] captured = new ConfigSnapshot[1];
+        SharedPreferences.OnSharedPreferenceChangeListener capture = (preferences, key) -> {
+            Map<String, String> values = new HashMap<>();
+            for (Settings.Setting<?> setting : Settings.all()) {
+                values.put(setting.key, setting.type == Settings.Type.BOOLEAN
+                        ? String.valueOf(SettingsStore.getBoolean(activity, setting.key))
+                        : String.valueOf(SettingsStore.getInt(activity, setting.key)));
             }
-            assertTrue(restoreTweaks.commit());
+            try { values.put(NotificationRuleStore.MIRROR_KEY, NotificationRuleStore.encode(NotificationRuleStore.load(activity))); }
+            catch (Exception invalid) { throw new AssertionError(invalid); }
+            captured[0] = new ConfigSnapshot(values, "telemetry-writer-test",
+                    SettingsChanges.generation(activity), BuildConfig.VERSION_CODE);
+        };
+        try {
+            SharedPreferences.Editor seed = tweaks.edit();
+            for (String key : Tweaks.TELEMETRY_KEYS) seed.putBoolean(key, false);
+            assertTrue(seed.commit());
+            assertTrue(ui.edit().clear().commit());
+            SectionActivity.SettingsFragment fragment =
+                    SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_TELEMETRY);
+            open(activity, fragment);
+            Preference master = fragment.findPreference("internal.telemetry_master");
+            getInstrumentation().runOnMainSync(() -> {
+                tweaks.registerOnSharedPreferenceChangeListener(capture);
+                try {
+                    assertTrue(master.getOnPreferenceChangeListener().onPreferenceChange(master, true));
+                } finally {
+                    tweaks.unregisterOnSharedPreferenceChangeListener(capture);
+                }
+            });
+            assertNotNull(captured[0]);
+            assertEquals(SettingsChanges.generation(activity), captured[0].generation);
+            assertTrue(tweaks.edit().putString(ConfigSnapshot.KEY, captured[0].encode()).commit());
+            FrameworkConfig.acknowledge(activity, captured[0].id);
+            assertEquals(0, SettingsChanges.pendingCount(activity));
+            for (String key : Tweaks.TELEMETRY_KEYS) {
+                assertTrue(TweakStore.isEnabled(activity, key));
+                assertEquals("Cleared generation must describe the saved value for " + key,
+                        "true", captured[0].values.get(key));
+            }
+        } finally {
+            restorePreferences(tweaks, originalTweaks);
             restorePreferences(ui, originalUi);
         }
     }
@@ -406,7 +701,9 @@ public final class SettingsUiSmokeTest
         assertEquals("Runtime environment",
                 vietnamese.getString(R.string.zp_runtime_environment_title));
         assertEquals("Root access", vietnamese.getString(R.string.zp_root_access_title));
-        assertEquals("Root required.", vietnamese.getString(R.string.zp_requirement_root));
+        assertEquals("Cần quyền root.", vietnamese.getString(R.string.zp_requirement_root));
+        assertEquals("Có root: tự khởi động lại Zalo. Không có root: buộc dừng rồi mở lại.",
+                vietnamese.getString(R.string.zp_restart_manual_fallback_summary));
     }
 
     public void testApplicationColdStartUsesSelectedLanguage() {
@@ -465,6 +762,46 @@ public final class SettingsUiSmokeTest
 
         assertEquals(android.view.View.SCROLLBARS_OUTSIDE_OVERLAY,
                 fragment.getListView().getScrollBarStyle());
+    }
+
+    public void testSavedSettingsBannerLeavesLastRowFullyReachableWithoutMovingOnHide() {
+        StatusActivity activity = getActivity();
+        SectionActivity.SettingsFragment fragment =
+                SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_ADS);
+        open(activity, fragment);
+        android.view.View banner = activity.findViewById(R.id.zp_apply_bar);
+        androidx.recyclerview.widget.RecyclerView list = fragment.getListView();
+        try {
+            getInstrumentation().runOnMainSync(() -> banner.setVisibility(android.view.View.VISIBLE));
+            getInstrumentation().waitForIdleSync();
+            getInstrumentation().runOnMainSync(() -> list.scrollBy(0, Integer.MAX_VALUE));
+            getInstrumentation().waitForIdleSync();
+            int[] edges = new int[3];
+            getInstrumentation().runOnMainSync(() -> {
+                int lastPosition = list.getAdapter().getItemCount() - 1;
+                android.view.View last = list.findViewHolderForAdapterPosition(lastPosition).itemView;
+                int[] rowLocation = new int[2];
+                int[] bannerLocation = new int[2];
+                last.getLocationOnScreen(rowLocation);
+                banner.getLocationOnScreen(bannerLocation);
+                edges[0] = rowLocation[1] + last.getHeight();
+                edges[1] = bannerLocation[1];
+                banner.setVisibility(android.view.View.GONE);
+            });
+            getInstrumentation().waitForIdleSync();
+            getInstrumentation().runOnMainSync(() -> {
+                android.view.View last = list.findViewHolderForAdapterPosition(
+                        list.getAdapter().getItemCount() - 1).itemView;
+                int[] location = new int[2];
+                last.getLocationOnScreen(location);
+                edges[2] = location[1] + last.getHeight();
+            });
+            assertTrue("The complete last row must scroll above the saved-settings banner",
+                    edges[0] <= edges[1]);
+            assertEquals("Hiding the banner must not move a row under the next tap", edges[0], edges[2]);
+        } finally {
+            getInstrumentation().runOnMainSync(() -> activity.refreshApplyBar(false));
+        }
     }
 
     public void testCallRecordingDurationFormatting() {

@@ -8,10 +8,10 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteOpenHelper;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -290,35 +290,42 @@ public final class NotificationHistoryStore extends SQLiteOpenHelper {
         trim(getWritableDatabase(), retentionLimit());
     }
 
-    public String exportJson() throws Exception {
-        return encodeEntries(latest(retentionLimit()), System.currentTimeMillis());
+    public void exportJson(Writer output) throws Exception {
+        exportJson(getReadableDatabase(), retentionLimit(), output, System.currentTimeMillis());
     }
 
-    static String encodeEntries(List<Entry> entries, long exportedAt) throws Exception {
-        JSONArray rows = new JSONArray();
-        for (Entry entry : entries) {
-            JSONObject row = new JSONObject();
-            row.put("posted_at", entry.postedAt);
-            row.put("key", entry.key);
-            row.put("channel_id", entry.channelId);
-            row.put("category", entry.category);
-            row.put("template", entry.template);
-            row.put("title", entry.title);
-            row.put("text", entry.text);
-            row.put("big_text", entry.bigText);
-            row.put("lines", entry.lines);
-            row.put("ticker", entry.ticker);
-            row.put("metadata", entry.metadata);
-            row.put("promo", entry.promo);
-            row.put("cancelled", entry.cancelled);
-            rows.put(row);
+    static void exportJson(SQLiteDatabase db, int limit, Writer output, long exportedAt)
+            throws Exception {
+        // Stream one row at a time, including when retention is unlimited. Query failures must
+        // reach the document error handler, not become a successful empty export via latest().
+        try (Cursor cursor = db.query(TABLE, null, null, null, null, null,
+                "posted_at DESC, _id DESC", limit > RETENTION_UNLIMITED ? String.valueOf(limit) : null)) {
+            output.write("{\n  \"format_version\": 1,\n  \"exported_at\": " + exportedAt
+                    + ",\n  \"warning\": \"Contains private Zalo notification content\","
+                    + "\n  \"notifications\": [");
+            String separator = "\n";
+            while (cursor.moveToNext()) {
+                Entry entry = entry(cursor);
+                JSONObject row = new JSONObject();
+                row.put("posted_at", entry.postedAt);
+                row.put("key", entry.key);
+                row.put("channel_id", entry.channelId);
+                row.put("category", entry.category);
+                row.put("template", entry.template);
+                row.put("title", entry.title);
+                row.put("text", entry.text);
+                row.put("big_text", entry.bigText);
+                row.put("lines", entry.lines);
+                row.put("ticker", entry.ticker);
+                row.put("metadata", entry.metadata);
+                row.put("promo", entry.promo);
+                row.put("cancelled", entry.cancelled);
+                output.write(separator);
+                output.write(row.toString(2));
+                separator = ",\n";
+            }
+            output.write("\n  ]\n}");
         }
-        JSONObject root = new JSONObject();
-        root.put("format_version", 1);
-        root.put("exported_at", exportedAt);
-        root.put("warning", "Contains private Zalo notification content");
-        root.put("notifications", rows);
-        return root.toString(2);
     }
 
     public void clear() {
@@ -386,7 +393,7 @@ public final class NotificationHistoryStore extends SQLiteOpenHelper {
         return String.format(java.util.Locale.US, "%.1f MiB", kib / 1024.0);
     }
 
-    private Entry entry(Cursor cursor) {
+    private static Entry entry(Cursor cursor) {
         return new Entry(
                 getLong(cursor, "_id"),
                 getLong(cursor, "posted_at"),

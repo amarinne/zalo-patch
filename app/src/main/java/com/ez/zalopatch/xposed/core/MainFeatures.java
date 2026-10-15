@@ -4,6 +4,8 @@ import android.content.Context;
 
 import com.ez.zalopatch.DiagnosticsState;
 import com.ez.zalopatch.DexKitOverlay;
+import com.ez.zalopatch.DexKitStoryAdFingerprint;
+import com.ez.zalopatch.DexKitVideoAdsFingerprint;
 import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.RuntimeEnvironmentReporter;
 import com.ez.zalopatch.SymbolSchema;
@@ -11,6 +13,7 @@ import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZaloArtifactState;
 import com.ez.zalopatch.xposed.features.BottomTabsFeature;
 import com.ez.zalopatch.xposed.features.BackupPushFeature;
+import com.ez.zalopatch.xposed.features.AdtimaOfflineTrackingFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingProbeFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingFeature;
 import com.ez.zalopatch.xposed.features.ChatFeature;
@@ -18,15 +21,20 @@ import com.ez.zalopatch.xposed.features.InboxFeature;
 import com.ez.zalopatch.xposed.features.InteractionTraceFeature;
 import com.ez.zalopatch.xposed.features.MeCleanupFeature;
 import com.ez.zalopatch.xposed.features.MediaFeature;
+import com.ez.zalopatch.xposed.features.OriginalPhotoFeature;
 import com.ez.zalopatch.xposed.features.NotificationFeature;
 import com.ez.zalopatch.xposed.features.PasscodeGraceFeature;
 import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
 import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
+import com.ez.zalopatch.xposed.features.SponsoredPlacementsFeature;
+import com.ez.zalopatch.xposed.features.StoryPrivacyFeature;
+import com.ez.zalopatch.xposed.features.StoryAdFeature;
 import com.ez.zalopatch.xposed.features.SymbolSchemaHealthFeature;
 import com.ez.zalopatch.xposed.features.TelemetryFeature;
 import com.ez.zalopatch.xposed.features.WebLinkExternalizeFeature;
 import com.ez.zalopatch.xposed.features.ZcloudBannerFeature;
 import com.ez.zalopatch.xposed.features.ZinstantFeature;
+import com.ez.zalopatch.xposed.features.VideoAdsFeature;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -106,12 +114,58 @@ public final class MainFeatures {
         DexKitFamilyResolver.Result overlay = DexKitFamilyResolver.resolve(context, classLoader,
                 exactValid ? hookActive : null, exactPreflight,
                 overlayBase != null ? overlayBase.profile : null);
+        boolean sponsoredPlacementReady = exactValid && exactPreflight != null
+                && exactPreflight.remoteConfig;
+        boolean storySeenReady = exactValid && exactPreflight != null && exactPreflight.storySeen;
+        boolean storySuggestedReady = exactValid && exactPreflight != null && exactPreflight.storySuggested;
+        boolean originalPhotoReady = exactValid && exactPreflight != null && exactPreflight.originalPhoto;
+        boolean adtimaReady = exactValid && exactPreflight != null && exactPreflight.adtima;
+        String adtimaReason = exactPreflight == null
+                ? "exact-profile or current-host DexKit bindings unavailable"
+                : exactPreflight.reason(exactPreflight.adtimaErrors);
         if (overlay.adopted && overlay.preflight != null) {
             // Adoption changes every hook-side symbol read, so its complete preflight
             // replaces the previous snapshot, including auxiliary non-DexKit families.
             preflight = overlay.preflight;
             mergeOverlayFamily(preflight, overlay.families);
+            sponsoredPlacementReady = overlay.families.remoteConfig;
+            storySeenReady = overlay.families.storySeen;
+            storySuggestedReady = overlay.families.storySuggested;
+            originalPhotoReady = overlay.families.originalPhoto;
+            adtimaReady = overlay.families.adtima;
+            if (!adtimaReady) adtimaReason = preflight.reason(preflight.adtimaErrors);
         }
+        String sponsoredPlacementError = "";
+        if (!sponsoredPlacementReady) {
+            sponsoredPlacementError = preflight == null
+                    ? "no compatible profile or discovered config getter"
+                    : preflight.remoteConfigErrors.isEmpty()
+                    ? "no exact-profile binding or unique DexKit reader match"
+                    : preflight.reason(preflight.remoteConfigErrors);
+        }
+        features.add(new SponsoredPlacementsFeature(classLoader, sponsoredPlacementReady,
+                sponsoredPlacementError));
+        features.add(new OriginalPhotoFeature(classLoader, originalPhotoReady,
+                preflight == null || preflight.originalPhotoErrors.isEmpty()
+                        ? "no exact-profile binding or unique photo relationship match"
+                        : preflight.reason(preflight.originalPhotoErrors)));
+        SymbolSchema.Active composed = SymbolSchema.activeForHooks(context);
+        boolean storyAdsQualified = preflight != null && preflight.storyAds
+                && DexKitFamilyResolver.anchorsQualified(hookActive, composed, overlay.resolved,
+                        DexKitStoryAdFingerprint.ANCHOR_CLASS, DexKitStoryAdFingerprint.ANCHOR_BIND);
+        features.add(new StoryAdFeature(classLoader, storyAdsQualified,
+                preflight == null ? "story-ad bindings unavailable"
+                        : !preflight.storyAds ? preflight.reason(preflight.storyAdsErrors)
+                        : "story-ad bindings require exact-profile or current-host discovery"));
+        java.util.EnumMap<DexKitVideoAdsFingerprint.Route, Boolean> videoReady =
+                new java.util.EnumMap<>(DexKitVideoAdsFingerprint.Route.class);
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            videoReady.put(route, preflight != null
+                    && Boolean.TRUE.equals(preflight.videoAds.get(route))
+                    && DexKitFamilyResolver.anchorsQualified(hookActive, composed,
+                            overlay.resolved, route.anchors()));
+        }
+        features.add(new VideoAdsFeature(classLoader, videoReady));
         features.add(new TelemetryFeature(classLoader,
                 artifact.compatible || (overlay.adopted && overlay.families.telemetry)));
 
@@ -186,6 +240,17 @@ public final class MainFeatures {
                     artifact.reason, "");
             probeSymbols(classLoader);
         }
+        // Report both routes even when no artifact profile or overlay could activate.
+        features.add(new StoryPrivacyFeature(classLoader,
+                storySeenReady,
+                preflight == null || preflight.storySeenErrors.isEmpty()
+                        ? "no exact-profile binding or unique story request match"
+                        : preflight.reason(preflight.storySeenErrors),
+                storySuggestedReady,
+                preflight == null || preflight.storySuggestedErrors.isEmpty()
+                        ? "no exact-profile binding or unique suggested story request match"
+                        : preflight.reason(preflight.storySuggestedErrors)));
+        features.add(new AdtimaOfflineTrackingFeature(classLoader, adtimaReady, adtimaReason));
         maybeAddRuntimeDiscovery(features, classLoader);
 
         for (Feature feature : features) {
@@ -380,6 +445,17 @@ public final class MainFeatures {
         if (overlay.telemetry && !preflight.telemetryDao) {
             preflight.telemetryDao = true;
             preflight.telemetryDaoErrors.clear();
+        }
+        preflight.remoteConfig = overlay.remoteConfig;
+        if (overlay.remoteConfig) {
+            preflight.remoteConfigErrors.clear();
+        } else if (preflight.remoteConfigErrors.isEmpty()) {
+            preflight.remoteConfigErrors.add(
+                    "no exact-profile binding or unique DexKit reader match");
+        }
+        if (overlay.adtima && !preflight.adtima) {
+            preflight.adtima = true;
+            preflight.adtimaErrors.clear();
         }
     }
 

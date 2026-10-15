@@ -11,16 +11,17 @@
     -->
     <string name="zp_restart_title">Khởi động lại Zalo</string>
     <string name="zp_restart_sent">Đã gửi lệnh khởi động lại</string>
-    <string name="zp_restart_root_denied">Quyền root bị từ chối</string>
-    <string name="zp_restart_manual_fallback_summary">Khi không có root, mở thông tin ứng dụng Zalo để buộc dừng thủ công.</string>
+    <string name="zp_restart_root_denied">Không có quyền root</string>
+    <string name="zp_restart_manual_fallback_summary">Có root: tự khởi động lại Zalo. Không có root: buộc dừng rồi mở lại.</string>
     <string name="zp_restart_failed">Không thể khởi động lại</string>
-    <string name="zp_restart_target_title">Chọn Zalo để khởi động lại</string>
-    <string name="zp_restart_all_instances">Tất cả các bản</string>
+    <string name="zp_restart_in_progress">Đang khởi động lại Zalo. Tạm thời không thể thay đổi cài đặt.</string>
+    <string name="zp_restart_target_title">Chọn bản Zalo đang chạy để khởi động lại</string>
+    <string name="zp_restart_all_instances">Tất cả các bản được phát hiện</string>
     <string name="zp_restart_owner_label">Chủ sở hữu</string>
     <string name="zp_restart_user_label">Người dùng %1$d</string>
     <string name="zp_restart_instance_row">%1$s · người dùng %2$d · pid %3$d</string>
     <string name="zp_restart_instance_row_active">%1$s · người dùng %2$d · pid %3$d · %4$s</string>
-    <string name="zp_restart_instance_active">đang mở</string>
+    <string name="zp_restart_instance_active">có thể đang dùng</string>
     <string name="zp_open_zalo_app_info">Mở thông tin ứng dụng Zalo</string>
     <string name="zp_open_zalo_app_info_summary">Buộc dừng Zalo thủ công, sau đó mở lại.</string>
     <string name="zp_open_zalo_app_info_failed">Không thể mở thông tin ứng dụng Zalo</string>
@@ -30,8 +31,8 @@
     <string name="zp_section_privacy">Quyền riêng tư</string>
     <string name="zp_section_module">Zalo Patch</string>
     <plurals name="zp_pending_changes">
-        <item quantity="one">Đang chờ áp dụng %1$d thay đổi</item>
-        <item quantity="other">Đang chờ áp dụng %1$d thay đổi</item>
+        <item quantity="one">Đã lưu %1$d thay đổi · khởi động lại để áp dụng</item>
+        <item quantity="other">Đã lưu %1$d thay đổi · khởi động lại để áp dụng</item>
     </plurals>
 
     <string name="zp_notification_filter_title">Bộ lọc thông báo</string>
@@ -54,40 +55,48 @@
     <string name="zp_language_vietnamese">Tiếng Việt</string>
     <string name="zp_unavailable">Không khả dụng.</string>
     <string name="zp_unavailable_with_summary">Không khả dụng. %1$s</string>
+    <string name="zp_requirement_root">Cần quyền root.</string>
+    <string name="zp_requirement_resource_hooks">Môi trường hiện tại không cung cấp hook tài nguyên.</string>
+    <string name="zp_requirement_recording_storage">Cần Android 10 trở lên để lưu bản ghi âm cuộc gọi.</string>
 
     <string name="zp_tweak_hide_discovery">Ẩn tab Khám phá</string>
-    <string name="zp_tweak_hide_discovery_summary">Ẩn tab Khám phá khỏi thanh điều hướng dưới.</string>
     <string name="zp_tweak_hide_timeline">Ẩn tab Nhật ký</string>
-    <string name="zp_tweak_hide_timeline_summary">Ẩn tab Nhật ký khỏi thanh điều hướng dưới.</string>
     <string name="zp_tweak_keep_group">Giữ tab Nhóm</string>
     <string name="zp_tweak_keep_group_summary">Chỉ áp dụng khi Zalo hiển thị tab này.</string>
     <string name="zp_tweak_force_messages_home">Dùng Tin nhắn làm trang chính</string>
     <string name="zp_tweak_force_messages_home_summary">Mở Tin nhắn khi khởi chạy Zalo. Các tab khác vẫn dùng được.</string>
     <string name="zp_tweak_hide_qr_wallet">Ẩn Ví QR</string>
-    <string name="zp_tweak_hide_qr_wallet_summary">Ẩn Ví QR trong Cá nhân.</string>
     <string name="zp_tweak_hide_zcloud">Ẩn zCloud</string>
-    <string name="zp_tweak_hide_zcloud_summary">Ẩn zCloud trong Cá nhân.</string>
     <string name="zp_tweak_hide_zstyle">Ẩn zStyle</string>
-    <string name="zp_tweak_hide_zstyle_summary">Ẩn zStyle trong Cá nhân.</string>
     <string name="zp_tweak_hide_zbusiness">Ẩn zBusiness</string>
     <string name="zp_tweak_hide_zbusiness_summary">Chỉ áp dụng khi Zalo hiển thị mục này.</string>
     <string name="zp_tweak_hide_media_box">Ẩn Media Box</string>
-    <string name="zp_tweak_hide_media_box_summary">Ẩn Media Box khỏi trang Tin nhắn.</string>
     <string name="zp_tweak_hide_zcloud_banner">Ẩn banner zCloud</string>
-    <string name="zp_tweak_hide_zcloud_banner_summary">Ẩn banner zCloud phía trên Tin nhắn.</string>
+    <string name="zp_tweak_inbox_chip_bar">Thanh bộ lọc Tin nhắn</string>
+    <string name="zp_tweak_inbox_chip_bar_summary">Hiển thị Tất cả, Trò chuyện, Nhóm, OA và Người lạ.</string>
+    <string name="zp_tweak_groups_chip">Bộ lọc Nhóm</string>
+    <string name="zp_tweak_groups_chip_summary">Hiển thị các cuộc trò chuyện nhóm thông thường.</string>
+    <string name="zp_tweak_strangers_chip">Bộ lọc Người lạ</string>
+    <string name="zp_tweak_strangers_chip_summary">Mở màn hình Tin nhắn từ người lạ của Zalo.</string>
+    <string name="zp_tweak_oa_chip">Bộ lọc Official Account</string>
+    <string name="zp_tweak_oa_chip_summary">Hiển thị các cuộc trò chuyện với Official Account.</string>
     <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
     <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
+    <string name="zp_tweak_open_links_externally">Mở liên kết bằng trình duyệt hệ thống</string>
+    <string name="zp_tweak_open_links_externally_summary">Liên kết trong trò chuyện và Nhật ký mở bằng trình duyệt hoặc ứng dụng mặc định, bỏ qua trình duyệt và máy chủ chuyển hướng của Zalo. Liên kết của Zalo, gồm các thao tác thanh toán và thẻ ngân hàng, vẫn mở trong Zalo.</string>
     <string name="zp_tweak_block_seen_status">Chặn trạng thái Đã xem</string>
-    <string name="zp_tweak_block_seen_status_summary">Ẩn xác nhận đã xem của bạn nhưng vẫn gửi trạng thái đã nhận. Bạn vẫn thấy xác nhận của người khác.</string>
+    <string name="zp_tweak_block_seen_status_summary">Chặn gửi xác nhận đã xem nhưng vẫn gửi xác nhận đã nhận. Việc hiển thị xác nhận đã xem từ người khác vẫn phụ thuộc vào cài đặt của Zalo.</string>
     <string name="zp_tweak_block_typing_status">Chặn trạng thái Đang nhập</string>
-    <string name="zp_tweak_block_typing_status_summary">Không gửi chỉ báo đang nhập trong cuộc trò chuyện cá nhân hoặc nhóm.</string>
+    <string name="zp_tweak_block_typing_status_summary">Chặn gửi chỉ báo đang nhập trong cuộc trò chuyện cá nhân hoặc nhóm. Chỉ báo đang nhập từ người khác không thay đổi.</string>
+    <string name="zp_tweak_view_stories_anonymously">Xem khoảnh khắc ẩn danh</string>
+    <string name="zp_tweak_view_stories_anonymously_summary">Chặn xác nhận đã xem khoảnh khắc và khoảnh khắc gợi ý. Trạng thái đã xem trên máy, cảm xúc và trả lời vẫn hoạt động.</string>
     <string name="zp_tweak_auto_record_calls">Tự động ghi âm cuộc gọi</string>
     <string name="zp_tweak_auto_record_calls_summary">Lưu bản ghi âm của cuộc gọi Zalo đã kết thúc thành file M4A.</string>
     <string name="zp_tweak_recording_notifications">Thông báo ghi âm</string>
     <string name="zp_tweak_recording_notifications_summary">Hiển thị trạng thái ghi và lưu âm thanh.</string>
     <string name="zp_tweak_backup_frequent">Sao lưu định kỳ thường xuyên</string>
-    <string name="zp_tweak_backup_frequent_summary">Rút ngắn chu kỳ sao lưu tin nhắn của Zalo. Phải bật sao lưu tự động trong Zalo. Mỗi lần chạy xuất toàn bộ cơ sở dữ liệu tin nhắn và hiển thị thông báo bình thường của Zalo; media trên Drive vẫn theo chu kỳ gốc.</string>
-    <string name="zp_backup_interval_title">Chu kỳ định kỳ</string>
+    <string name="zp_tweak_backup_frequent_summary">Rút ngắn thời gian chờ tối thiểu giữa các lần sao lưu tin nhắn. Zalo phải đang chạy và đã bật sao lưu tự động. Điều kiện về pin, mạng và các điều kiện khác của Zalo có thể khiến sao lưu trễ hơn chu kỳ đã chọn. Mỗi lần chạy xuất toàn bộ cơ sở dữ liệu tin nhắn và hiển thị thông báo bình thường của Zalo. Media vẫn theo lịch sao lưu riêng của Zalo.</string>
+    <string name="zp_backup_interval_title">Chu kỳ tối thiểu</string>
     <string name="zp_tweak_passcode_grace">Kéo dài thời gian miễn nhập mã</string>
     <string name="zp_tweak_passcode_grace_summary">Giữ Zalo mở khóa trong khoảng thời gian bên dưới thay vì mức tối đa 30 giây của Zalo.</string>
     <string name="zp_passcode_grace_title">Thời gian miễn nhập mã ứng dụng</string>
@@ -95,20 +104,27 @@
     <string name="zp_tweak_hide_message_ads_summary">Ẩn quảng cáo Zinstant trong Tin nhắn.</string>
     <string name="zp_tweak_hide_feed_ads">Ẩn quảng cáo trong Nhật ký</string>
     <string name="zp_tweak_hide_feed_ads_summary">Ẩn quảng cáo Zinstant trong Nhật ký.</string>
+    <string name="zp_tweak_disable_sponsored_placements">Tắt vị trí tài trợ trong Story/cộng đồng</string>
+    <string name="zp_tweak_disable_sponsored_placements_summary">Chỉ tắt các cờ cấu hình vị trí tài trợ trong Story và cộng đồng. Các giá trị cấu hình khác, tin nhắn Official Account và nội dung Nhật ký/Story thông thường vẫn theo Zalo.</string>
     <string name="zp_tweak_hide_promo_services">Thử nghiệm: chặn dịch vụ Zinstant</string>
-    <string name="zp_tweak_hide_promo_services_summary">Chặn diện rộng. Có thể làm hỏng mini-app, thanh toán, đám mây, tìm kiếm và khám phá.</string>
+    <string name="zp_tweak_hide_promo_services_summary">Chặn diện rộng. Có thể làm hỏng mini-app, thanh toán, đám mây, tìm kiếm và khám phá. Nếu dịch vụ hiển thị trang trống hoặc không hoạt động, hãy tắt tùy chọn này rồi khởi động lại Zalo.</string>
+    <string name="zp_tweak_disable_adtima_offline_tracking">Tắt quảng cáo ngoại tuyến và theo dõi lượt xem Adtima</string>
+    <string name="zp_tweak_disable_adtima_offline_tracking_summary">Tắt quảng cáo ngoại tuyến đã lưu và theo dõi lượt xem của Adtima.</string>
     <string name="zp_tweak_hide_promo_notifications">Ẩn thông báo khuyến mãi</string>
     <string name="zp_tweak_hide_promo_notifications_summary">Chặn các mẫu thông báo khuyến mãi đã được kiểm tra. Quy tắc tùy chỉnh cũng có thể khớp với thông báo tin nhắn.</string>
     <string name="zp_tweak_record_notification_history">Ghi lịch sử thông báo</string>
-    <string name="zp_tweak_record_notification_history_summary">Lưu nội dung thông báo trong bộ nhớ riêng trên thiết bị này.</string>
+    <string name="zp_tweak_record_notification_history_summary">Lưu một bản sao riêng tư của nội dung thông báo. Tắt tính năng này không xóa lịch sử đã lưu.</string>
 
     <string name="zp_group_bottom_tabs">Các tab</string>
     <string name="zp_group_startup">Khởi động</string>
     <string name="zp_group_inbox_sections">Các mục Tin nhắn</string>
     <string name="zp_group_category_controls">Bộ lọc</string>
     <string name="zp_default_inbox_filter">Bộ lọc Tin nhắn mặc định</string>
+    <string name="zp_tweak_hide_video_ads">Ẩn quảng cáo Zalo Video</string>
+    <string name="zp_tweak_hide_video_ads_summary">Ẩn các khung quảng cáo được hỗ trợ trong Zalo Video. Phạm vi hỗ trợ phụ thuộc vào phiên bản Zalo.</string>
     <string name="zp_group_in_app_ads">Quảng cáo trong ứng dụng</string>
     <string name="zp_group_me_services">Cá nhân</string>
+    <string name="zp_group_external_links">Liên kết bên ngoài</string>
     <string name="zp_group_status_privacy">Quyền riêng tư trạng thái</string>
     <string name="zp_group_media">Đa phương tiện</string>
     <string name="zp_tweak_keep_expired_media">Giữ file hết hạn khả dụng</string>
@@ -123,11 +139,11 @@
     <string name="zp_filter_master_title">Ẩn thông báo khuyến mãi</string>
     <string name="zp_filter_master_summary">Chặn các mẫu thông báo khuyến mãi đã được kiểm tra. Quy tắc tùy chỉnh cũng có thể khớp với thông báo tin nhắn.</string>
     <string name="zp_history_record_title">Ghi lịch sử thông báo</string>
-    <string name="zp_history_record_summary">Lưu nội dung thông báo trong bộ nhớ riêng trên thiết bị này.</string>
+    <string name="zp_history_record_summary">Lưu một bản sao riêng tư của nội dung thông báo. Tắt tính năng này không xóa lịch sử đã lưu.</string>
+    <string name="zp_history_retention_title">Số thông báo lưu tối đa</string>
     <string name="zp_filter_custom_lists">Danh sách tùy chỉnh</string>
     <string name="zp_filter_review">Xem lại</string>
     <string name="zp_filter_suppressed_title">Thông báo đã chặn</string>
-    <string name="zp_filter_footer">Danh sách tùy chỉnh áp dụng sau khi khởi động lại Zalo.</string>
     <string name="zp_filter_item_count">%1$d mục</string>
     <string name="zp_filter_item_count_one">1 mục</string>
 
@@ -136,7 +152,6 @@
     <string name="zp_backup_exported">Đã xuất cài đặt</string>
     <string name="zp_backup_imported">Đã nhập %1$d cài đặt và mục quy tắc. Khởi động lại Zalo để áp dụng.</string>
     <string name="zp_history_exported">Đã xuất lịch sử thông báo</string>
-    <string name="zp_history_privacy_notice">Lịch sử có thể chứa tiêu đề thông báo, tên người gửi và nội dung tin nhắn. Dữ liệu nằm trong bộ nhớ riêng của ứng dụng cho đến khi bạn xuất hoặc xóa.</string>
     <string name="zp_clear_history">Xóa lịch sử</string>
     <string name="zp_history_all">Tất cả</string>
     <string name="zp_history_messages">Tin nhắn</string>
@@ -164,7 +179,7 @@
     <string name="zp_backup_actions">Thao tác sao lưu</string>
     <string name="zp_backup_export">Xuất cài đặt</string>
     <string name="zp_backup_import">Nhập cài đặt</string>
-    <string name="zp_backup_footer">Khởi động lại Zalo sau khi nhập.</string>
+    <string name="zp_backup_footer">Chỉ xuất các cài đặt Zalo Patch có thể chuyển sang thiết bị khác và quy tắc thông báo. Không bao gồm cài đặt cuộc gọi, tin nhắn, media, bản ghi âm, lịch sử thông báo và dữ liệu chẩn đoán. Khởi động lại Zalo sau khi nhập.</string>
     <string name="zp_backup_import_dialog_title">Nhập cài đặt Zalo Patch</string>
     <string name="zp_backup_import_dialog_message">Giá trị đã nhập thay thế cài đặt tương ứng. Khởi động lại Zalo sau đó.</string>
     <string name="zp_choose_file">Chọn file</string>
@@ -179,8 +194,6 @@
         <item quantity="one">%1$d mục</item>
         <item quantity="other">%1$d mục</item>
     </plurals>
-    <string name="zp_rule_no_items">Không có mục</string>
-    <string name="zp_rule_no_items_summary">Chọn Thêm mục để tạo quy tắc.</string>
     <string name="zp_rule_add_item">Thêm mục</string>
     <string name="zp_rule_add_summary">Ngăn cách bằng dấu phẩy hoặc xuống dòng.</string>
     <string name="zp_rule_add_to">Thêm vào %1$s</string>
@@ -215,4 +228,12 @@
     <string name="zp_cancel">Hủy</string>
     <string name="zp_delete">Xóa</string>
     <string name="zp_export">Xuất</string>
+    <string name="zp_config_prepare_required">Đã lưu cài đặt. Khởi động lại Zalo để áp dụng.</string>
+    <string name="zp_config_manual_restart">Đã lưu cài đặt. Buộc dừng Zalo trong Thông tin ứng dụng, rồi mở lại để áp dụng.</string>
+    <string name="zp_config_provider_restart">Đã chuẩn bị cài đặt qua phương thức dự phòng. Buộc dừng Zalo rồi mở lại. Phương thức này có thể không hoạt động trên framework của bạn.</string>
+    <string name="zp_settings_save_failed">Không thể lưu thay đổi này. Hãy thử lại. Chỉ khởi động lại Zalo sau khi lưu thành công.</string>
+    <string name="zp_tweak_prefer_original_photo">Ưu tiên ảnh gốc</string>
+    <string name="zp_tweak_prefer_original_photo_summary">Dùng chất lượng Gốc của Zalo cho ảnh đã chọn và ảnh được chia sẻ vào từ ứng dụng khác. Camera và video giữ chất lượng bình thường.</string>
+    <string name="zp_tweak_hide_story_ads">Ẩn quảng cáo trong khoảnh khắc</string>
+    <string name="zp_tweak_hide_story_ads_summary">Ẩn giao diện khoảnh khắc được tài trợ và giữ nguyên quá trình chuyển khoảnh khắc.</string>
 </resources>

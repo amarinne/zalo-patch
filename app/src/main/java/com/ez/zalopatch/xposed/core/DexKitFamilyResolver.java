@@ -7,17 +7,23 @@ import com.ez.zalopatch.DexKitCache;
 import com.ez.zalopatch.DexKitFamilyRetry;
 import com.ez.zalopatch.DexKitMirror;
 import com.ez.zalopatch.DexKitOverlay;
+import com.ez.zalopatch.DexKitVideoAdsFingerprint;
 import com.ez.zalopatch.DexKitAnchors;
 import com.ez.zalopatch.DexKitBottomTabsFingerprint;
+import com.ez.zalopatch.DexKitAdtimaFingerprint;
 import com.ez.zalopatch.DexKitCallFingerprint;
 import com.ez.zalopatch.DexKitCallPeerFingerprint;
 import com.ez.zalopatch.DexKitChatFingerprint;
 import com.ez.zalopatch.DexKitDeletedGroupFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
 import com.ez.zalopatch.DexKitMeFingerprint;
+import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
+import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.DexKitMediaFingerprint;
 import com.ez.zalopatch.DexKitPasscodeFingerprint;
 import com.ez.zalopatch.DexKitPilotPolicy;
+import com.ez.zalopatch.DexKitRemoteConfigFingerprint;
+import com.ez.zalopatch.DexKitStoryFingerprint;
 import com.ez.zalopatch.DexKitTelemetryFingerprint;
 import com.ez.zalopatch.DexKitWebviewFingerprint;
 import com.ez.zalopatch.DexKitZinstantFingerprint;
@@ -95,39 +101,66 @@ final class DexKitFamilyResolver {
 
     /** Per-family arming computed from one overlay; single source of truth. */
     static final class FamilyStates {
+        final java.util.EnumMap<DexKitVideoAdsFingerprint.Route, Boolean> videoAds =
+                new java.util.EnumMap<>(DexKitVideoAdsFingerprint.Route.class);
         boolean webview;
+        boolean originalPhoto;
         boolean passcode;
         boolean backup;
         boolean telemetry;
+        boolean remoteConfig;
         boolean bottomTabs;
         boolean me;
         boolean inboxCategories;
         boolean statusPrivacy;
+        boolean storySeen;
+        boolean storySuggested;
         boolean zinstantMessage;
         boolean zinstantFeed;
+        boolean adtima;
+        boolean storyAds;
     }
 
     /**
      * Computes per-family arming for an overlay. Passcode arms on the full setter
-     * check, or on the reader alone when no setter resolved: the setter is
-     * preflight-only, and the hook's runtime key-equality guard is the remaining
-     * semantic check beside the live reader shape.
+     * check, or on the reader alone when no setter resolved. Sponsored placements
+     * additionally require an exact-profile reader or the current host's unique
+     * two-key DexKit match; a neighbouring shape alone is never semantic proof.
      */
     static FamilyStates familyStates(SymbolSchema.Active overlay, ClassLoader loader,
-                                      Map<String, String> extended) {
+                                      Map<String, String> extended,
+                                      SymbolSchema.Active exact) {
         FamilyStates states = new FamilyStates();
         if (overlay == null) {
             return states;
         }
         try {
             SymbolPreflight.Result checked = SymbolPreflight.inspect(overlay, loader);
+            states.videoAds.putAll(checked.videoAds);
             states.webview = checked.webviewExternalize;
             states.statusPrivacy = checked.statusPrivacy;
+            states.storySeen = checked.storySeen && anchorsQualified(exact, overlay, extended,
+                    DexKitStoryFingerprint.ANCHOR_SEEN_CLASS, DexKitStoryFingerprint.ANCHOR_SEEN_METHOD);
+            states.storySuggested = checked.storySuggested && anchorsQualified(exact, overlay, extended,
+                    DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS,
+                    DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD);
             states.backup = checked.backupScheduled;
+            states.originalPhoto = checked.originalPhoto && anchorsQualified(exact, overlay, extended,
+                    DexKitOriginalPhotoFingerprint.ANCHORS.toArray(new String[0]));
             states.telemetry = checked.telemetryDao;
+            states.remoteConfig = checked.remoteConfig
+                    && anchorsQualified(exact, overlay, extended,
+                    DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS,
+                    DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD);
             states.bottomTabs = checked.bottomTabs && tabsLiveChecks(loader, extended);
             states.zinstantMessage = checked.zinstantMessage;
             states.zinstantFeed = checked.zinstantFeed;
+            states.adtima = checked.adtima && anchorsQualified(exact, overlay, extended,
+                    DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS,
+                    DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD,
+                    DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                    DexKitAdtimaFingerprint.TRACKING_GATE_METHOD);
+            states.storyAds = checked.storyAds;
             if (checked.me) {
                 states.me = true;
             } else if (extended != null) {
@@ -166,6 +199,16 @@ final class DexKitFamilyResolver {
         } catch (Throwable ignored) {
         }
         return states;
+    }
+
+    /** New routes require exact bindings or discovery tied to this host, beyond neighbour shape. */
+    static boolean anchorsQualified(SymbolSchema.Active exact,
+            SymbolSchema.Active overlay, Map<String, String> extended, String... anchors) {
+        JSONObject exactSymbols = exact != null && exact.valid && exact.root != null
+                ? exact.root.optJSONObject("symbols") : null;
+        JSONObject composedSymbols = overlay != null && overlay.valid && overlay.root != null
+                ? overlay.root.optJSONObject("symbols") : null;
+        return DexKitOverlay.qualifiesBindings(exactSymbols, composedSymbols, extended, anchors);
     }
 
     /** True once this process kicked a family scan; the pilot consults this. */
@@ -233,10 +276,19 @@ final class DexKitFamilyResolver {
         if (exact == null || !exact.valid || checked == null) return false;
         return checked.inboxMedia && checked.inboxCategories && checked.me
                 && checked.bottomTabs && checked.zinstantMessage && checked.zinstantFeed
-                && checked.statusPrivacy && checked.passcodeGrace && checked.backupScheduled
-                && checked.webviewExternalize && checked.telemetryDao && checked.callRecording
+                && checked.statusPrivacy && checked.storySeen && checked.storySuggested
+                && checked.passcodeGrace && checked.backupScheduled
+                && checked.webviewExternalize && checked.telemetryDao && checked.remoteConfig
+                && checked.callRecording
                 && checked.inboxRows && checked.bottomTabsSymbols && checked.chatReaction
-                && checked.zinstantSymbols;
+                && checked.zinstantSymbols && checked.originalPhoto && checked.adtima && checked.storyAds && allVideoAds(checked);
+    }
+
+    private static boolean allVideoAds(SymbolPreflight.Result checked) {
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            if (!Boolean.TRUE.equals(checked.videoAds.get(route))) return false;
+        }
+        return true;
     }
 
     private static JSONObject composeSymbols(SymbolSchema.Active exact,
@@ -265,7 +317,7 @@ final class DexKitFamilyResolver {
             return Result.empty();
         }
         SymbolPreflight.Result preflight = SymbolPreflight.inspect(overlay, loader);
-        FamilyStates families = familyStates(overlay, loader, entry.extended);
+        FamilyStates families = familyStates(overlay, loader, entry.extended, exact);
         // Reader-only adoption fallback: the scan-time resolver validated the reader
         // shape and the cache binds it to this exact APK. If the family gate stayed
         // shut for any reason while reader anchors are present, arm on the reader;
@@ -446,11 +498,18 @@ final class DexKitFamilyResolver {
         Map<String, String> anchorStatus = new LinkedHashMap<>();
         resolved.putAll(resolveWebview(host, codeDigest, results, retained, anchorStatus));
         resolved.putAll(resolvePasscode(codeDigest, stringResults, retained, anchorStatus));
+        resolved.putAll(resolveRemoteConfig(stringResults, anchorStatus));
         resolved.putAll(resolveTelemetry(results, stringResults, anchorStatus));
         resolved.putAll(resolveBottomTabs(context, host, anchorStatus, false));
         resolved.putAll(resolveMe(results, anchorStatus));
         resolved.putAll(resolveInbox(host, anchorStatus));
         resolved.putAll(resolveChat(host, results, anchorStatus));
+        resolved.putAll(resolveStoryRequests(results, anchorStatus));
+        resolved.putAll(resolveAdtima(apkPath, results, anchorStatus));
+        resolved.putAll(resolveStoryAds(loaderOf(host), results, anchorStatus));
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            resolved.putAll(resolveVideoAds(host, route, results, anchorStatus));
+        }
         JSONObject symbols = SymbolSchema.bundledSymbolsForVersion(context, versionCode);
         int agree = 0;
         int disagree = 0;
@@ -678,6 +737,9 @@ final class DexKitFamilyResolver {
                     case "backup":
                         found = resolvePasscode(codeDigest, stringResults, retained, anchorStatus);
                         break;
+                    case "remote_config":
+                        found = resolveRemoteConfig(stringResults, anchorStatus);
+                        break;
                     case "telemetry":
                         found = resolveTelemetry(results, stringResults, anchorStatus);
                         break;
@@ -689,11 +751,30 @@ final class DexKitFamilyResolver {
                     case "call_recording":
                         found = resolveCallCallback(host, anchorStatus);
                         break;
+                    case "original_photo":
+                        try {
+                            found = DexKitOriginalPhotoResolver.resolve(host, anchorStatus);
+                        } catch (IllegalArgumentException unavailable) {
+                            anchorStatus.put(DexKitOriginalPhotoFingerprint.PREFIX + "state", unavailable.getMessage());
+                        }
+                        break;
                     case "media":
                         found = resolveMediaState(host, anchorStatus);
                         break;
+                    case "story_ads":
+                        found = resolveStoryAds(loaderOf(host), results, anchorStatus);
+                        break;
                     case "chat": found = resolveChat(host, results, anchorStatus); break;
-                    default: break;
+                    case "stories": found = resolveStoryRequests(results, anchorStatus); break;
+                    case "adtima": found = resolveAdtima(host.sourceDir, results, anchorStatus); break;
+                    default:
+                        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+                            if (family.equals(route.family())) {
+                                found = resolveVideoAds(host, route, results, anchorStatus);
+                                break;
+                            }
+                        }
+                        break;
                 }
             } catch (Throwable error) {
                 anchorStatus.put("symbols." + family + ".query", "query_error");
@@ -733,17 +814,74 @@ final class DexKitFamilyResolver {
         }
     }
 
-    private static String queryFamily(String id) {
+    /** All exact event markers share one method; reflection must agree with its full signature. */
+    static Map<String, String> resolveStoryAds(ClassLoader loader,
+            Map<String, DexKitBridgeRunner.QueryResult> results, Map<String, String> status) {
+        Map<String, String> found = new LinkedHashMap<>();
+        DexKitBridgeRunner.QueryResult query = results.get(DexKitStoryAdFingerprint.QUERY_BIND);
+        String anchor = DexKitStoryAdFingerprint.ANCHOR_BIND;
+        if (query == null || !query.error.isEmpty() || query.matchCount != query.hits.size()) {
+            status.put(anchor, "query_error");
+            return found;
+        }
+        if (query.matchCount != 1) {
+            status.put(anchor, query.matchCount == 0 ? "no_match" : "ambiguous");
+            return found;
+        }
+        List<DexKitStoryAdFingerprint.Hit> hits = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit raw : query.hits) {
+            boolean live = false;
+            try {
+                Class<?> owner = Class.forName(raw.className, false, loader);
+                java.lang.reflect.Method method = DexKitStoryAdFingerprint.binding(owner, raw.methodName);
+                if (android.view.View.class.isAssignableFrom(owner) && method != null) {
+                    List<String> parameters = new ArrayList<>();
+                    for (Class<?> type : method.getParameterTypes()) parameters.add(type.getName());
+                    live = parameters.equals(raw.paramTypeNames)
+                            && raw.paramCount == parameters.size();
+                }
+            } catch (Throwable ignored) { }
+            hits.add(new DexKitStoryAdFingerprint.Hit(raw.className, raw.methodName,
+                    raw.returnTypeName, raw.paramTypeNames, raw.isStatic, live));
+        }
+        DexKitStoryAdFingerprint.Hit selected = DexKitStoryAdFingerprint.select(
+                query.matchCount, hits, query.error);
+        if (selected == null) {
+            status.put(anchor, "preflight_rejected");
+            return found;
+        }
+        found.put(DexKitStoryAdFingerprint.ANCHOR_CLASS, selected.owner);
+        found.put(anchor, selected.name);
+        status.put(anchor, "resolved");
+        return found;
+    }
+
+    static String queryFamily(String id) {
         if (id.equals(DexKitZinstantFingerprint.ANCHOR_AD_BIND)
                 || id.equals(DexKitZinstantFingerprint.ANCHOR_FEED_BIND)) return "zinstant";
         if (id.equals(DexKitWebviewFingerprint.ANCHOR_REDIRECT)
                 || id.equals(DexKitWebviewFingerprint.ANCHOR_DISPATCH)) return "webview";
         if (id.equals(DexKitPasscodeFingerprint.QUERY_PASSCODE_CALLERS)) return "passcode";
         if (id.equals(DexKitPasscodeFingerprint.QUERY_BACKUP_CALLERS)) return "backup";
+        if (id.equals(DexKitRemoteConfigFingerprint.QUERY_STORY_CALLERS)
+                || id.equals(DexKitRemoteConfigFingerprint.QUERY_COMMUNITY_CALLERS)) {
+            return "remote_config";
+        }
+        if (id.equals(DexKitAdtimaFingerprint.QUERY_OFFLINE_WINDOW)
+                || id.equals(DexKitAdtimaFingerprint.QUERY_ADTIMA_CALL)
+                || id.equals(DexKitAdtimaFingerprint.QUERY_CURRENT_TIME)
+                || id.equals(DexKitAdtimaFingerprint.QUERY_LONG_VALUE)
+                || id.equals(DexKitAdtimaFingerprint.QUERY_TRACKING_GATE)) return "adtima";
         if (id.equals(DexKitTelemetryFingerprint.QUERY_ACCESSORS)
                 || id.startsWith(DexKitTelemetryFingerprint.QUERY_TABLE_PREFIX)) return "telemetry";
         if (id.equals(DexKitMeFingerprint.QUERY_BUILDERS)) return "me";
         if (id.equals(DexKitChatFingerprint.QUERY_SEND_SHAPES)) return "chat";
+        if (id.equals(DexKitStoryFingerprint.QUERY_SEEN)
+                || id.equals(DexKitStoryFingerprint.QUERY_SUGGESTED)) return "stories";
+        if (id.equals(DexKitStoryAdFingerprint.QUERY_BIND)) return "story_ads";
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            if (id.equals(route.query())) return route.family();
+        }
         return "";
     }
 
@@ -755,6 +893,12 @@ final class DexKitFamilyResolver {
         specs.add(new DexKitBridgeRunner.StringSpec(
                 DexKitPasscodeFingerprint.QUERY_BACKUP_CALLERS,
                 DexKitPasscodeFingerprint.BACKUP_KEY_PREFIX));
+        specs.add(new DexKitBridgeRunner.StringSpec(
+                DexKitRemoteConfigFingerprint.QUERY_STORY_CALLERS,
+                DexKitRemoteConfigFingerprint.STORY_KEY, true, true));
+        specs.add(new DexKitBridgeRunner.StringSpec(
+                DexKitRemoteConfigFingerprint.QUERY_COMMUNITY_CALLERS,
+                DexKitRemoteConfigFingerprint.COMMUNITY_KEY, true, true));
         for (Map.Entry<String, String> labelTable
                 : DexKitTelemetryFingerprint.labelTables().entrySet()) {
             specs.add(new DexKitBridgeRunner.StringSpec(
@@ -764,8 +908,10 @@ final class DexKitFamilyResolver {
         return specs;
     }
 
-    private static List<DexKitBridgeRunner.MethodSpec> familySpecs() {
+    static List<DexKitBridgeRunner.MethodSpec> familySpecs() {
         List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
+        specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryAdFingerprint.QUERY_BIND,
+                null, "void", null, false, null, false, DexKitStoryAdFingerprint.MARKERS));
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitZinstantFingerprint.ANCHOR_AD_BIND,
                 DexKitZinstantFingerprint.expectedOwner(DexKitZinstantFingerprint.ANCHOR_AD_BIND),
                 DexKitZinstantFingerprint.RETURN_VOID,
@@ -786,10 +932,78 @@ final class DexKitFamilyResolver {
                 DexKitTelemetryFingerprint.OWNER_DB_IMPL, null, 0));
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitMeFingerprint.QUERY_BUILDERS,
                 DexKitMeFingerprint.OWNER_TAB_ME, null, 1));
+        specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryFingerprint.QUERY_SEEN,
+                null, "void", 2, true, DexKitStoryFingerprint.SEEN_COMMAND, true,
+                DexKitStoryFingerprint.STORY_ID));
+        specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryFingerprint.QUERY_SUGGESTED,
+                null, "void", 3, true, DexKitStoryFingerprint.SUGGESTED_COMMAND, true,
+                DexKitStoryFingerprint.STORY_ID));
         // Chat repository: both send shapes are void/4; parameter types discriminate.
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitChatFingerprint.QUERY_SEND_SHAPES,
                 null, "void", 4));
+        // Intersect exact string and invocation queries. Each query independently requires
+        // a static boolean no-arg method; no call-list extraction is used for this family.
+        specs.add(new DexKitBridgeRunner.MethodSpec(
+                DexKitAdtimaFingerprint.QUERY_OFFLINE_WINDOW, null, "boolean", 0,
+                false, null, false, java.util.Collections.singletonList(DexKitAdtimaFingerprint.OFFLINE_WINDOW_LITERAL),
+                null, null));
+        specs.add(new DexKitBridgeRunner.MethodSpec(
+                DexKitAdtimaFingerprint.QUERY_ADTIMA_CALL, null, "boolean", 0,
+                false, null, false, java.util.Collections.emptyList(), DexKitAdtimaFingerprint.ADTIMA_OWNER, null));
+        // The Android callees are qualified by exact owner/name/prototype only. DexKit's
+        // access-flag data for platform methods is diagnostic, not part of this predicate.
+        specs.add(new DexKitBridgeRunner.MethodSpec(
+                DexKitAdtimaFingerprint.QUERY_CURRENT_TIME, null, "boolean", 0,
+                false, null, false, java.util.Collections.emptyList(), null,
+                DexKitAdtimaFingerprint.CURRENT_TIME_DESCRIPTOR));
+        specs.add(new DexKitBridgeRunner.MethodSpec(
+                DexKitAdtimaFingerprint.QUERY_LONG_VALUE, null, "boolean", 0,
+                false, null, false, java.util.Collections.emptyList(), null,
+                DexKitAdtimaFingerprint.LONG_VALUE_DESCRIPTOR));
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            specs.add(new DexKitBridgeRunner.MethodSpec(route.query(), route.returnType,
+                    route.parameters.size(), route.semanticMethod,
+                    DexKitVideoAdsFingerprint.strings(route)));
+        }
         return specs;
+    }
+
+    private static Map<String, String> resolveVideoAds(DexKitZinstantResolver.HostIdentity host,
+            DexKitVideoAdsFingerprint.Route route,
+            Map<String, DexKitBridgeRunner.QueryResult> results, Map<String, String> status) {
+        DexKitBridgeRunner.QueryResult query = results.get(route.query());
+        boolean complete = query != null && query.error.isEmpty()
+                && query.matchCount == query.hits.size();
+        List<DexKitVideoAdsFingerprint.Candidate> candidates = new ArrayList<>();
+        if (complete) for (DexKitBridgeRunner.RawHit hit : query.hits) {
+            if (!route.dedicatedOwner(hit.className)) continue;
+            try {
+                List<String> implementations = java.util.Collections.emptyList();
+                if (route.implementations()) {
+                    DexKitBridgeRunner.ClassQueryResult subclasses = DexKitBridgeRunner.findSubclassesWithField(
+                            host.sourceDir, java.util.Collections.singletonList(
+                                    new DexKitBridgeRunner.SubclassSpec(route.query(), hit.className, "")))
+                            .get(route.query());
+                    if (subclasses == null || !subclasses.error.isEmpty()
+                            || subclasses.matchCount != subclasses.classNames.size()
+                            || subclasses.classNames.isEmpty() || subclasses.classNames.size() > 8) {
+                        complete = false;
+                        break;
+                    }
+                    implementations = subclasses.classNames;
+                }
+                candidates.add(VideoAdsTargets.candidate(host.loader, hit.className, hit.methodName,
+                        implementations));
+            } catch (Throwable throwable) {
+                // An uninspectable dedicated candidate makes uniqueness unavailable.
+                complete = false;
+                break;
+            }
+        }
+        DexKitVideoAdsFingerprint.Resolution resolution =
+                DexKitVideoAdsFingerprint.evaluate(route, candidates, complete);
+        status.put(route.anchor("resolution"), resolution.status);
+        return new LinkedHashMap<>(resolution.descriptors);
     }
 
     private static DexKitPilotPolicy.ScanInputs zinstantInputs(
@@ -840,6 +1054,79 @@ final class DexKitFamilyResolver {
         inputs.scannedAt = System.currentTimeMillis();
         inputs.previousPartialAttempts = previousPartialAttempts;
         return inputs;
+    }
+
+    /** Resolve Adtima's two Boolean gates as one coherent artifact-bound family. */
+    private static Map<String, String> resolveAdtima(String apkPath,
+            Map<String, DexKitBridgeRunner.QueryResult> results,
+            Map<String, String> anchorStatus) {
+        DexKitBridgeRunner.QueryResult offlineQuery = results == null ? null
+                : results.get(DexKitAdtimaFingerprint.QUERY_OFFLINE_WINDOW);
+        DexKitBridgeRunner.QueryResult adtimaQuery = results == null ? null
+                : results.get(DexKitAdtimaFingerprint.QUERY_ADTIMA_CALL);
+        DexKitBridgeRunner.QueryResult currentTimeQuery = results == null ? null
+                : results.get(DexKitAdtimaFingerprint.QUERY_CURRENT_TIME);
+        DexKitBridgeRunner.QueryResult longValueQuery = results == null ? null
+                : results.get(DexKitAdtimaFingerprint.QUERY_LONG_VALUE);
+        boolean offlineComplete = completeAdtimaQuery(offlineQuery)
+                && completeAdtimaQuery(adtimaQuery)
+                && completeAdtimaQuery(currentTimeQuery)
+                && completeAdtimaQuery(longValueQuery);
+        DexKitAdtimaFingerprint.AnchorResolution offline =
+                DexKitAdtimaFingerprint.resolveOfflineWindow(
+                        adtimaHits(offlineQuery), adtimaHits(adtimaQuery),
+                        adtimaHits(currentTimeQuery), adtimaHits(longValueQuery), offlineComplete);
+        if (anchorStatus != null) {
+            anchorStatus.put(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS, offline.status);
+            anchorStatus.put(DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD, offline.status);
+        }
+        if (!offline.resolved()) {
+            if (anchorStatus != null) {
+                anchorStatus.put(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                        "no_offline_window");
+                anchorStatus.put(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD,
+                        "no_offline_window");
+            }
+            return new LinkedHashMap<>();
+        }
+
+        DexKitBridgeRunner.QueryResult trackingQuery;
+        try {
+            DexKitBridgeRunner.MethodSpec trackingSpec = new DexKitBridgeRunner.MethodSpec(
+                    DexKitAdtimaFingerprint.QUERY_TRACKING_GATE, null, "boolean", 0,
+                    false, null, false, java.util.Collections.emptyList(), null, offline.method.descriptor());
+            trackingQuery = DexKitBridgeRunner.scanMethods(apkPath,
+                    java.util.Collections.singletonList(trackingSpec))
+                    .get(DexKitAdtimaFingerprint.QUERY_TRACKING_GATE);
+        } catch (Throwable throwable) {
+            trackingQuery = new DexKitBridgeRunner.QueryResult(0,
+                    throwable.getClass().getSimpleName());
+        }
+        boolean trackingComplete = completeAdtimaQuery(trackingQuery);
+        DexKitAdtimaFingerprint.AnchorResolution tracking =
+                DexKitAdtimaFingerprint.resolveTrackingGate(offline.method,
+                        adtimaHits(trackingQuery), trackingComplete);
+        if (anchorStatus != null) {
+            anchorStatus.put(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS, tracking.status);
+            anchorStatus.put(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD, tracking.status);
+        }
+        return DexKitAdtimaFingerprint.descriptors(offline, tracking);
+    }
+
+    private static boolean completeAdtimaQuery(DexKitBridgeRunner.QueryResult result) {
+        return result != null && result.error.isEmpty()
+                && result.matchCount == result.hits.size();
+    }
+
+    private static List<DexKitAdtimaFingerprint.MethodHit> adtimaHits(
+            DexKitBridgeRunner.QueryResult result) {
+        List<DexKitAdtimaFingerprint.MethodHit> hits = new ArrayList<>();
+        if (result == null) return hits;
+        for (DexKitBridgeRunner.RawHit raw : result.hits) {
+            hits.add(new DexKitAdtimaFingerprint.MethodHit(raw.className, raw.methodName,
+                    raw.returnTypeName, raw.paramTypeNames, raw.isStatic));
+        }
+        return hits;
     }
 
     private static Map<String, String> resolveWebview(DexKitZinstantResolver.HostIdentity host,
@@ -951,6 +1238,49 @@ final class DexKitFamilyResolver {
             resolved.put(DexKitPasscodeFingerprint.ANCHOR_BACKUP_CLASS, backupParts[0]);
             resolved.put(DexKitPasscodeFingerprint.ANCHOR_BACKUP_METHOD, backupParts[1]);
         }
+        return resolved;
+    }
+
+    /** Resolves one unique static int reader shared by both exact config-key sites. */
+    static Map<String, String> resolveRemoteConfig(
+            Map<String, DexKitBridgeRunner.QueryResult> stringResults,
+            Map<String, String> anchorStatus) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        DexKitBridgeRunner.QueryResult story = stringResults == null ? null
+                : stringResults.get(DexKitRemoteConfigFingerprint.QUERY_STORY_CALLERS);
+        DexKitBridgeRunner.QueryResult community = stringResults == null ? null
+                : stringResults.get(DexKitRemoteConfigFingerprint.QUERY_COMMUNITY_CALLERS);
+        boolean queryError = story == null || community == null
+                || !story.error.isEmpty() || !community.error.isEmpty()
+                || story.matchCount != story.hits.size()
+                || community.matchCount != community.hits.size();
+        if (queryError) {
+            if (anchorStatus != null) {
+                anchorStatus.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD,
+                        "query_error");
+            }
+            return resolved;
+        }
+        DexKitRemoteConfigFingerprint.Resolution reader =
+                DexKitRemoteConfigFingerprint.evaluate(remoteConfigCallerHits(story),
+                        remoteConfigCallerHits(community));
+        if (anchorStatus != null) {
+            anchorStatus.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD,
+                    reader.status);
+        }
+        if (!"resolved".equals(reader.status)) {
+            return resolved;
+        }
+        String[] parts = DexKitRemoteConfigFingerprint.splitIdentity(reader.symbol);
+        if (parts[0].isEmpty() || parts[1].isEmpty()) {
+            if (anchorStatus != null) {
+                anchorStatus.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD,
+                        "malformed_identity");
+            }
+            return resolved;
+        }
+        resolved.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, parts[0]);
+        resolved.put(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, parts[1]);
         return resolved;
     }
 
@@ -1423,6 +1753,57 @@ final class DexKitFamilyResolver {
             return true;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    /** Resolves each request using both semantic literals and stable serializer calls. */
+    static Map<String, String> resolveStoryRequests(
+            Map<String, DexKitBridgeRunner.QueryResult> results, Map<String, String> status) {
+        Map<String, String> descriptors = new LinkedHashMap<>();
+        resolveStoryRequest(false, results.get(DexKitStoryFingerprint.QUERY_SEEN), descriptors, status);
+        resolveStoryRequest(true, results.get(DexKitStoryFingerprint.QUERY_SUGGESTED), descriptors, status);
+        return descriptors;
+    }
+
+    private static void resolveStoryRequest(boolean suggested,
+            DexKitBridgeRunner.QueryResult query, Map<String, String> descriptors,
+            Map<String, String> status) {
+        String ownerAnchor = suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS
+                : DexKitStoryFingerprint.ANCHOR_SEEN_CLASS;
+        String methodAnchor = suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD
+                : DexKitStoryFingerprint.ANCHOR_SEEN_METHOD;
+        if (query == null || !query.error.isEmpty() || query.matchCount != query.hits.size()) {
+            status.put(methodAnchor, "query_error");
+            return;
+        }
+        List<DexKitStoryFingerprint.MethodHit> hits = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit raw : query.hits) {
+            boolean parsesStoryId = false;
+            boolean writesPayload = false;
+            // External Java method references have no APK-defined access flags.
+            for (DexKitBridgeRunner.RawHit callee : raw.invoked) {
+                parsesStoryId |= "java.lang.Long".equals(callee.className)
+                        && "parseLong".equals(callee.methodName)
+                        && "long".equals(callee.returnTypeName)
+                        && java.util.Collections.singletonList("java.lang.String")
+                                .equals(callee.paramTypeNames);
+                writesPayload |= "java.io.ByteArrayOutputStream".equals(callee.className)
+                        && "write".equals(callee.methodName)
+                        && "void".equals(callee.returnTypeName)
+                        && java.util.Collections.singletonList("int").equals(callee.paramTypeNames);
+            }
+            // Both literals are mandatory in the bridge query, not guessed from a method shape.
+            hits.add(new DexKitStoryFingerprint.MethodHit(raw.className, raw.methodName,
+                    raw.returnTypeName, raw.paramTypeNames, raw.isStatic,
+                    suggested ? DexKitStoryFingerprint.SUGGESTED_COMMAND
+                            : DexKitStoryFingerprint.SEEN_COMMAND,
+                    true, parsesStoryId, writesPayload));
+        }
+        DexKitStoryFingerprint.Resolution found = DexKitStoryFingerprint.evaluate(suggested, hits);
+        status.put(methodAnchor, found.status);
+        if (found.resolved()) {
+            descriptors.put(ownerAnchor, found.owner);
+            descriptors.put(methodAnchor, found.method);
         }
     }
 
@@ -2234,6 +2615,25 @@ final class DexKitFamilyResolver {
         return hits;
     }
 
+    private static List<DexKitRemoteConfigFingerprint.CallerHit> remoteConfigCallerHits(
+            DexKitBridgeRunner.QueryResult result) {
+        List<DexKitRemoteConfigFingerprint.CallerHit> hits = new ArrayList<>();
+        if (result == null) {
+            return hits;
+        }
+        for (DexKitBridgeRunner.RawHit raw : result.hits) {
+            List<DexKitRemoteConfigFingerprint.Callee> invoked = new ArrayList<>();
+            for (DexKitBridgeRunner.RawHit callee : raw.invoked) {
+                invoked.add(new DexKitRemoteConfigFingerprint.Callee(callee.className,
+                        callee.methodName, callee.returnTypeName, callee.paramTypeNames,
+                        callee.isStatic));
+            }
+            hits.add(new DexKitRemoteConfigFingerprint.CallerHit(
+                    raw.className, raw.methodName, invoked));
+        }
+        return hits;
+    }
+
     private static List<DexKitWebviewFingerprint.MethodHit> webviewHits(ClassLoader loader,
             DexKitBridgeRunner.QueryResult result) {
         List<DexKitWebviewFingerprint.MethodHit> hits = new ArrayList<>();
@@ -2275,6 +2675,15 @@ final class DexKitFamilyResolver {
                 DexKitWebviewFingerprint.ANCHOR_REDIRECT,
                 DexKitWebviewFingerprint.ANCHOR_COMPANION,
                 DexKitWebviewFingerprint.ANCHOR_DISPATCH);
+        dropIncompleteFamily(kept, DexKitStoryAdFingerprint.ANCHOR_CLASS,
+                DexKitStoryAdFingerprint.ANCHOR_BIND);
+        if (kept.containsKey(DexKitStoryAdFingerprint.ANCHOR_CLASS)
+                && !SymbolPreflight.checkDexkitStoryAds(loader,
+                        kept.get(DexKitStoryAdFingerprint.ANCHOR_CLASS),
+                        kept.get(DexKitStoryAdFingerprint.ANCHOR_BIND), new ArrayList<>())) {
+            kept.remove(DexKitStoryAdFingerprint.ANCHOR_CLASS);
+            kept.remove(DexKitStoryAdFingerprint.ANCHOR_BIND);
+        }
         // Passcode arms on the reader alone when the setter is unresolvable; the
         // setter pair is kept only when fully resolved.
         dropIncompleteFamily(kept,
@@ -2288,6 +2697,9 @@ final class DexKitFamilyResolver {
         dropIncompleteFamily(kept,
                 DexKitPasscodeFingerprint.ANCHOR_BACKUP_CLASS,
                 DexKitPasscodeFingerprint.ANCHOR_BACKUP_METHOD);
+        dropIncompleteFamily(kept,
+                DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS,
+                DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD);
         dropIncompleteFamily(kept,
                 DexKitTelemetryFingerprint.ANCHOR_EVENT_ACCESSOR,
                 DexKitTelemetryFingerprint.ANCHOR_SCREEN_ACCESSOR,
@@ -2365,12 +2777,27 @@ final class DexKitFamilyResolver {
                 DexKitChatFingerprint.ANCHOR_MANAGER, DexKitChatFingerprint.ANCHOR_ACK_CLASS,
                 DexKitChatFingerprint.ANCHOR_ACK_TYPE, DexKitChatFingerprint.ANCHOR_SINGLE,
                 DexKitChatFingerprint.ANCHOR_BATCH);
+        dropIncompleteFamily(kept,
+                DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS,
+                DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD,
+                DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
+                DexKitAdtimaFingerprint.TRACKING_GATE_METHOD);
         if (!chatQueueOk(loader, kept)) {
             kept.remove(DexKitChatFingerprint.ANCHOR_MANAGER);
             kept.remove(DexKitChatFingerprint.ANCHOR_ACK_CLASS);
             kept.remove(DexKitChatFingerprint.ANCHOR_ACK_TYPE);
             kept.remove(DexKitChatFingerprint.ANCHOR_SINGLE);
             kept.remove(DexKitChatFingerprint.ANCHOR_BATCH);
+        }
+        filterStoryRequest(loader, kept, false);
+        filterStoryRequest(loader, kept, true);
+        dropIncompleteFamily(kept, DexKitOriginalPhotoFingerprint.ANCHORS.toArray(new String[0]));
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            dropIncompleteFamily(kept, route.anchors());
+            if (kept.containsKey(route.anchor("view_class"))
+                    && !VideoAdsTargets.check(loader, route, kept, new ArrayList<>())) {
+                for (String anchor : route.anchors()) kept.remove(anchor);
+            }
         }
         if (kept.isEmpty()) {
             return kept;
@@ -2382,22 +2809,43 @@ final class DexKitFamilyResolver {
                 DexKitOverlay.buildProfile(host.versionCode, entry.codeDigest,
                         signerSha256(context), merged, "static-verified"),
                 host.versionCode);
+        boolean originalPhotoOk = false;
         boolean webviewOk = false;
         boolean passcodeOk = false;
         boolean backupOk = false;
         boolean telemetryOk = false;
+        boolean remoteConfigOk = false;
         boolean bottomTabsOk = false;
         boolean meOk = false;
         boolean inboxCategoriesOk = false;
+        boolean storySeenOk = false;
+        boolean storySuggestedOk = false;
+        boolean adtimaOk = false;
+        boolean storyAdsOk = false;
         if (overlay != null) {
-            FamilyStates states = familyStates(overlay, loader, kept);
+            FamilyStates states = familyStates(overlay, loader, kept, exact);
+            originalPhotoOk = states.originalPhoto;
+            for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+                if (!Boolean.TRUE.equals(states.videoAds.get(route))
+                        || !anchorsQualified(exact, overlay, kept, route.anchors())) {
+                    for (String anchor : route.anchors()) kept.remove(anchor);
+                }
+            }
             webviewOk = states.webview;
             passcodeOk = states.passcode;
             backupOk = states.backup;
             telemetryOk = states.telemetry;
+            remoteConfigOk = states.remoteConfig;
             bottomTabsOk = states.bottomTabs;
             meOk = states.me;
             inboxCategoriesOk = states.inboxCategories;
+            storySeenOk = states.storySeen;
+            storySuggestedOk = states.storySuggested;
+            adtimaOk = states.adtima;
+            storyAdsOk = states.storyAds;
+        }
+        if (!originalPhotoOk) {
+            for (String anchor : DexKitOriginalPhotoFingerprint.ANCHORS) kept.remove(anchor);
         }
         if (!webviewOk) {
             dropIncompleteFamily(kept,
@@ -2419,6 +2867,10 @@ final class DexKitFamilyResolver {
             kept.remove(DexKitPasscodeFingerprint.ANCHOR_BACKUP_CLASS);
             kept.remove(DexKitPasscodeFingerprint.ANCHOR_BACKUP_METHOD);
         }
+        if (!remoteConfigOk) {
+            kept.remove(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS);
+            kept.remove(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD);
+        }
         if (!telemetryOk) {
             kept.remove(DexKitTelemetryFingerprint.ANCHOR_EVENT_ACCESSOR);
             kept.remove(DexKitTelemetryFingerprint.ANCHOR_SCREEN_ACCESSOR);
@@ -2434,12 +2886,47 @@ final class DexKitFamilyResolver {
         if (!inboxCategoriesOk) {
             kept.remove(DexKitInboxFingerprint.ANCHOR_CATEGORY_FIELD);
         }
+        if (!storySeenOk) {
+            kept.remove(DexKitStoryFingerprint.ANCHOR_SEEN_CLASS);
+            kept.remove(DexKitStoryFingerprint.ANCHOR_SEEN_METHOD);
+        }
+        if (!storySuggestedOk) {
+            kept.remove(DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS);
+            kept.remove(DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD);
+        }
+        if (!adtimaOk) {
+            kept.remove(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS);
+            kept.remove(DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD);
+            kept.remove(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS);
+            kept.remove(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD);
+        }
+        if (!storyAdsOk) {
+            kept.remove(DexKitStoryAdFingerprint.ANCHOR_CLASS);
+            kept.remove(DexKitStoryAdFingerprint.ANCHOR_BIND);
+        }
         if (!chatRepositoryOk(loaderOf(host), kept)) {
             kept.remove(DexKitChatFingerprint.ANCHOR_REPOSITORY_CLASS);
             kept.remove(DexKitChatFingerprint.ANCHOR_ACK_METHOD);
             kept.remove(DexKitChatFingerprint.ANCHOR_TYPING_METHOD);
         }
         return kept;
+    }
+
+    private static void filterStoryRequest(ClassLoader loader, Map<String, String> kept,
+                                            boolean suggested) {
+        String owner = suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_CLASS
+                : DexKitStoryFingerprint.ANCHOR_SEEN_CLASS;
+        String method = suggested ? DexKitStoryFingerprint.ANCHOR_SUGGESTED_METHOD
+                : DexKitStoryFingerprint.ANCHOR_SEEN_METHOD;
+        try {
+            if (DexKitStoryFingerprint.requestMethod(
+                    Class.forName(kept.get(owner), false, loader), kept.get(method), suggested) != null) {
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+        kept.remove(owner);
+        kept.remove(method);
     }
 
     private static boolean chatQueueOk(ClassLoader loader, Map<String, String> descriptors) {
@@ -2599,6 +3086,10 @@ final class DexKitFamilyResolver {
         appendMatches(summary, results, DexKitWebviewFingerprint.ANCHOR_DISPATCH);
         appendMatches(summary, stringResults, DexKitPasscodeFingerprint.QUERY_PASSCODE_CALLERS);
         appendMatches(summary, stringResults, DexKitPasscodeFingerprint.QUERY_BACKUP_CALLERS);
+        appendMatches(summary, stringResults,
+                DexKitRemoteConfigFingerprint.QUERY_STORY_CALLERS);
+        appendMatches(summary, stringResults,
+                DexKitRemoteConfigFingerprint.QUERY_COMMUNITY_CALLERS);
         appendMatches(summary, results, DexKitTelemetryFingerprint.QUERY_ACCESSORS);
         appendMatches(summary, results, DexKitMeFingerprint.QUERY_BUILDERS);
         for (Map.Entry<String, String> labelTable

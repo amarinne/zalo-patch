@@ -1,156 +1,133 @@
 package com.ez.zalopatch;
 
-import static org.junit.Assert.assertEquals;
-
-import android.content.ContextWrapper;
-import android.content.SharedPreferences;
-
 import org.junit.Test;
-
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
+import static org.junit.Assert.*;
 
+/** Disposable preference transactions model Android's memory update before disk acknowledgement. */
 public final class SettingsChangesTest {
-    @Test
-    public void pendingCountCountsDistinctKeys() {
-        TestContext context = new TestContext();
+    private static final String A = Tweaks.KEY_HIDE_DISCOVERY_TAB;
+    private static final String B = Tweaks.KEY_HIDE_TIMELINE_TAB;
 
-        SettingsChanges.markChanged(context, "inbox.chips");
-        SettingsChanges.markChanged(context, "calls.auto_record");
+    private FrameworkConfigPublicationTest.TestContext baseline() throws Exception {
+        FrameworkConfigPublicationTest.TestContext context = new FrameworkConfigPublicationTest.TestContext();
+        Map<String, String> values = new HashMap<>();
+        for (Settings.Setting<?> setting : Settings.all()) values.put(setting.key, String.valueOf(setting.defaultValue));
+        values.put(NotificationRuleStore.MIRROR_KEY, NotificationRuleStore.encode(NotificationRuleStore.RuleSet.empty()));
+        assertTrue(SettingsChanges.acknowledge(context,
+                new ConfigSnapshot(values, "running", 0, BuildConfig.VERSION_CODE)));
+        return context;
+    }
 
+    @Test public void fastTogglesCountDifferencesAndReverseToRunningBaseline() throws Exception {
+        var context = baseline();
+        for (int index = 0; index < 51; index++) {
+            assertTrue(SettingsStore.putBoolean(context, A, (index & 1) == 0));
+            assertEquals((index & 1) == 0 ? 1 : 0, SettingsChanges.pendingCount(context));
+        }
+        assertTrue(SettingsStore.putBoolean(context, B, true));
         assertEquals(2, SettingsChanges.pendingCount(context));
-    }
-
-    @Test
-    public void togglingAnImportedKeyIsNotCountedTwice() {
-        TestContext context = new TestContext();
-
-        // A settings import records each key it applied.
-        SettingsChanges.markChanged(context, "inbox.chips");
-        SettingsChanges.markChanged(context, "calls.auto_record");
-        // The user then toggles one of those same keys by hand.
-        SettingsChanges.markChanged(context, "inbox.chips");
-
-        assertEquals(2, SettingsChanges.pendingCount(context));
-    }
-
-    @Test
-    public void togglingAKeyOutsideAnImportIsCounted() {
-        TestContext context = new TestContext();
-
-        SettingsChanges.markChanged(context, "inbox.chips");
-        SettingsChanges.markChanged(context, "calls.auto_record");
-        SettingsChanges.markChanged(context, "telemetry.disable_ad_id");
-
-        assertEquals(3, SettingsChanges.pendingCount(context));
-    }
-
-    @Test
-    public void clearAtCurrentGenerationResetsPendingCount() {
-        TestContext context = new TestContext();
-
-        SettingsChanges.markChanged(context, "inbox.chips");
-        SettingsChanges.clearIfGeneration(context, SettingsChanges.generation(context));
-
+        assertTrue(SettingsStore.putBoolean(context, A, false));
+        assertEquals(1, SettingsChanges.pendingCount(context));
+        assertTrue(SettingsStore.putBoolean(context, B, false));
         assertEquals(0, SettingsChanges.pendingCount(context));
     }
 
-    @Test
-    public void clearKeepsChangesMadeAfterTheRestartStarted() {
-        TestContext context = new TestContext();
+    @Test public void everyAcceptedEditIsOneCommitWithIntentAndRevision() throws Exception {
+        var context = baseline();
+        TweakStore.preferences(context);
+        var file = context.files.get(Tweaks.PREFS_NAME);
+        assertTrue(SettingsStore.putBoolean(context, A, true));
+        assertEquals(1, file.commits);
+        assertEquals(Boolean.TRUE, file.values.get(A));
+        assertEquals(1L, file.values.get(SettingsStore.GENERATION));
+        assertFalse(file.values.containsKey(ConfigSnapshot.KEY));
+        assertTrue(SettingsStore.putBoolean(context, A, true));
+        assertEquals(1, file.commits);
+    }
 
-        SettingsChanges.markChanged(context, "inbox.chips");
-        long restartGeneration = SettingsChanges.generation(context);
-        // The user toggles something else while the restart is still in flight.
-        SettingsChanges.markChanged(context, "calls.auto_record");
-
-        SettingsChanges.clearIfGeneration(context, restartGeneration);
-
+    @Test public void batchEditHasNoPartialPublishedRevision() throws Exception {
+        var context = baseline();
+        TweakStore.preferences(context);
+        var file = context.files.get(Tweaks.PREFS_NAME);
+        file.onCommit = () -> {
+            assertEquals(Boolean.TRUE, file.values.get(A));
+            assertEquals(Boolean.TRUE, file.values.get(B));
+            assertEquals(1L, SettingsChanges.generation(context));
+        };
+        assertTrue(SettingsStore.save(context, Map.of(A, true, B, true)));
+        assertEquals(1, file.commits);
         assertEquals(2, SettingsChanges.pendingCount(context));
     }
 
-    private static final class TestContext extends ContextWrapper {
-        private final SharedPreferences preferences = newPreferences();
-
-        TestContext() {
-            super(null);
-        }
-
-        @Override
-        public SharedPreferences getSharedPreferences(String name, int mode) {
-            return preferences;
-        }
+    @Test public void validStartupAckMovesBaselineEvenWithNewerSavedIntent() throws Exception {
+        var context = baseline();
+        assertTrue(SettingsStore.putBoolean(context, A, true));
+        ConfigSnapshot loaded = new ConfigSnapshot(Map.of(A, "true"), "restart", 1, BuildConfig.VERSION_CODE);
+        assertTrue(SettingsStore.putBoolean(context, B, true));
+        assertTrue(SettingsChanges.acknowledge(context, loaded));
+        assertEquals(1, SettingsChanges.pendingCount(context));
+        assertTrue(SettingsStore.putBoolean(context, B, false));
+        assertEquals(0, SettingsChanges.pendingCount(context));
+        assertTrue(SettingsStore.putBoolean(context, A, false));
+        assertEquals(1, SettingsChanges.pendingCount(context));
     }
 
-    @SuppressWarnings("unchecked")
-    private static SharedPreferences newPreferences() {
-        Map<String, Object> values = new HashMap<>();
-        InvocationHandler preferencesHandler = (proxy, method, args) -> {
-            String name = method.getName();
-            if ("getStringSet".equals(name)) {
-                Set<String> stored = (Set<String>) values.get(args[0]);
-                return stored == null ? args[1] : new HashSet<>(stored);
-            }
-            if ("getInt".equals(name) || "getLong".equals(name)) {
-                Object stored = values.get(args[0]);
-                return stored == null ? args[1] : stored;
-            }
-            if ("edit".equals(name)) {
-                return newEditor(values);
-            }
-            if ("getAll".equals(name)) {
-                return new HashMap<>(values);
-            }
-            if ("contains".equals(name)) {
-                return values.containsKey(args[0]);
-            }
-            if ("registerOnSharedPreferenceChangeListener".equals(name)
-                    || "unregisterOnSharedPreferenceChangeListener".equals(name)) {
-                return null;
-            }
-            throw new UnsupportedOperationException(name);
-        };
-        return (SharedPreferences) Proxy.newProxyInstance(
-                SettingsChangesTest.class.getClassLoader(),
-                new Class<?>[]{SharedPreferences.class}, preferencesHandler);
+    @Test public void persistedBaselineAndIntentSurviveNewContext() throws Exception {
+        var context = baseline();
+        assertTrue(SettingsStore.putBoolean(context, A, true));
+        var reopened = new FrameworkConfigPublicationTest.TestContext();
+        reopened.files.putAll(context.files);
+        assertTrue(SettingsStore.getBoolean(reopened, A));
+        assertEquals(1, SettingsChanges.pendingCount(reopened));
+        assertTrue(SettingsStore.putBoolean(reopened, A, false));
+        assertFalse(SettingsChanges.needsRestart(reopened));
     }
 
-    private static SharedPreferences.Editor newEditor(Map<String, Object> values) {
-        InvocationHandler editorHandler = new InvocationHandler() {
-            private final Map<String, Object> updates = new HashMap<>();
-            private final Set<String> removals = new HashSet<>();
+    @Test public void failedCommitRejectsCachedValueAndRetryRepairsBeforeSaving() throws Exception {
+        var context = baseline();
+        TweakStore.preferences(context);
+        var file = context.files.get(Tweaks.PREFS_NAME);
+        file.commitResult = false;
+        assertFalse(SettingsStore.putBoolean(context, A, true));
+        assertFalse(SettingsStore.getBoolean(context, A));
+        assertEquals(0L, SettingsChanges.generation(context));
+        assertEquals(0, SettingsChanges.pendingCount(context));
+        assertFalse(SettingsStore.canPublish(context));
+        file.commitResult = true;
+        assertTrue(SettingsStore.putBoolean(context, B, true));
+        assertTrue(SettingsStore.canPublish(context));
+        assertFalse(SettingsStore.getBoolean(context, A));
+        assertEquals(1, SettingsChanges.pendingCount(context));
+    }
 
-            @Override
-            @SuppressWarnings("unchecked")
-            public Object invoke(Object proxy, Method method, Object[] args) {
-                String name = method.getName();
-                if ("putStringSet".equals(name) || "putInt".equals(name)
-                        || "putLong".equals(name)) {
-                    updates.put((String) args[0],
-                            args[1] instanceof Set ? new HashSet<>((Set<String>) args[1]) : args[1]);
-                    return proxy;
-                }
-                if ("remove".equals(name)) {
-                    removals.add((String) args[0]);
-                    return proxy;
-                }
-                if ("apply".equals(name) || "commit".equals(name)) {
-                    for (String key : removals) {
-                        values.remove(key);
-                    }
-                    values.putAll(updates);
-                    return "commit".equals(name);
-                }
-                throw new UnsupportedOperationException(name);
-            }
-        };
-        return (SharedPreferences.Editor) Proxy.newProxyInstance(
-                SettingsChangesTest.class.getClassLoader(),
-                new Class<?>[]{SharedPreferences.Editor.class}, editorHandler);
+    @Test public void listAndRulesReverseAgainstTypedBaseline() throws Exception {
+        var context = baseline();
+        assertTrue(SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, 2));
+        assertTrue(NotificationRuleStore.save(context, new NotificationRuleStore.RuleSet(
+                java.util.List.of("promotion"), null, null, null)));
+        assertEquals(2, SettingsChanges.pendingCount(context));
+        assertTrue(NotificationRuleStore.save(context, NotificationRuleStore.RuleSet.empty()));
+        assertTrue(SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, 0));
+        assertEquals(0, SettingsChanges.pendingCount(context));
+    }
+
+    @Test public void moduleLocalRetentionSavesWithoutRequiringRuntimeActivation() throws Exception {
+        var context = baseline();
+        assertTrue(SettingsStore.putInt(context, Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION, 100));
+        assertEquals(100, SettingsStore.getInt(context, Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION));
+        assertFalse(SettingsChanges.needsRestart(context));
+        assertFalse(TweakStore.preferences(context).getAll().containsKey(ConfigSnapshot.KEY));
+        var unknown = new FrameworkConfigPublicationTest.TestContext();
+        SettingsChanges.markChanged(unknown, Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION);
+        assertEquals(0, SettingsChanges.pendingCount(unknown));
+    }
+
+    @Test public void unknownActivationAndUpgradeRequireRestartWithoutClaimingRuntimeState() throws Exception {
+        var context = new FrameworkConfigPublicationTest.TestContext();
+        assertTrue(SettingsChanges.needsRestart(context));
+        assertTrue(SettingsChanges.acknowledge(context, new ConfigSnapshot(Map.of(), "old", 0, BuildConfig.VERSION_CODE - 1)));
+        assertTrue(SettingsChanges.needsRestart(context));
     }
 }

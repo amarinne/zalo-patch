@@ -45,6 +45,39 @@ public final class ZaloInstanceTest {
     }
 
     @Test
+    public void renamedPackagesDoNotBecomeRestartTargets() {
+        Map<Integer, List<Integer>> grouped = ZaloInstance.parsePs(
+                "PID USER NAME\n"
+                        + "10 u0_a266 com.zing.zalo.clone\n"
+                        + "11 u999_a266 com.zing.zalo2:push\n"
+                        + "12 u10_a266 com.zing.zalo:push\n");
+        assertEquals(1, grouped.size());
+        assertEquals(Collections.singletonList(12), grouped.get(10));
+    }
+
+    @Test
+    public void stoppedProfilesDoNotBecomeRestartTargets() {
+        List<ZaloInstance> instances = ZaloInstance.combine(
+                ZaloInstance.parsePs("20351 u0_a266 com.zing.zalo\n"),
+                ZaloInstance.parseUsers(USERS), Collections.emptyMap());
+        assertEquals(Collections.singletonList(0), ZaloInstance.userIds(instances));
+        assertFalse(ZaloInstance.needsSelection(instances));
+        assertTrue(ZaloInstance.combine(Collections.emptyMap(),
+                ZaloInstance.parseUsers(USERS), Collections.emptyMap()).isEmpty());
+    }
+
+    @Test
+    public void severalProcessesInOneProfileDoNotNeedASelector() {
+        List<ZaloInstance> instances = ZaloInstance.combine(
+                ZaloInstance.parsePs("31008 u999_a266 com.zing.zalo:push\n"
+                        + "31007 u999_a266 com.zing.zalo\n"),
+                ZaloInstance.parseUsers(USERS), Collections.emptyMap());
+        assertEquals(Collections.singletonList(999), ZaloInstance.userIds(instances));
+        assertEquals(Arrays.asList(31007, 31008), instances.get(0).pids);
+        assertFalse(ZaloInstance.needsSelection(instances));
+    }
+
+    @Test
     public void userIdHandlesNamedAndNumericOwners() {
         assertEquals(0, ZaloInstance.userIdOf("u0_a266"));
         assertEquals(999, ZaloInstance.userIdOf("u999_a266"));
@@ -89,6 +122,18 @@ public final class ZaloInstanceTest {
         List<ZaloInstance> instances = ZaloInstance.combine(grouped, null, oom);
         for (ZaloInstance instance : instances) assertFalse(instance.foreground);
         assertNull(instances.get(0).label);
+    }
+
+    @Test
+    public void missingPriorityAndLabelsKeepEveryRunningTarget() {
+        List<ZaloInstance> instances = ZaloInstance.combine(
+                ZaloInstance.parsePs(PS), null, null);
+        assertEquals(Arrays.asList(0, 10, 999), ZaloInstance.userIds(instances));
+        assertTrue(ZaloInstance.needsSelection(instances));
+        for (ZaloInstance instance : instances) {
+            assertFalse(instance.foreground);
+            assertNull(instance.label);
+        }
     }
 
     @Test

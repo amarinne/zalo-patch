@@ -130,7 +130,7 @@ public final class RuntimeEnvironmentReporter {
 
     private static ClassLoader[] runtimeClassLoaders(Context context) {
         return new ClassLoader[]{
-                io.github.libxposed.api.XposedModule.class.getClassLoader(),
+                XpHooks.class.getClassLoader(),
                 RuntimeEnvironmentReporter.class.getClassLoader(),
                 context == null ? null : context.getClassLoader(),
                 Thread.currentThread().getContextClassLoader(),

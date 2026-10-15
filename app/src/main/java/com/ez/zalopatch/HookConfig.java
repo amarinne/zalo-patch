@@ -13,6 +13,16 @@ public final class HookConfig {
     private static final Uri PROVIDER_URI = Uri.parse("content://com.ez.zalopatch.config/prefs");
     private static final String MODULE_PACKAGE = "com.ez.zalopatch";
     private static final Map<String, String> cache = new ConcurrentHashMap<>();
+    private static volatile ConfigSnapshot snapshot;
+    private static volatile ConfigSnapshot legacySnapshot;
+    private static volatile boolean legacySnapshotChecked;
+    private static volatile boolean legacySnapshotInvalid;
+    private static volatile Map<String, String> legacySettings;
+    private static volatile NotificationRuleStore.RuleSet legacyRules;
+    private static volatile boolean authoritative;
+    private static volatile boolean remoteInitialized;
+    private static volatile boolean providerSnapshotChecked;
+    private static volatile String snapshotSource = "legacy";
     private static volatile Context appContext;
     private static volatile Context moduleContext;
     private static volatile boolean moduleContextUnavailable;
@@ -22,7 +32,47 @@ public final class HookConfig {
     private HookConfig() {
     }
 
+    public interface RemoteConfig {
+        long properties() throws Throwable;
+        String readSnapshot() throws Throwable;
+    }
+
+    public static synchronized void initRemote(RemoteConfig framework) {
+        if (remoteInitialized) return;
+        remoteInitialized = true;
+        try {
+            if (ConfigSnapshot.remoteSupported(framework.properties(), 2L)) {
+                authoritative = true;
+                snapshotSource = "remote-unavailable";
+                snapshot = ConfigSnapshot.decode(framework.readSnapshot(), BuildConfig.VERSION_CODE);
+                if (snapshot != null) snapshotSource = "framework-remote";
+            }
+        } catch (Throwable error) {
+            // A remote-capable framework must never revive a stale legacy snapshot on IPC failure.
+            authoritative = true;
+            snapshotSource = "remote-unavailable";
+        }
+    }
+
+    public static boolean hasAuthoritativeSnapshot() { return authoritative; }
+
+    public static String snapshotSource() { return snapshotSource; }
+
+    public static String snapshotId() {
+        return authoritative ? (snapshot == null ? "" : snapshot.id)
+                : legacySnapshot == null ? "" : legacySnapshot.id;
+    }
+
+    public static String readBlob(String key) {
+        if (!authoritative && legacySnapshot != null && NotificationRuleStore.MIRROR_KEY.equals(key)) {
+            return legacySnapshot.values.get(key);
+        }
+        return ConfigSnapshot.value(snapshot, authoritative, key,
+                () -> SettingsPropertyMirror.readBlob(key));
+    }
+
     public static void init() {
+        loadLegacySnapshot();
         if (hookDebugEnabled == null) {
             synchronized (HookConfig.class) {
                 if (hookDebugEnabled == null) {
@@ -38,7 +88,45 @@ public final class HookConfig {
             appContext = applicationContext != null ? applicationContext : context;
             moduleContext = null;
             moduleContextUnavailable = false;
+            loadProviderSnapshot();
             reload();
+            freezeLegacySettings();
+        }
+    }
+
+    private static synchronized void loadLegacySnapshot() {
+        if (authoritative || legacySnapshotChecked) return;
+        legacySnapshotChecked = true;
+        String encoded = SettingsPropertyMirror.readBlob(ConfigSnapshot.LEGACY_KEY);
+        if (encoded != null || SettingsPropertyMirror.hasBlobMarker(ConfigSnapshot.LEGACY_KEY)) {
+            legacySnapshot = ConfigSnapshot.decodeProperty(encoded, BuildConfig.VERSION_CODE,
+                    SettingsPropertyMirror.readBlob(NotificationRuleStore.MIRROR_KEY));
+            legacySnapshotInvalid = legacySnapshot == null;
+            snapshotSource = legacySnapshot == null ? "property-unavailable" : "property-snapshot";
+        }
+    }
+
+    private static synchronized void freezeLegacySettings() {
+        if (authoritative || legacySettings != null) return;
+        loadLegacySnapshot();
+        Map<String, String> loaded = new java.util.HashMap<>();
+        for (Settings.Setting<?> setting : Settings.all()) {
+            String value = legacySnapshotInvalid ? null : readValue(appContext, setting.key);
+            loaded.put(setting.key, value == null ? String.valueOf(setting.defaultValue) : value);
+        }
+        legacyRules = legacySnapshotInvalid ? NotificationRuleStore.RuleSet.empty() : notificationRules();
+        legacySettings = java.util.Collections.unmodifiableMap(loaded);
+    }
+
+    private static synchronized void loadProviderSnapshot() {
+        if (authoritative || providerSnapshotChecked) return;
+        providerSnapshotChecked = true;
+        String encoded = readFromProvider(resolveModuleContext(appContext), ConfigSnapshot.KEY, "module");
+        if (encoded == null) encoded = readFromProvider(appContext, ConfigSnapshot.KEY, "target");
+        if (encoded != null) {
+            authoritative = true;
+            snapshot = ConfigSnapshot.decode(encoded, BuildConfig.VERSION_CODE);
+            snapshotSource = snapshot == null ? "provider-unavailable" : "provider-snapshot";
         }
     }
 
@@ -48,6 +136,7 @@ public final class HookConfig {
     }
 
     public static NotificationRuleStore.RuleSet notificationRules() {
+        if (!authoritative && legacyRules != null) return legacyRules;
         NotificationRuleStore.RuleSet cached = notificationRules;
         if (cached != null) {
             return cached;
@@ -55,9 +144,9 @@ public final class HookConfig {
         synchronized (HookConfig.class) {
             cached = notificationRules;
             if (cached == null) {
-                String propertyJson = SettingsPropertyMirror.readBlob(
+                String propertyJson = readBlob(
                         NotificationRuleStore.MIRROR_KEY);
-                String providerJson = propertyJson == null
+                String providerJson = !authoritative && propertyJson == null
                         ? readValue(appContext, NotificationRuleStore.PREF_KEY) : null;
                 cached = NotificationRuleStore.resolve(propertyJson, providerJson);
                 notificationRules = cached;
@@ -67,6 +156,13 @@ public final class HookConfig {
     }
 
     public static void logStartupSnapshot() {
+        if (authoritative) {
+            XpLog.i("ZaloPatch: HookConfig snapshot source=" + snapshotSource
+                    + " id=" + snapshotId() + " generation="
+                    + (snapshot == null ? -1 : snapshot.generation) + " keys="
+                    + (snapshot == null ? 0 : snapshot.values.size()));
+            return;
+        }
         Context context = appContext;
         if (context == null) {
             XpLog.i("ZaloPatch: HookConfig snapshot source=none appContext=false");
@@ -167,6 +263,12 @@ public final class HookConfig {
     }
 
     private static String readValue(Context context, String key) {
+        if (authoritative) return ConfigSnapshot.value(snapshot, true, key, () -> null);
+        if (Settings.find(key) != null) {
+            if (legacySettings != null) return legacySettings.get(key);
+            if (legacySnapshot != null) return legacySnapshot.values.get(key);
+            if (legacySnapshotInvalid) return null;
+        }
         String cached = cache.get(key);
         if (cached != null) {
             return cached;

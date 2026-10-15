@@ -17,9 +17,12 @@ import android.view.Gravity;
 
 import androidx.transition.Slide;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -257,7 +260,17 @@ public final class StatusActivity extends ZpSettingsActivity {
                                 Toast.LENGTH_LONG);
                     }
                 } else if (requestCode == REQUEST_HISTORY_EXPORT) {
-                    writeText(context, uri, new NotificationHistoryStore(context).exportJson());
+                    try (NotificationHistoryStore history = new NotificationHistoryStore(context);
+                            OutputStream output = context.getContentResolver().openOutputStream(uri, "w")) {
+                        if (output == null) {
+                            throw new IllegalStateException(
+                                    context.getString(R.string.zp_output_unavailable));
+                        }
+                        try (Writer writer = new BufferedWriter(
+                                new OutputStreamWriter(output, StandardCharsets.UTF_8))) {
+                            history.exportJson(writer);
+                        }
+                    }
                     showToast(context.getString(R.string.zp_history_exported), Toast.LENGTH_SHORT);
                 }
             } catch (Exception exception) {

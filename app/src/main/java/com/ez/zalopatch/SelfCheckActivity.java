@@ -58,8 +58,6 @@ public final class SelfCheckActivity {
             failedCategory = PreferenceUi.category(screen, "");
             staleCategory = PreferenceUi.category(screen, "");
 
-            screen.addPreference(PreferenceUi.footer(context,
-                    getString(R.string.zp_self_check_footer), ""));
             setPreferenceScreen(screen);
             refresh();
         }

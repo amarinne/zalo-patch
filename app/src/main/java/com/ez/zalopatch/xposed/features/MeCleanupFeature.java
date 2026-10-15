@@ -12,6 +12,7 @@ import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZinstantRenderedText;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
+import com.ez.zalopatch.xposed.core.UiOutcomeObserver;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -67,6 +68,10 @@ public final class MeCleanupFeature extends Feature {
     private long e2eRunGeneration;
     private long e2eRunDeadline;
     private JSONObject e2eLifecycleEvidence = new JSONObject();
+    private final UiOutcomeObserver zstyleOutcome = new UiOutcomeObserver();
+    private final UiOutcomeObserver qrOutcome = new UiOutcomeObserver();
+    private final UiOutcomeObserver cloudOutcome = new UiOutcomeObserver();
+    private final UiOutcomeObserver businessOutcome = new UiOutcomeObserver();
     private boolean hideQrWallet;
     private boolean hideZCloud;
     private boolean hideZStyle;
@@ -101,6 +106,11 @@ public final class MeCleanupFeature extends Feature {
         }
         if (hideZStyle || debugStarted) {
             String owner = hideZStyle ? FEATURE_ZSTYLE : FEATURE_E2E;
+            String nativeLayoutMethod = schemaString("symbols.me.full_zinstant_predicate_method", "");
+            if (hideZStyle && !nativeLayoutMethod.isEmpty()) {
+                runGuarded("Native Me layout", FEATURE_ZSTYLE, tabMeClass() + "#" + nativeLayoutMethod,
+                        () -> hookNativeMeLayout(nativeLayoutMethod));
+            }
             if (!zStyleViewClass().isEmpty()) {
                 runGuarded("zStyle TabMe view", owner, zStyleViewClass(), this::hookZStyleView);
             } else if (!zStyleViewExclusive()) {
@@ -286,7 +296,9 @@ public final class MeCleanupFeature extends Feature {
             for (int i = e2eEvents.size() - 1; i >= 0; i--) {
                 E2eTemplateEvent event = e2eEvents.get(i);
                 if (event.zstyle && event.binding == templateBinds.get(event.template)
-                        && meTemplateWrapper(event.template) == event.wrapper && event.wrapper.isAttachedToWindow()) {
+                        && (meTemplateWrapper(event.template) == event.wrapper
+                            || event.template == event.wrapper && isFullMeSection(event.template))
+                        && event.wrapper.isAttachedToWindow()) {
                     view = event.wrapper;
                     break;
                 }
@@ -658,7 +670,10 @@ public final class MeCleanupFeature extends Feature {
             @Override public void after(XpHooks.HookParam param) {
                 if (!(param.thisObject instanceof View)) return;
                 View view = (View) param.thisObject;
-                if (hideZStyle) collapseZStyleView(view);
+                if (hideZStyle) {
+                    zstyleOutcome.afterBind(FEATURE_ZSTYLE, "me_exclusive", view, () -> true);
+                    collapseZStyleView(view);
+                }
                 view.post(() -> {
                     if (hideZStyle) collapseZStyleView(view);
                     if (e2eObserving()) e2eExclusiveView = new java.lang.ref.WeakReference<>(view);
@@ -687,10 +702,32 @@ public final class MeCleanupFeature extends Feature {
         }, null);
         XpHooks.hookAllMethods(owner, layout, "setZinstantRootView", new XpHooks.After() {
             @Override public void after(XpHooks.HookParam param) {
+                // The full-screen canvas contains the profile as well as promotions. Observe
+                // it for OFF acceptance, but never collapse it as a dedicated zStyle card.
+                if (param.thisObject instanceof View && isFullMeSection((View) param.thisObject)) {
+                    if (hideZStyle && param.args.length > 0 && param.args[0] != null) {
+                        observeZstyleTemplate((View) param.thisObject, (View) param.thisObject,
+                                param.args[0], "me_full_zinstant");
+                    }
+                    if (e2eObserving() && param.args.length > 0 && param.args[0] != null) {
+                        View section = (View) param.thisObject;
+                        Object binding = new Object();
+                        templateBinds.put(section, binding);
+                        E2eTemplateEvent event = new E2eTemplateEvent(section, section,
+                                ZinstantRenderedText.read(param.args[0]), null, binding);
+                        event.callbackCompleted = true;
+                        synchronized (e2eLock) {
+                            e2eEvents.add(event);
+                            while (e2eEvents.size() > 32) e2eEvents.remove(0);
+                        }
+                    }
+                    return;
+                }
                 View wrapper = meTemplateWrapper(param.thisObject);
                 if (wrapper == null || param.args.length == 0 || param.args[0] == null) return;
                 View template = (View) param.thisObject;
                 Object renderedRoot = param.args[0];
+                if (hideZStyle) observeZstyleTemplate(template, wrapper, renderedRoot, "me_template");
                 Object binding = templateBinds.get(template);
                 E2eTemplateEvent captured = null;
                 if (e2eObserving()) {
@@ -747,6 +784,38 @@ public final class MeCleanupFeature extends Feature {
         });
     }
 
+    private void observeZstyleTemplate(View template, View wrapper, Object root, String route) {
+        zstyleOutcome.afterBind(FEATURE_ZSTYLE, route, wrapper, () -> {
+            if (!(isFullMeSection(template) && template == wrapper)
+                    && meTemplateWrapper(template) != wrapper) return false;
+            try {
+                Object current = template.getClass().getMethod("getZinstantRootTree").invoke(template);
+                return current == root && containsZStyleMarker(ZinstantRenderedText.read(current));
+            } catch (ReflectiveOperationException | RuntimeException unavailable) { return false; }
+        });
+    }
+
+    private void hookNativeMeLayout(String methodName) throws Throwable {
+        Class<?> tabMe = XpReflect.findClass(tabMeClass(), classLoader);
+        Method predicate = tabMe.getDeclaredMethod(methodName);
+        if (predicate.getReturnType() != boolean.class
+                || java.lang.reflect.Modifier.isStatic(predicate.getModifiers())) {
+            throw new NoSuchMethodException("native Me layout predicate shape");
+        }
+        // The host's native renderer keeps separate promotional cards and ordinary rows.
+        // Existing item and rendered-marker filters then remove only their requested targets.
+        XpHooks.hookMethod(FEATURE_ZSTYLE, predicate, new XpHooks.After() {
+            @Override public void after(XpHooks.HookParam param) {
+                if (Boolean.TRUE.equals(param.getResult())) param.setResult(false);
+            }
+        });
+    }
+
+    private static boolean isFullMeSection(View view) {
+        return "com.zing.zalo.ui.maintab.tabmefullzinstant.TabMeZinstantSection"
+                .equals(view.getClass().getName());
+    }
+
     private void restoreMeTemplate(View wrapper) {
         int[] prior = wrapper == null ? null : collapsedTemplates.remove(wrapper);
         if (prior == null) return;
@@ -786,9 +855,13 @@ public final class MeCleanupFeature extends Feature {
             return;
         }
         View row = findClickableAncestor(textView);
-        if (row == null || row.getVisibility() == View.GONE) {
-            return;
-        }
+        if (row == null) return;
+        UiOutcomeObserver observer = reason == HIDE_ZSTYLE ? zstyleOutcome
+                : reason == HIDE_QR_WALLET ? qrOutcome : reason == HIDE_ZCLOUD ? cloudOutcome : businessOutcome;
+        observer.afterBind(featureForReason(reason), "me_text_row", row,
+                () -> hasAncestorClass(textView, tabMeClass()) && findClickableAncestor(textView) == row
+                        && visibleTextHideReason(String.valueOf(textView.getText())) == reason);
+        if (row.getVisibility() == View.GONE) return;
         collapseView(row);
         reportSuppressed(reason, "TabMe visible text", reasonDetail(reason));
     }

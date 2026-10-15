@@ -1,11 +1,46 @@
 package com.ez.zalopatch;
 
 import org.junit.Test;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
 public final class BottomTabsArraysTest {
+    private enum Tab { MESSAGE, PHONEBOOK, GROUP, DISCOVERY, TIMELINE, ME }
+
+    @Test public void offOnOffPreservesNativeInputAndRestoresEveryTabIdentity() {
+        List<Tab> nativeTabs = new ArrayList<>(Arrays.asList(
+                Tab.MESSAGE, Tab.PHONEBOOK, Tab.DISCOVERY, Tab.TIMELINE, Tab.ME));
+        int[] nativeIcons = {101, 102, 104, 105, 106};
+        boolean[] nativePreloaded = {true, false, true, false, true};
+        BottomTabsArrays.Result off = BottomTabsArrays.configure(nativeTabs,
+                nativeIcons, nativePreloaded, false, false, false, null, 0);
+
+        BottomTabsArrays.Result on = BottomTabsArrays.configure(nativeTabs,
+                nativeIcons, nativePreloaded, true, true, true, Tab.GROUP, 103);
+        assertEquals(Arrays.asList(Tab.MESSAGE, Tab.PHONEBOOK, Tab.GROUP, Tab.ME), on.tabs);
+        assertSame(Tab.ME, on.tabs.get(3));
+        assertArrayEquals(new int[]{101, 102, 103, 106}, on.icons);
+        assertArrayEquals(new boolean[]{true, false, false, true}, on.preloaded);
+        assertEquals(Arrays.asList(Tab.MESSAGE, Tab.PHONEBOOK, Tab.DISCOVERY,
+                Tab.TIMELINE, Tab.ME), nativeTabs);
+        assertArrayEquals(new int[]{101, 102, 104, 105, 106}, nativeIcons);
+        assertArrayEquals(new boolean[]{true, false, true, false, true}, nativePreloaded);
+
+        // Restart supplies the native list again, not the module's compact output.
+        BottomTabsArrays.Result restored = BottomTabsArrays.configure(nativeTabs,
+                nativeIcons, nativePreloaded, false, false, false, null, 0);
+        assertEquals(off.tabs, restored.tabs);
+        assertArrayEquals(off.icons, restored.icons);
+        assertArrayEquals(off.preloaded, restored.preloaded);
+        for (int i = 0; i < nativeTabs.size(); i++) {
+            assertSame(nativeTabs.get(i), restored.tabs.get(i));
+        }
+    }
+
     @Test public void removingTabsRetainsActualHostIconsAndPreloadIdentity() {
         BottomTabsArrays.Result result = BottomTabsArrays.filter(
                 Arrays.asList("MESSAGE", "PHONEBOOK", "GROUP", "DISCOVERY", "TIMELINE", "ME", "MORE"),

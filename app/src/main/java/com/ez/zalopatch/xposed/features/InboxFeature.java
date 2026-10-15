@@ -266,6 +266,7 @@ public final class InboxFeature extends Feature {
      * no symbols at all. Per-inflation cost is one integer comparison otherwise.
      */
     private void hookMediaBoxLayout() throws Throwable {
+        final com.ez.zalopatch.xposed.core.UiOutcomeObserver outcome = new com.ez.zalopatch.xposed.core.UiOutcomeObserver();
         final int[] layoutId = {0};
         XpHooks.After collapse = new XpHooks.After() {
             @Override
@@ -288,6 +289,7 @@ public final class InboxFeature extends Feature {
                         || ((Integer) param.args[0]).intValue() != layoutId[0]) {
                     return;
                 }
+                outcome.afterBind(FEATURE_MEDIA_BOX, "inbox_media_box", root, () -> true);
                 root.setVisibility(android.view.View.GONE);
                 android.view.ViewGroup.LayoutParams params = root.getLayoutParams();
                 if (params != null) {

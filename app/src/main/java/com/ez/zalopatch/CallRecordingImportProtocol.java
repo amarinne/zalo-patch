@@ -25,6 +25,7 @@ public final class CallRecordingImportProtocol {
     private static final int TRANSACTION_CAPTURE_UID = IBinder.FIRST_CALL_TRANSACTION;
 
     public interface Completion {
+        /** accepted means a recoverable destination copy exists, not merely a queued task. */
         void onComplete(boolean accepted);
     }
 

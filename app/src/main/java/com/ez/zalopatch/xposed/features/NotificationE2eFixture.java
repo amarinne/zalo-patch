@@ -62,6 +62,7 @@ final class NotificationE2eFixture {
         if (raw == null || !RUNNING.compareAndSet(false, true)) return;
         String runId = "invalid";
         try {
+            if (raw.length() > 4096) throw new IllegalArgumentException("journal too large");
             JSONObject journal = new JSONObject(raw);
             String recordedRunId = journal.getString("run_id");
             if (!recordedRunId.matches("[a-zA-Z0-9-]{1,64}")) {

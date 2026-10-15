@@ -26,8 +26,24 @@ public final class RootAccessTest {
     }
 
     @Test
-    public void timeoutIsDeniedRatherThanReprobedRepeatedly() {
+    public void timeoutIsDeniedRatherThanAbsent() {
         assertEquals(RootAccess.State.DENIED, RootAccess.classify(
                 new DiagnosticRootProcessRunner.Result(-1, "", true, false)));
+    }
+
+    @Test
+    public void rootUidDoesNotOverrideFailureOrTimeout() {
+        assertEquals(RootAccess.State.DENIED, RootAccess.classify(
+                new DiagnosticRootProcessRunner.Result(1, "0\n", false, false)));
+        assertEquals(RootAccess.State.DENIED, RootAccess.classify(
+                new DiagnosticRootProcessRunner.Result(0, "0\n", true, false)));
+    }
+
+    @Test
+    public void successfulCommandStillRequiresAnExactRootUid() {
+        for (String output : new String[] {null, "", "uid=0(root)", "0\n2000", "1000"}) {
+            assertEquals(RootAccess.State.DENIED, RootAccess.classify(
+                    new DiagnosticRootProcessRunner.Result(0, output, false, false)));
+        }
     }
 }

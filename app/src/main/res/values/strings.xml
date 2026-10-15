@@ -5,16 +5,16 @@
     <!-- Dashboard -->
     <string name="zp_restart_title">Restart Zalo</string>
     <string name="zp_restart_sent">Restart command sent</string>
-    <string name="zp_restart_root_denied">Root access denied</string>
+    <string name="zp_restart_root_denied">Root not available</string>
     <string name="zp_restart_failed">Restart command failed</string>
-    <string name="zp_restart_manual_fallback_summary">Without root, opens Zalo app info for manual force stop.</string>
-    <string name="zp_restart_target_title">Choose Zalo to restart</string>
-    <string name="zp_restart_all_instances">All instances</string>
+    <string name="zp_restart_manual_fallback_summary">Root restarts Zalo automatically. Without root, force stop and reopen it.</string>
+    <string name="zp_restart_target_title">Choose a running Zalo to restart</string>
+    <string name="zp_restart_all_instances">All detected instances</string>
     <string name="zp_restart_owner_label">Owner</string>
     <string name="zp_restart_user_label">User %1$d</string>
     <string name="zp_restart_instance_row">%1$s · user %2$d · pid %3$d</string>
     <string name="zp_restart_instance_row_active">%1$s · user %2$d · pid %3$d · %4$s</string>
-    <string name="zp_restart_instance_active">active</string>
+    <string name="zp_restart_instance_active">likely in use</string>
     <string name="zp_root_access_title">Root access</string>
     <string name="zp_root_access_granted">Granted · tap to check again</string>
     <string name="zp_root_access_denied">Denied · tap to check again</string>
@@ -40,8 +40,8 @@
     <string name="zp_section_privacy">Privacy</string>
     <string name="zp_section_module">Module</string>
     <plurals name="zp_pending_changes">
-        <item quantity="one">%1$d change pending</item>
-        <item quantity="other">%1$d changes pending</item>
+        <item quantity="one">%1$d saved change · restart to activate</item>
+        <item quantity="other">%1$d saved changes · restart to activate</item>
     </plurals>
 
     <string name="zp_notification_filter_title">Notification filter</string>
@@ -62,7 +62,7 @@
     <string name="zp_developer_tools_title">Developer tools</string>
     <string name="zp_developer_tools_summary">Runtime status, version maps, diagnostics, and compatibility remap.</string>
     <string name="zp_telemetry_title">Telemetry</string>
-    <string name="zp_telemetry_master_title">Disable all telemetry</string>
+    <string name="zp_telemetry_master_title">Enable all listed telemetry blocks</string>
     <string name="zp_hook_path">Hook: %1$s</string>
     <string name="zp_hook_path_unavailable">Hook: no active exact symbol for this Zalo version</string>
     <string name="zp_display_hook_detail_title">Display hook detail</string>
@@ -73,23 +73,19 @@
     <string name="zp_unavailable_with_summary">Unavailable. %1$s</string>
     <string name="zp_requirement_root">Root required.</string>
     <string name="zp_requirement_resource_hooks">This runtime did not expose resource hooks.</string>
+    <string name="zp_requirement_recording_storage">Saving call recordings requires Android 10 or newer.</string>
     <string name="zp_requirement_with_summary">%1$s %2$s</string>
 
     <!-- Tweak rows -->
     <string name="zp_tweak_hide_discovery">Hide Discovery tab</string>
-    <string name="zp_tweak_hide_discovery_summary">Remove the bottom-bar Discovery tab.</string>
     <string name="zp_tweak_hide_timeline">Hide Newsfeed tab</string>
-    <string name="zp_tweak_hide_timeline_summary">Remove the bottom-bar Timeline/Newsfeed tab.</string>
     <string name="zp_tweak_keep_group">Keep Group tab</string>
     <string name="zp_tweak_keep_group_summary">Only when Zalo shows it.</string>
     <string name="zp_tweak_force_messages_home">Use Messages as home</string>
     <string name="zp_tweak_force_messages_home_summary">Opens Messages when launching Zalo. Other tabs remain usable.</string>
     <string name="zp_tweak_hide_qr_wallet">Hide QR Wallet</string>
-    <string name="zp_tweak_hide_qr_wallet_summary">Hide the QR Wallet entry on the Me screen.</string>
     <string name="zp_tweak_hide_zcloud">Hide zCloud</string>
-    <string name="zp_tweak_hide_zcloud_summary">Hide the zCloud entry on the Me screen.</string>
     <string name="zp_tweak_hide_zstyle">Hide zStyle</string>
-    <string name="zp_tweak_hide_zstyle_summary">Hide the zStyle promotional entry on the Me screen.</string>
     <string name="zp_tweak_hide_zbusiness">Hide zBusiness</string>
     <string name="zp_tweak_hide_zbusiness_summary">Only when Zalo shows it.</string>
     <string name="zp_tweak_disable_event_analytics">Disable event analytics</string>
@@ -100,16 +96,14 @@
     <string name="zp_tweak_disable_session_analytics_summary">Blocks session records in Zalo’s analytics database.</string>
     <string name="zp_tweak_disable_view_analytics">Disable view analytics</string>
     <string name="zp_tweak_disable_view_analytics_summary">Blocks view records in Zalo’s analytics database.</string>
-    <string name="zp_tweak_disable_crashlytics">Disable Crashlytics</string>
-    <string name="zp_tweak_disable_crashlytics_summary">Blocks Zalo’s Crashlytics reports and custom keys.</string>
+    <string name="zp_tweak_disable_crashlytics">Block Crashlytics logging</string>
+    <string name="zp_tweak_disable_crashlytics_summary">Blocks non-fatal exception reports, logs, and custom keys. Automatic crash collection is unchanged.</string>
     <string name="zp_tweak_disable_ad_id">Disable Advertising ID</string>
     <string name="zp_tweak_disable_ad_id_summary">Zalo gets a zero identifier.</string>
     <string name="zp_tweak_disable_measurement_bind">Disable Measurement bind</string>
-    <string name="zp_tweak_disable_measurement_bind_summary">Push notifications stay on.</string>
+    <string name="zp_tweak_disable_measurement_bind_summary">Blocks selected measurement-service requests and Firebase Analytics event calls. Push services are not targeted.</string>
     <string name="zp_tweak_hide_media_box">Hide Media Box</string>
-    <string name="zp_tweak_hide_media_box_summary">Removes Media Box from the inbox list.</string>
     <string name="zp_tweak_hide_zcloud_banner">Hide zCloud banner</string>
-    <string name="zp_tweak_hide_zcloud_banner_summary">Removes the zCloud banner above the inbox.</string>
     <string name="zp_tweak_inbox_chip_bar">Inbox chip bar</string>
     <string name="zp_tweak_inbox_chip_bar_summary">Shows All, Chats, Groups, OA, and Strangers.</string>
     <string name="zp_tweak_groups_chip">Groups chip</string>
@@ -123,16 +117,18 @@
     <string name="zp_tweak_open_links_externally">Open links in system browser</string>
     <string name="zp_tweak_open_links_externally_summary">Tapped chat and feed links open in your default browser or app, skipping Zalo’s in-app browser and its redirect server. Zalo-owned links, including payment and bank-card actions, stay in-app.</string>
     <string name="zp_tweak_block_seen_status">Block seen status</string>
-    <string name="zp_tweak_block_seen_status_summary">Hides your read receipts while preserving delivered status. You still see other people’s receipts.</string>
+    <string name="zp_tweak_block_seen_status_summary">Blocks outgoing read receipts while preserving delivery receipts. Incoming read receipts still depend on Zalo’s settings.</string>
     <string name="zp_tweak_block_typing_status">Block typing status</string>
-    <string name="zp_tweak_block_typing_status_summary">Stops sending the typing indicator in individual and group chats.</string>
+    <string name="zp_tweak_block_typing_status_summary">Blocks outgoing typing indicators in individual and group chats. Incoming typing indicators are unchanged.</string>
+    <string name="zp_tweak_view_stories_anonymously">View stories anonymously</string>
+    <string name="zp_tweak_view_stories_anonymously_summary">Block outbound view receipts for stories and suggested stories. Local watched state, reactions, and replies stay available.</string>
     <string name="zp_tweak_auto_record_calls">Record call audio automatically</string>
     <string name="zp_tweak_auto_record_calls_summary">Saves completed Zalo calls as M4A files.</string>
     <string name="zp_tweak_recording_notifications">Recording notifications</string>
     <string name="zp_tweak_recording_notifications_summary">Shows recording and save status.</string>
     <string name="zp_tweak_backup_frequent">Frequent scheduled backup</string>
-    <string name="zp_tweak_backup_frequent_summary">Shortens Zalo’s message-backup interval. Zalo automatic backup must be enabled. Each run exports the full message database and shows Zalo’s normal notification; Drive media keeps its native schedule.</string>
-    <string name="zp_backup_interval_title">Scheduled interval</string>
+    <string name="zp_tweak_backup_frequent_summary">Shortens the minimum wait between message backups. Requires Zalo running with automatic backup enabled. Zalo’s battery, network and other conditions can delay a run beyond this interval. Each run exports the full message database with Zalo’s normal notification. Media keeps its own schedule.</string>
+    <string name="zp_backup_interval_title">Minimum interval</string>
     <string name="zp_tweak_passcode_grace">Extend app-lock grace period</string>
     <string name="zp_tweak_passcode_grace_summary">Keep Zalo unlocked for the duration below instead of Zalo\'s 30 second maximum.</string>
     <string name="zp_passcode_grace_title">App-lock grace period</string>
@@ -142,21 +138,27 @@
     <string name="zp_tweak_hide_message_ads_summary">Hides Zinstant ads in Messages.</string>
     <string name="zp_tweak_hide_feed_ads">Hide feed ads</string>
     <string name="zp_tweak_hide_feed_ads_summary">Hides Zinstant ads in the feed.</string>
+    <string name="zp_tweak_disable_sponsored_placements">Disable sponsored Story/community placements</string>
+    <string name="zp_tweak_disable_sponsored_placements_summary">Turns off only Zalo’s Story and community sponsored-placement config gates. Other config values, Official Account messages, and ordinary feed/Story content keep host behavior.</string>
     <string name="zp_tweak_hide_promo_services">Experimental: suppress Zinstant services</string>
-    <string name="zp_tweak_hide_promo_services_summary">Broad suppression. May break mini-app, payment, cloud, search, and discovery services.</string>
+    <string name="zp_tweak_hide_promo_services_summary">Broad suppression. May break mini-app, payment, cloud, search, and discovery services. If a service opens blank or stops working, turn this off and restart Zalo.</string>
+    <string name="zp_tweak_disable_adtima_offline_tracking">Disable Adtima offline ads and view tracking</string>
+    <string name="zp_tweak_disable_adtima_offline_tracking_summary">Disables Adtima’s cached offline ads and view tracking.</string>
     <string name="zp_tweak_hide_promo_notifications">Hide promo notifications</string>
     <string name="zp_tweak_hide_promo_notifications_summary">Blocks reviewed promos. Custom rules can also match chat notifications.</string>
     <string name="zp_tweak_record_notification_history">Record notification history</string>
-    <string name="zp_tweak_record_notification_history_summary">Stores notification text on this device.</string>
+    <string name="zp_tweak_record_notification_history_summary">Saves a separate private copy of notification text. Turning this off keeps saved history.</string>
 
     <string name="zp_group_bottom_tabs">Bottom tabs</string>
     <string name="zp_group_startup">Startup</string>
     <string name="zp_group_inbox_sections">Inbox sections</string>
     <string name="zp_group_category_controls">Category controls</string>
     <string name="zp_default_inbox_filter">Default inbox filter</string>
-    <string name="zp_group_all_sinks">All sinks</string>
+    <string name="zp_group_all_sinks">Listed telemetry blocks</string>
     <string name="zp_group_analytics_database">Analytics database</string>
     <string name="zp_group_identifiers_reports">Identifiers and reports</string>
+    <string name="zp_tweak_hide_video_ads">Hide Zalo Video ads</string>
+    <string name="zp_tweak_hide_video_ads_summary">Hides supported ad containers in Zalo Video. Coverage depends on the Zalo version.</string>
     <string name="zp_group_in_app_ads">In-app ads</string>
     <string name="zp_group_me_services">Me screen services</string>
     <string name="zp_group_message_rendering">Message rendering</string>
@@ -246,9 +248,13 @@
     <string name="zp_diagnostic_save_json">Save JSON</string>
     <string name="zp_diagnostic_included_json">Included JSON</string>
     <string name="zp_diagnostic_upload">Upload report</string>
+    <string name="zp_diagnostic_upload_disclosure">Sends the reviewed JSON to %1$s. Reports may be kept indefinitely. The receipt shows an expiry only if the service returns one.</string>
     <string name="zp_diagnostic_discard">Discard report</string>
     <string name="zp_diagnostic_status">Result</string>
     <string name="zp_diagnostic_report_id">Report ID</string>
+    <string name="zp_diagnostic_retention">Report retention</string>
+    <string name="zp_diagnostic_retention_indefinite">The service reports indefinite retention. No automatic expiry was returned.</string>
+    <string name="zp_diagnostic_retention_expiry">Raw report expiry reported by the service: %1$s. This receipt does not confirm deletion.</string>
     <string name="zp_diagnostic_copy_id">Copy report ID</string>
     <string name="zp_diagnostic_clip_label">Zalo Patch report ID</string>
     <string name="zp_diagnostic_id_copied">Report ID copied</string>
@@ -283,7 +289,7 @@
     <string name="zp_filter_master_title">Hide promo notifications</string>
     <string name="zp_filter_master_summary">Blocks reviewed promos. Custom rules may also match chat notifications.</string>
     <string name="zp_history_record_title">Record notification history</string>
-    <string name="zp_history_record_summary">Stores notification text privately on this device.</string>
+    <string name="zp_history_record_summary">Saves a separate private copy of notification text. Turning this off keeps saved history.</string>
     <string name="zp_history_retention_title">Retention</string>
     <string name="zp_filter_custom_lists">Custom lists</string>
     <string name="zp_filter_built_in">Built-in patterns</string>
@@ -291,7 +297,6 @@
     <string name="zp_filter_built_in_summary">Read-only. Ordinary chats and groups pass. Calls and backups always pass.</string>
     <string name="zp_filter_review">Review</string>
     <string name="zp_filter_suppressed_title">Suppressed notifications</string>
-    <string name="zp_filter_footer">Custom lists apply after you restart Zalo.</string>
     <string name="zp_filter_item_count">%1$d items</string>
     <string name="zp_filter_item_count_one">1 item</string>
 
@@ -299,7 +304,6 @@
     <string name="zp_self_check_page_title">Self-check</string>
     <string name="zp_self_check_heading">Runtime status</string>
     <string name="zp_self_check_empty_summary">Open or restart Zalo, then return here.</string>
-    <string name="zp_self_check_footer">Failed and outdated hooks only.</string>
     <string name="zp_self_check_no_attention">No check needs attention.</string>
     <plurals name="zp_self_check_attention">
         <item quantity="one">%1$d check needs attention.</item>
@@ -353,7 +357,6 @@
     <string name="zp_backup_exported">Settings exported</string>
     <string name="zp_backup_imported">%1$d settings and rule items imported. Restart Zalo to apply.</string>
     <string name="zp_history_exported">Notification history exported</string>
-    <string name="zp_history_privacy_notice">History may contain notification titles, sender names, and message text. Data stays in app-private storage until you export or clear it.</string>
     <string name="zp_export_json">Export JSON</string>
     <string name="zp_clear_history">Clear history</string>
     <string name="zp_history_all">All</string>
@@ -385,7 +388,7 @@
     <string name="zp_backup_actions">Backup actions</string>
     <string name="zp_backup_export">Export settings</string>
     <string name="zp_backup_import">Import settings</string>
-    <string name="zp_backup_footer">Restart Zalo after an import.</string>
+    <string name="zp_backup_footer">Exports portable Zalo Patch settings and notification rules only. Excludes call settings, messages, media, recordings, notification history and diagnostics. Restart Zalo after an import.</string>
     <string name="zp_backup_import_dialog_title">Import module settings</string>
     <string name="zp_backup_import_dialog_message">Imported values replace matching settings. Restart Zalo afterward.</string>
     <string name="zp_choose_file">Choose file</string>
@@ -401,8 +404,6 @@
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>
     </plurals>
-    <string name="zp_rule_no_items">No items</string>
-    <string name="zp_rule_no_items_summary">Select Add item to make a rule.</string>
     <string name="zp_rule_add_item">Add item</string>
     <string name="zp_rule_add_summary">Separate items with commas or new lines.</string>
     <string name="zp_rule_add_to">Add to %1$s</string>
@@ -438,4 +439,12 @@
     <string name="zp_cancel">Cancel</string>
     <string name="zp_delete">Delete</string>
     <string name="zp_export">Export</string>
+    <string name="zp_config_prepare_required">Settings saved. Restart Zalo to activate.</string>
+    <string name="zp_config_manual_restart">Settings saved. Force stop Zalo in App info, then open it to activate.</string>
+    <string name="zp_config_provider_restart">Settings prepared through the provider fallback. Force stop Zalo and open it again. This transport may be unavailable on your framework.</string>
+    <string name="zp_settings_save_failed">Could not save this change. Try again. Restart Zalo only after saving succeeds.</string>
+    <string name="zp_tweak_prefer_original_photo">Prefer Original photos</string>
+    <string name="zp_tweak_prefer_original_photo_summary">Use Zalo’s Original quality for selected photos and supported incoming photo shares. Camera and video keep their normal quality.</string>
+    <string name="zp_tweak_hide_story_ads">Hide story ads</string>
+    <string name="zp_tweak_hide_story_ads_summary">Hide dedicated sponsored story views while preserving native story progression.</string>
 </resources>

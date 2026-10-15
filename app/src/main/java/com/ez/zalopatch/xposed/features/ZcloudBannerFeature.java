@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * the setting.
  */
 public final class ZcloudBannerFeature extends Feature {
+    private final com.ez.zalopatch.xposed.core.UiOutcomeObserver outcome = new com.ez.zalopatch.xposed.core.UiOutcomeObserver();
     private static final String FEATURE = Tweaks.KEY_HIDE_ZCLOUD_BANNER;
     private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final String MESSAGES_LIST_LAYOUT = "messageslist";
@@ -74,6 +75,9 @@ public final class ZcloudBannerFeature extends Feature {
                     return;
                 }
                 View banner = root.findViewById(bannerContainerId);
+                if (banner != null) outcome.afterBind(FEATURE, "inbox_banner", banner,
+                        () -> root.findViewById(bannerContainerId) == banner
+                                && banner instanceof ViewGroup && ((ViewGroup) banner).getChildCount() > 0);
                 if (banner != null && banner.getVisibility() != View.GONE) {
                     hideView(banner);
                     SelfCheckRegistry.incrementHit(FEATURE,

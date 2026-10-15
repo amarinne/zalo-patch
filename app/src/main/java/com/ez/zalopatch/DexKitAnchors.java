@@ -22,6 +22,7 @@ public final class DexKitAnchors {
     /** Symbol kinds a resolved descriptor may take. */
     public enum Kind {
         CLASS,
+        CLASS_LIST,
         METHOD,
         FIELD
     }
@@ -120,6 +121,48 @@ public final class DexKitAnchors {
         ANCHORS.add(new Anchor("symbols.chat.seen_ack_type_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.chat.send_seen_single_method", Kind.METHOD));
         ANCHORS.add(new Anchor("symbols.chat.send_seen_batch_method", Kind.METHOD));
+        // Story/community sponsored placements share one keyed integer config reader.
+        ANCHORS.add(new Anchor(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, Kind.METHOD));
+        // Outbound story-view serializers are independent request routes.
+        ANCHORS.add(new Anchor("symbols.stories.seen_request_class", Kind.CLASS));
+        ANCHORS.add(new Anchor("symbols.stories.seen_request_method", Kind.METHOD));
+        ANCHORS.add(new Anchor("symbols.stories.suggested_seen_request_class", Kind.CLASS));
+        ANCHORS.add(new Anchor("symbols.stories.suggested_seen_request_method", Kind.METHOD));
+        // Original photo quality: every binding is discovered and independently preflighted.
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.ENUM, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.CODE, Kind.FIELD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.APPLY, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.FLAG_ONE, Kind.FIELD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.FLAG_TWO, Kind.FIELD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.POLICY, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.GATE, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.ELIGIBLE, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.ENTITLEMENT, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.PICKER, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.GET_QUALITY, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.CAMERA, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.METADATA, Kind.FIELD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.PROPERTY_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.PROPERTY_READ, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.SELECTION, Kind.FIELD));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.OUTGOING, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.SHARE, Kind.METHOD));
+
+        // Adtima offline-ad and active-view gate family.
+        ANCHORS.add(new Anchor(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitAdtimaFingerprint.OFFLINE_WINDOW_METHOD, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitAdtimaFingerprint.TRACKING_GATE_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitAdtimaFingerprint.TRACKING_GATE_METHOD, Kind.METHOD));
+        // Dedicated story-ad view family.
+        ANCHORS.add(new Anchor(DexKitStoryAdFingerprint.ANCHOR_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitStoryAdFingerprint.ANCHOR_BIND, Kind.METHOD));
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            for (String anchor : route.anchors()) {
+                ANCHORS.add(new Anchor(anchor, anchor.endsWith("implementation_classes") ? Kind.CLASS_LIST
+                        : anchor.endsWith("view_class") ? Kind.CLASS : Kind.METHOD));
+            }
+        }
     }
 
     private DexKitAnchors() {
@@ -154,13 +197,24 @@ public final class DexKitAnchors {
 
     /** True when the descriptor matches the anchor kind's name shape. */
     public static boolean validDescriptor(Anchor anchor, String symbol) {
-        if (anchor == null || symbol == null || symbol.isEmpty() || symbol.length() > 256) {
+        if (anchor == null || symbol == null || symbol.isEmpty()
+                || symbol.length() > (anchor.kind == Kind.CLASS_LIST ? 2048 : 256)) {
             return false;
         }
         if (symbol.contains(";") || symbol.contains("=")) {
             return false;
         }
         switch (anchor.kind) {
+            case CLASS_LIST:
+                String previous = "";
+                String[] classes = symbol.split(",", -1);
+                if (classes.length > 8) return false;
+                for (String name : classes) {
+                    if (!validDescriptor(new Anchor(anchor.path, Kind.CLASS), name)
+                            || name.compareTo(previous) <= 0) return false;
+                    previous = name;
+                }
+                return true;
             case CLASS:
                 return symbol.matches("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+");
             case METHOD:

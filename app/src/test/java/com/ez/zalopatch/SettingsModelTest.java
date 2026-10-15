@@ -90,6 +90,17 @@ public final class SettingsModelTest {
     }
 
     @Test
+    public void adtimaOfflineTrackingToggleIsVisibleAndDefaultOff() {
+        Settings.Setting<?> setting = Settings.find(
+                Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING);
+        assertNotNull(setting);
+        assertTrue(setting.visible);
+        assertTrue(setting.implemented);
+        assertEquals(Tweaks.SECTION_ADS, setting.section);
+        assertFalse(Settings.defaultBoolean(Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING));
+    }
+
+    @Test
     public void everyUserFacingToggleDefaultsOff() {
         for (Tweaks.Item item : Tweaks.ITEMS) {
             assertFalse("Default-on toggle: " + item.key, item.defaultEnabled);

@@ -13,6 +13,18 @@ public class ZinstantRenderedTextTest {
     }
     private Tree tree(ZOM root) { Tree tree = new Tree(); tree.shuffled.mZOMRoot = root; return tree; }
 
+    @Test public void rereadsReusedTreeAfterRootReplacementWithoutRetainingPriorMarker() {
+        ZOMText zstyle = new ZOMText("zStyle");
+        ZOMText documents = new ZOMText("Documents");
+        Tree reused = tree(zstyle);
+        assertEquals(" zStyle", ZinstantRenderedText.read(reused));
+        reused.shuffled.mZOMRoot = documents;
+        assertEquals(" Documents", ZinstantRenderedText.read(reused));
+        reused.shuffled.mZOMRoot = zstyle;
+        assertEquals(" zStyle", ZinstantRenderedText.read(reused));
+        assertSame(zstyle, reused.shuffled.mZOMRoot);
+    }
+
     @Test public void readsVisibleCanvasTextFromTypedDocumentWithoutAndroidViews() {
         assertEquals(" zStyle Background and music library", ZinstantRenderedText.read(tree(
                 new ZOMContainer(new ZOMText("zStyle"), new ZOMText("Background and music library")))));

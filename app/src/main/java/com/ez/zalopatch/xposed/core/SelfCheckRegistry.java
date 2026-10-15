@@ -27,8 +27,9 @@ public final class SelfCheckRegistry {
     private SelfCheckRegistry() {
     }
 
-    public static void markInstalled(String feature, String target, int count) {
+    public static synchronized void markInstalled(String feature, String target, int count) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         if (entry.hitCount > 0) {
             entry.status = "active";
         } else if (!"active".equals(entry.status)) {
@@ -40,8 +41,9 @@ public final class SelfCheckRegistry {
         mirror(feature, entry);
     }
 
-    public static void markStale(String feature, String target, String reason) {
+    public static synchronized void markStale(String feature, String target, String reason) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         entry.status = "stale";
         entry.target = target;
         entry.detail = "";
@@ -49,24 +51,27 @@ public final class SelfCheckRegistry {
         mirror(feature, entry);
     }
 
-    public static void markFailed(String feature, String target, Throwable throwable) {
+    public static synchronized void markFailed(String feature, String target, Throwable throwable) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         entry.status = "failed";
         entry.target = target;
         entry.error = errorText(throwable);
         mirror(feature, entry);
     }
 
-    public static void markDisabled(String feature, String target) {
+    public static synchronized void markDisabled(String feature, String target) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         entry.status = "disabled";
         entry.target = target;
         entry.error = "";
         mirror(feature, entry);
     }
 
-    public static void markSuppressed(String feature, String target, String detail) {
+    public static synchronized void markSuppressed(String feature, String target, String detail) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         entry.status = "active";
         entry.target = target;
         entry.detail = detail == null ? "" : detail;
@@ -78,12 +83,27 @@ public final class SelfCheckRegistry {
         markSuppressed(feature, target, detail);
     }
 
-    public static void markStatus(String feature, String status, String target, String detail, String error) {
+    public static synchronized void markStatus(String feature, String status, String target, String detail, String error) {
         Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
         entry.status = status == null || status.isEmpty() ? "unknown" : status;
         entry.target = target == null ? "" : target;
         entry.detail = detail == null ? "" : detail;
         entry.error = error == null ? "" : error;
+        mirror(feature, entry);
+    }
+
+    /** Keep a confirmed outcome contradiction visible even if another hook later intervenes. */
+    public static synchronized void markOutcomeContradiction(String feature, String route, String detail) {
+        org.json.JSONObject evidence = com.ez.zalopatch.OutcomeEvidence.parse(detail);
+        if (evidence == null || !route.equals(evidence.optString("route"))) return;
+        Entry entry = entry(feature);
+        if (entry.outcomeContradiction) return;
+        entry.outcomeContradiction = true;
+        entry.status = "stale";
+        entry.target = "outcome:" + route;
+        entry.detail = evidence.toString();
+        entry.error = "OutcomeDrift: visible_after_hide";
         mirror(feature, entry);
     }
 
@@ -140,7 +160,9 @@ public final class SelfCheckRegistry {
             values.put("hit_count", hitCount);
             // Route provenance is diagnostic text, never the artifact identity gate. Keeping it
             // in detail also preserves it through the existing broadcast fallback transport.
-            String routeDetail = "route=" + evidence.getStringExtra("route_profile_source")
+            String routeDetail = "config_source=" + HookConfig.snapshotSource()
+                    + " config_snapshot_id=" + HookConfig.snapshotId()
+                    + " route=" + evidence.getStringExtra("route_profile_source")
                     + " route_profile_sha256=" + evidence.getStringExtra("route_profile_sha256");
             values.put("detail", detail == null || detail.isEmpty() ? routeDetail
                     : detail + "\n" + routeDetail);
@@ -151,6 +173,7 @@ public final class SelfCheckRegistry {
             values.put("module_version_code", evidence.getIntExtra("module_version_code", -1));
             values.put("profile_sha256", evidence.getStringExtra("profile_sha256"));
             values.put("run_id", runId);
+            values.put("config_snapshot_id", HookConfig.snapshotId());
             if (FALLBACK_ONLY.get()) {
                 sendFallback(context, feature, values);
                 return;
@@ -197,6 +220,7 @@ public final class SelfCheckRegistry {
             intent.putExtra("module_version_code", values.getAsInteger("module_version_code"));
             intent.putExtra("profile_sha256", values.getAsString("profile_sha256"));
             intent.putExtra("run_id", values.getAsString("run_id"));
+            intent.putExtra("config_snapshot_id", values.getAsString("config_snapshot_id"));
             android.os.Bundle optionsBundle = null;
             if (Build.VERSION.SDK_INT >= 34) {
                 android.app.BroadcastOptions options = android.app.BroadcastOptions.makeBasic();
@@ -220,6 +244,7 @@ public final class SelfCheckRegistry {
     }
 
     private static final class Entry {
+        boolean outcomeContradiction;
         String status = "installed_no_hits";
         String target = "";
         String detail = "";

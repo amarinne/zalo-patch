@@ -1,5 +1,6 @@
 package com.ez.zalopatch;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -10,6 +11,8 @@ import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -135,20 +138,51 @@ final class DiagnosticUploader {
     private static Receipt parseReceipt(String body, String expectedReportId) {
         try {
             JSONObject json = new JSONObject(body);
-            String reportId = json.getString("reportId");
-            String received = json.getString("receivedAtUtc");
-            if (!json.has("rawExpiresAtUtc") || !json.isNull("rawExpiresAtUtc")) return null;
-            String retention = json.getString("retentionPolicy");
+            String reportId = receiptString(json, "reportId");
+            String received = receiptString(json, "receivedAtUtc");
+            String retention = receiptString(json, "retentionPolicy");
             if (!expectedReportId.equals(reportId)
-                    || !DiagnosticReportContract.validReportId(reportId)
-                    || received.isEmpty() || received.length() > 64
-                    || !"indefinite".equals(retention)) {
+                    || !DiagnosticReportContract.validReportId(reportId)) {
                 return null;
             }
-            return new Receipt(reportId, received, retention);
+            OffsetDateTime receivedAt = receiptUtc(received);
+            if (!json.has("rawExpiresAtUtc")) return null;
+            String expires = null;
+            if (json.isNull("rawExpiresAtUtc")) {
+                if (!"indefinite".equals(retention)) return null;
+            } else {
+                expires = receiptString(json, "rawExpiresAtUtc");
+                // The expiry carries the deadline; do not infer a duration from a policy label.
+                if ("indefinite".equals(retention)
+                        || !receiptUtc(expires).isAfter(receivedAt)) return null;
+            }
+            return new Receipt(reportId, received, expires, retention);
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static String receiptString(JSONObject json, String key) throws JSONException {
+        Object value = json.get(key);
+        if (!(value instanceof String)) throw new IllegalArgumentException(key);
+        String text = (String) value;
+        if (text.trim().isEmpty() || text.length() > 64 || !text.equals(text.trim())) {
+            throw new IllegalArgumentException(key);
+        }
+        for (int index = 0; index < text.length(); index++) {
+            if (Character.isISOControl(text.charAt(index))) {
+                throw new IllegalArgumentException(key);
+            }
+        }
+        return text;
+    }
+
+    private static OffsetDateTime receiptUtc(String value) {
+        OffsetDateTime timestamp = OffsetDateTime.parse(value);
+        if (!ZoneOffset.UTC.equals(timestamp.getOffset())) {
+            throw new IllegalArgumentException("Receipt timestamp must use UTC");
+        }
+        return timestamp;
     }
 
     private static String readResponseBody(HttpsURLConnection connection, int status)
@@ -187,11 +221,14 @@ final class DiagnosticUploader {
     static final class Receipt {
         final String reportId;
         final String receivedAtUtc;
+        final String rawExpiresAtUtc;
         final String retentionPolicy;
 
-        Receipt(String reportId, String receivedAtUtc, String retentionPolicy) {
+        Receipt(String reportId, String receivedAtUtc, String rawExpiresAtUtc,
+                String retentionPolicy) {
             this.reportId = reportId;
             this.receivedAtUtc = receivedAtUtc;
+            this.rawExpiresAtUtc = rawExpiresAtUtc;
             this.retentionPolicy = retentionPolicy;
         }
     }

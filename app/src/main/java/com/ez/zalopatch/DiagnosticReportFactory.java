@@ -169,6 +169,8 @@ final class DiagnosticReportFactory {
             // free text such as notification channel ids and conversation counts. Evidence a
             // reviewer needs belongs in target, which is a bounded feature descriptor.
             item.put("target", bounded(row.target, 512));
+            JSONObject outcome = OutcomeEvidence.parse(row.detail);
+            if (outcome != null) item.put("outcomeEvidence", outcome);
             item.put("updatedAt", Math.max(0L, row.updatedAt));
             selfCheck.put(item);
         }

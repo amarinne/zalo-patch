@@ -1,6 +1,6 @@
 {
   "bundle_version": 1,
-  "bundle_revision": 9,
+  "bundle_revision": 10,
   "zalo_package": "com.zing.zalo",
   "profiles": [
     {
@@ -1517,7 +1517,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 30,
+      "schema_revision": 31,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 261001903,
@@ -1695,7 +1695,8 @@
           "zstyle_view_class": "",
           "zinstant_item_class": "",
           "zstyle_item_classes": [],
-          "zstyle_view_exclusive": false
+          "zstyle_view_exclusive": false,
+          "full_zinstant_predicate_method": "O6"
         },
         "inbox": {
           "message_view_class": "com.zing.zalo.ui.maintab.msg.MessagesView",
@@ -1831,7 +1832,7 @@
     },
     {
       "schema_version": 1,
-      "schema_revision": 31,
+      "schema_revision": 32,
       "zalo_package": "com.zing.zalo",
       "zalo_version": {
         "min_code": 261001905,
@@ -2009,7 +2010,8 @@
           "zstyle_view_class": "",
           "zinstant_item_class": "",
           "zstyle_item_classes": [],
-          "zstyle_view_exclusive": false
+          "zstyle_view_exclusive": false,
+          "full_zinstant_predicate_method": "O6"
         },
         "inbox": {
           "message_view_class": "com.zing.zalo.ui.maintab.msg.MessagesView",

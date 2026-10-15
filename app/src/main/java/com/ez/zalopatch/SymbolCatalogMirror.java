@@ -11,13 +11,22 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 final class SymbolCatalogMirror {
-    private static final String MIRROR_KEY = "catalog.profile";
+    static final String MIRROR_KEY = "catalog.profile";
     private static final int MAX_PROFILE_BYTES = 256 * 1024;
 
     private SymbolCatalogMirror() {
     }
 
     static void sync(Context context, long versionCode) {
+        FrameworkConfig.refreshState(context);
+    }
+
+    static String snapshot(Context context, long versionCode) throws Exception {
+        SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context, versionCode);
+        return entry == null ? "-" : encode(entry.sequence, entry.profileJson);
+    }
+
+    static void syncLegacy(Context context, long versionCode) {
         try {
             SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context, versionCode);
             String value = entry == null ? "-" : encode(entry.sequence, entry.profileJson);
@@ -34,7 +43,7 @@ final class SymbolCatalogMirror {
     }
 
     static SymbolSchema.Active read(long versionCode) {
-        return select(SettingsPropertyMirror.readBlob(MIRROR_KEY),
+        return select(HookConfig.readBlob(MIRROR_KEY),
                 HookConfig.getRawString(ZaloArtifactState.KEY_STATUS, ""),
                 HookConfig.getRawString(ZaloArtifactState.KEY_PROFILE_SHA256, ""),
                 versionCode);

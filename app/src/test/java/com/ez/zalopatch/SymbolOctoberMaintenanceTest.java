@@ -35,7 +35,7 @@ public final class SymbolOctoberMaintenanceTest {
         String bundle = BundledSymbolSchemaJson.json();
         SymbolSchema.Active active = SymbolSchema.select(bundle, "Test", 261001905L);
         assertTrue(active.validation, active.valid);
-        assertEquals(31, active.schemaRevision);
+        assertEquals(32, active.schemaRevision);
         assertEquals(261001905L, active.minCode);
         assertEquals(261001905L, active.maxCode);
         assertEquals("2fe8d3f2bbd3fc923bcf62e4b519e50661176ed79a51aac01be8b39c8ef3994c",
@@ -56,6 +56,16 @@ public final class SymbolOctoberMaintenanceTest {
         assertFalse(SymbolSchema.select(bundle, "Test", 261001904L).valid);
         assertFalse(SymbolSchema.select(bundle, "Test", 261001906L).valid);
     }
+    @Test
+    public void nativeMeLayoutBindingIsRestrictedToReviewedOctoberArtifacts() throws Exception {
+        for (long version : new long[]{261001903L, 261001905L}) {
+            assertEquals("O6", symbols(version).getJSONObject("me")
+                    .getString("full_zinstant_predicate_method"));
+        }
+        assertFalse(symbols(260802903L).getJSONObject("me")
+                .has("full_zinstant_predicate_method"));
+    }
+
     private static JSONObject symbols(long versionCode) throws Exception {
         org.json.JSONArray profiles = new JSONObject(BundledSymbolSchemaJson.json())
                 .getJSONArray("profiles");

@@ -3,11 +3,14 @@ package com.ez.zalopatch;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.Arrays;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.io.Writer;
 
 import junit.framework.TestCase;
 
@@ -39,20 +42,108 @@ public final class NotificationHistoryStoreTest extends TestCase {
     }
 
     public void testHistoryExportKeepsPayloadAndPrivacyWarning() throws Exception {
-        NotificationHistoryStore.Entry entry = new NotificationHistoryStore.Entry(
-                1L, 1234L, "key", "channel", "msg", "template", "title", "text",
-                "big", "lines", "ticker", "metadata", true, false);
+        try (SQLiteDatabase db = SQLiteDatabase.create(null)) {
+            NotificationHistoryStore.createSchema(db);
+            ContentValues values = new ContentValues();
+            values.put("posted_at", 1234L);
+            values.put("sbn_key", "key");
+            String[] fields = {"channel_id", "category", "template", "title", "text",
+                    "big_text", "lines", "ticker", "metadata"};
+            for (String field : fields) {
+                values.put(field, field + " \"quote\" \\ slash\nTiếng Việt 🔔\t\u0001");
+            }
+            values.put("promo", 1);
+            values.put("cancelled", 0);
+            assertTrue(db.insert("zalo_notifications", null, values) > 0L);
 
-        JSONObject root = new JSONObject(NotificationHistoryStore.encodeEntries(
-                Arrays.asList(entry), 5678L));
-        JSONArray rows = root.getJSONArray("notifications");
+            JSONObject root = export(db, NotificationHistoryStore.RETENTION_UNLIMITED);
+            JSONArray rows = root.getJSONArray("notifications");
 
-        assertEquals(1, root.getInt("format_version"));
-        assertEquals(5678L, root.getLong("exported_at"));
-        assertTrue(root.getString("warning").contains("private"));
-        assertEquals(1, rows.length());
-        assertEquals("title", rows.getJSONObject(0).getString("title"));
-        assertTrue(rows.getJSONObject(0).getBoolean("promo"));
+            assertEquals(1, root.getInt("format_version"));
+            assertEquals(5678L, root.getLong("exported_at"));
+            assertTrue(root.getString("warning").contains("private"));
+            assertEquals(1, rows.length());
+            JSONObject row = rows.getJSONObject(0);
+            assertEquals(1234L, row.getLong("posted_at"));
+            assertEquals("key", row.getString("key"));
+            for (String field : fields) {
+                assertEquals(values.getAsString(field), row.getString(field));
+            }
+            assertTrue(row.getBoolean("promo"));
+            assertFalse(row.getBoolean("cancelled"));
+        }
+    }
+
+    public void testHistoryExportRespectsFiniteAndUnlimitedRetention() throws Exception {
+        try (SQLiteDatabase db = SQLiteDatabase.create(null)) {
+            NotificationHistoryStore.createSchema(db);
+            insert(db, 100L, "old");
+            insert(db, 200L, "same-time-first");
+            insert(db, 200L, "same-time-last");
+
+            JSONArray limited = export(db, 2).getJSONArray("notifications");
+            assertEquals(2, limited.length());
+            assertEquals("same-time-last", limited.getJSONObject(0).getString("title"));
+            assertEquals("same-time-first", limited.getJSONObject(1).getString("title"));
+            assertEquals("", limited.getJSONObject(0).getString("text"));
+            JSONArray unlimited = export(db, NotificationHistoryStore.RETENTION_UNLIMITED)
+                    .getJSONArray("notifications");
+            assertEquals(3, unlimited.length());
+            assertEquals("old", unlimited.getJSONObject(2).getString("title"));
+        }
+    }
+
+    public void testHistoryExportAllowsEmptyArchive() throws Exception {
+        try (SQLiteDatabase db = SQLiteDatabase.create(null)) {
+            NotificationHistoryStore.createSchema(db);
+            assertEquals(0, export(db, NotificationHistoryStore.RETENTION_UNLIMITED)
+                    .getJSONArray("notifications").length());
+        }
+    }
+
+    public void testHistoryExportPropagatesDatabaseFailure() throws Exception {
+        try (SQLiteDatabase db = SQLiteDatabase.create(null)) {
+            // A missing table must fail instead of producing a successful empty archive.
+            try {
+                export(db, NotificationHistoryStore.RETENTION_UNLIMITED);
+                fail("Expected database failure");
+            } catch (SQLiteException expected) {
+                // The document operation reports this failure to the user.
+            }
+        }
+    }
+
+    public void testHistoryExportPropagatesDestinationFailure() throws Exception {
+        try (SQLiteDatabase db = SQLiteDatabase.create(null)) {
+            NotificationHistoryStore.createSchema(db);
+            insert(db, 100L, "synthetic notification");
+            IOException failure = new IOException("Synthetic destination failure");
+            Writer output = new Writer() {
+                @Override
+                public void write(char[] chars, int offset, int length) throws IOException {
+                    throw failure;
+                }
+
+                @Override
+                public void flush() { }
+
+                @Override
+                public void close() { }
+            };
+            try {
+                NotificationHistoryStore.exportJson(db, 0, output, 5678L);
+                fail("Expected destination failure");
+            } catch (IOException expected) {
+                assertSame(failure, expected);
+            }
+            assertEquals(1, export(db, 0).getJSONArray("notifications").length());
+        }
+    }
+
+    private static JSONObject export(SQLiteDatabase db, int limit) throws Exception {
+        StringWriter output = new StringWriter();
+        NotificationHistoryStore.exportJson(db, limit, output, 5678L);
+        return new JSONObject(output.toString());
     }
 
     public void testUnlimitedRetentionDoesNotTrimRows() {

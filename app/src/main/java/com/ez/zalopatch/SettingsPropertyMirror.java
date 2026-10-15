@@ -65,6 +65,11 @@ public final class SettingsPropertyMirror {
         }
     }
 
+    static boolean hasBlobMarker(String key) {
+        try { return !readProperty(propertyName(key) + ".n", "").isEmpty(); }
+        catch (Throwable unavailable) { return false; }
+    }
+
     public static String readBlob(String key) {
         try {
             int count = Integer.parseInt(readProperty(propertyName(key) + ".n", "0"));
@@ -92,7 +97,8 @@ public final class SettingsPropertyMirror {
             String encoded = Base64.encodeToString(
                     (value == null ? "" : value).getBytes(StandardCharsets.UTF_8),
                     Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-            int count = Math.max(1, (encoded.length() + BLOB_CHUNK_SIZE - 1) / BLOB_CHUNK_SIZE);
+            // Zero chunks revoke the blob without emitting an empty setprop value.
+            int count = (encoded.length() + BLOB_CHUNK_SIZE - 1) / BLOB_CHUNK_SIZE;
             if (count > MAX_BLOB_CHUNKS) {
                 throw new IllegalArgumentException("notification rules too large");
             }
@@ -143,10 +149,9 @@ public final class SettingsPropertyMirror {
     // fixed shell-safe alphabet. Future callers must preserve that invariant.
     private static boolean runRootCommand(String key, String command) {
         try {
-            Process process = Runtime.getRuntime().exec(new String[]{
-                    "su", "-c", command
-            });
-            int exitCode = process.waitFor();
+            DiagnosticRootProcessRunner.Result result = new DiagnosticRootProcessRunner().run(
+                    command, DiagnosticReportContract.COMMAND_TIMEOUT_MS);
+            int exitCode = result.exitCode;
             if (exitCode != 0) {
                 Log.i("ZaloPatch", "Property mirror write failed key=" + key + " exit=" + exitCode);
                 return false;

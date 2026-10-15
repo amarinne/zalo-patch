@@ -249,7 +249,7 @@ public final class ConfigProvider extends ContentProvider {
         }
         if ("record_notification_history".equals(method)) {
             if (!callerAllowed() || extras == null
-                    || !SettingsStore.getBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
+                    || !SettingsChanges.runtimeBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
                 return null;
             }
             ContentValues values = extras.getParcelable("values");
@@ -303,6 +303,7 @@ public final class ConfigProvider extends ContentProvider {
         if ("record_dexkit_cache".equals(method)) {
             if (!callerAllowed() || extras == null) return null;
             boolean recorded = DexKitStore.save(getContext(), extras.getString("json", ""));
+            if (recorded) DexKitMirror.sync(getContext());
             Bundle result = new Bundle();
             result.putBoolean("recorded", recorded);
             return result;
@@ -313,6 +314,7 @@ public final class ConfigProvider extends ContentProvider {
                     extras.getLong("last_update_time", -1L));
             if (scope.isEmpty()) return null;
             DexKitStore.recordFailure(getContext(), System.currentTimeMillis(), scope);
+            DexKitMirror.sync(getContext());
             Bundle result = new Bundle();
             result.putBoolean("recorded", true);
             return result;
@@ -327,7 +329,7 @@ public final class ConfigProvider extends ContentProvider {
             DexKitMirror.sync(context);
             Bundle result = new Bundle();
             result.putBoolean("cleared", cleared);
-            result.putBoolean("mirror_cleared", DexKitMirror.cacheMirrorEmpty());
+            result.putBoolean("mirror_cleared", DexKitMirror.cacheMirrorEmpty(context));
             return result;
         }
         if ("claim_dexkit_scan".equals(method)) {
@@ -343,21 +345,64 @@ public final class ConfigProvider extends ContentProvider {
             result.putInt("failures", state.failures);
             return result;
         }
-        if (!"sync_properties".equals(method)) {
+        if ("settings_state".equals(method)) {
+            if (!syncCallerAllowed()) return null;
+            Bundle result = new Bundle();
+            result.putInt("pending", SettingsChanges.pendingCount(getContext()));
+            ConfigSnapshot active = SettingsChanges.active(getContext());
+            result.putBoolean("activation_known", active != null);
+            result.putString("active_snapshot_id", active == null ? "" : active.id);
+            result.putLong("saved_revision", SettingsChanges.generation(getContext()));
+            return result;
+        }
+        if ("save_settings".equals(method)) {
+            if (Binder.getCallingUid() != Process.myUid() && !uidOwnsPackage("com.android.shell")) return null;
+            TweakStore.initialize(getContext());
+            Bundle result = new Bundle();
+            java.util.Map<String, Object> changes = new java.util.HashMap<>();
+            try {
+                if (extras == null) throw new IllegalArgumentException("Missing settings");
+                for (String key : extras.keySet()) {
+                    Object value = extras.get(key);
+                    Settings.Setting<?> setting = Settings.find(key);
+                    if (NotificationRuleStore.MIRROR_KEY.equals(key) && value instanceof String) {
+                        changes.put(NotificationRuleStore.PREF_KEY,
+                                NotificationRuleStore.encode(NotificationRuleStore.decode((String) value)));
+                    } else if (setting != null && setting.visible) {
+                        if (setting.type == Settings.Type.BOOLEAN && value instanceof Boolean) changes.put(key, value);
+                        else if (setting.type == Settings.Type.INT && value instanceof Integer) changes.put(key, Settings.coerceInt(key, (Integer) value));
+                        else throw new IllegalArgumentException("Wrong setting type");
+                    } else throw new IllegalArgumentException("Unknown setting");
+                }
+                result.putBoolean("saved", SettingsStore.save(getContext(), changes));
+            } catch (Exception invalid) { result.putBoolean("saved", false); }
+            result.putInt("pending", SettingsChanges.pendingCount(getContext()));
+            result.putBoolean("activation_known", SettingsChanges.active(getContext()) != null);
+            return result;
+        }
+        if ("restart_zalo".equals(method)) {
+            if (Binder.getCallingUid() != Process.myUid() && !uidOwnsPackage("com.android.shell")) return null;
+            int userId = extras == null ? -1 : extras.getInt("user_id", -1);
+            if (userId < -1) return null;
+            ZaloRestart.run(getContext(), userId < 0 ? null : ZaloRestart.Target.single(userId), ignored -> {});
+            Bundle result = new Bundle();
+            result.putBoolean("requested", true);
+            return result;
+        }
+        if (!"sync_properties".equals(method) && !"apply_config".equals(method)) {
             return null;
         }
         if (!syncCallerAllowed()) return null;
         TweakStore.initialize(getContext());
-        TweakStore.syncProperties(getContext());
+        boolean synced = FrameworkConfig.apply(getContext());
         Bundle result = new Bundle();
         NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(getContext());
-        boolean synced = false;
-        try {
-            String expected = NotificationRuleStore.encode(rules);
-            synced = expected.equals(SettingsPropertyMirror.readBlob(NotificationRuleStore.MIRROR_KEY));
-        } catch (Exception ignored) {
-        }
         result.putBoolean("synced", synced);
+        result.putString("transport", FrameworkConfig.hasRemoteService()
+                ? "framework_remote" : "provider_snapshot");
+        ConfigSnapshot published = ConfigSnapshot.decode(TweakStore.preferences(getContext())
+                .getString(ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
+        result.putString("snapshot_id", synced && published != null ? published.id : "");
         result.putInt("notification_rule_count", rules.total());
         return result;
     }
@@ -377,7 +422,7 @@ public final class ConfigProvider extends ContentProvider {
         int match = MATCHER.match(uri);
         TweakStore.initialize(getContext());
         if (match == NOTIFICATION_HISTORY) {
-            if (!SettingsStore.getBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
+            if (!SettingsChanges.runtimeBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
                 return null;
             }
             long id = new NotificationHistoryStore(getContext()).record(values);
@@ -449,6 +494,9 @@ public final class ConfigProvider extends ContentProvider {
         editor.putString(KEY_SELF_CHECK_GENERATION, currentEpoch);
         if (!storedRunId.isEmpty()) editor.putString(KEY_SELF_CHECK_RUN_ID, storedRunId);
         editor.apply();
+        if ("symbol_schema".equals(feature)) {
+            FrameworkConfig.acknowledge(context, values.getAsString("config_snapshot_id"));
+        }
         RuntimeStatusTraceStore.record(context, feature, values);
         return 1;
     }

@@ -17,7 +17,10 @@ public final class DexKitFamilyRetry {
     public static final int MAX_ATTEMPTS = 3;
     public static final List<String> FAMILIES = Collections.unmodifiableList(Arrays.asList(
             "zinstant", "webview", "passcode", "backup", "telemetry", "bottom_tabs",
-            "me", "inbox", "chat", "call_recording", "media"));
+            "me", "inbox", "chat", "call_recording", "media",
+            "remote_config", "stories", "original_photo", "adtima", "story_ads",
+            "video_ads_outstream", "video_ads_template", "video_ads_native",
+            "video_ads_photo_item", "video_ads_video_item"));
     private static final List<String> STATUSES = Arrays.asList(
             "resolved", "no_match", "ambiguous", "query_error", "preflight_rejected");
 
@@ -95,7 +98,8 @@ public final class DexKitFamilyRetry {
             if (value.startsWith("ambiguous") || value.equals("duplicate")
                     || value.equals("too_many_candidates")) {
                 ambiguous = true;
-            } else if (value.equals("calibration_contradicted")) {
+            } else if (value.equals("calibration_contradicted")
+                    || value.equals("preflight_rejected")) {
                 return "preflight_rejected";
             } else if (value.startsWith("no_") || value.startsWith("missing_")
                     || value.equals("confidence_below_threshold")

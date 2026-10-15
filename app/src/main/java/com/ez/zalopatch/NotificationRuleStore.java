@@ -113,9 +113,7 @@ public final class NotificationRuleStore {
 
     public static boolean save(Context context, RuleSet rules) {
         try {
-            SharedPreferences.Editor editor = TweakStore.preferences(context).edit();
-            put(editor, rules);
-            return editor.commit();
+            return SettingsStore.save(context, java.util.Collections.singletonMap(PREF_KEY, encode(rules)));
         } catch (Exception ignored) {
             return false;
         }

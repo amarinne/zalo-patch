@@ -378,6 +378,21 @@ public final class DexKitOverlay {
         return count;
     }
 
+    /** An inherited shape cannot qualify a new route without exact or discovered bindings. */
+    public static boolean qualifiesBindings(JSONObject exact, JSONObject composed,
+            Map<String, String> discovered, String... anchors) {
+        if (composed == null || anchors.length == 0) return false;
+        boolean exactMatch = exact != null;
+        boolean discoveredMatch = discovered != null;
+        for (String anchor : anchors) {
+            String value = stringAt(composed, anchor);
+            if (value.isEmpty()) return false;
+            exactMatch &= value.equals(stringAt(exact, anchor));
+            discoveredMatch &= discovered != null && value.equals(discovered.get(anchor));
+        }
+        return exactMatch || discoveredMatch;
+    }
+
     static String stringAt(JSONObject root, String path) {
         if (root == null || path == null) {
             return "";
