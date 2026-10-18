@@ -91,6 +91,9 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_REACTION_ROW:
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
                 break;
+            case Tweaks.KEY_CUSTOM_REACTION:
+                path = "ReactionPickerInContextMenuView#<init>() + ReactionPickerView#onLayout() + bar listener callback (by shape)";
+                break;
             case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
                 path = schema.string("symbols.webview.companion_class", "<webview dispatcher>")
                         + "#" + schema.string("symbols.webview.open_dispatch_method", "<open dispatch>")

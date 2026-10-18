@@ -640,6 +640,9 @@ public final class SectionActivity {
             if (Tweaks.KEY_HIDE_REACTION_ROW.equals(key)) {
                 return new String[]{"messages.reaction_row"};
             }
+            if (Tweaks.KEY_CUSTOM_REACTION.equals(key)) {
+                return new String[]{Tweaks.KEY_CUSTOM_REACTION};
+            }
             if (Tweaks.KEY_OPEN_LINKS_EXTERNALLY.equals(key)) {
                 return new String[]{Tweaks.KEY_OPEN_LINKS_EXTERNALLY};
             }

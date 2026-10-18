@@ -29,6 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ChatFeature extends Feature {
     private static final String FEATURE_REACTION_ROW = "messages.reaction_row";
+    private static final String FEATURE_CUSTOM_REACTION = Tweaks.KEY_CUSTOM_REACTION;
+    private static final String CUSTOM_BUTTON_TAG = "zalopatch.custom_reaction";
+    private static final int CUSTOM_BUTTON_DP = 36;
     private static final String CHAT_ROW_CLASS = "com.zing.zalo.ui.chat.chatrow.ChatRow";
     private static final String REACTION_PICKER_CLASS =
             "com.zing.zalo.ui.widget.reaction.ReactionPickerInContextMenuView";
@@ -105,6 +108,7 @@ public final class ChatFeature extends Feature {
     @Override
     public void doHook() {
         installReactionRowRemoval();
+        installCustomReaction();
     }
 
     private void installReactionRowRemoval() {
@@ -132,6 +136,201 @@ public final class ChatFeature extends Feature {
         }
         SelfCheckRegistry.markStale(FEATURE_REACTION_ROW, "symbols.chat",
                 "no popup surface hooked; run chat rendering trace first");
+    }
+
+    // ---- Custom reaction: adds an emoji button to the same reaction bar the hide tweak targets.
+
+    private void installCustomReaction() {
+        if (!HookConfig.isEnabled(Tweaks.KEY_CUSTOM_REACTION)) {
+            SelfCheckRegistry.markDisabled(FEATURE_CUSTOM_REACTION, "reaction bar emoji button");
+            return;
+        }
+        if (HookConfig.isEnabled(Tweaks.KEY_HIDE_REACTION_ROW)) {
+            SelfCheckRegistry.markDisabled(FEATURE_CUSTOM_REACTION,
+                    "reaction bar is hidden by Hide reaction row");
+            return;
+        }
+        try {
+            Class<?> picker = XpReflect.findClass(REACTION_PICKER_CLASS, classLoader);
+            Class<?> base = XpReflect.findClass(REACTION_PICKER_BASE_CLASS, classLoader);
+            XpHooks.hookAllConstructors(FEATURE_CUSTOM_REACTION, picker, null, new XpHooks.After() {
+                @Override
+                public void after(XpHooks.HookParam param) {
+                    if (param.thisObject instanceof ViewGroup) {
+                        attachEmojiButton((ViewGroup) param.thisObject);
+                    }
+                }
+            });
+            // The host's onLayout only places its own children, so place the button here.
+            XpHooks.hookAllMethods(FEATURE_CUSTOM_REACTION, base, "onLayout", null,
+                    new XpHooks.After() {
+                        @Override
+                        public void after(XpHooks.HookParam param) {
+                            if (picker.isInstance(param.thisObject)) {
+                                layoutEmojiButton((ViewGroup) param.thisObject);
+                            }
+                        }
+                    });
+            SelfCheckRegistry.markInstalled(FEATURE_CUSTOM_REACTION,
+                    REACTION_PICKER_CLASS + " constructor + onLayout", 2);
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markStale(FEATURE_CUSTOM_REACTION, REACTION_PICKER_CLASS,
+                    throwable.getClass().getSimpleName() + " " + throwable.getMessage());
+        }
+    }
+
+    private void attachEmojiButton(ViewGroup picker) {
+        try {
+            for (int i = 0; i < picker.getChildCount(); i++) {
+                if (CUSTOM_BUTTON_TAG.equals(picker.getChildAt(i).getTag())) {
+                    return;
+                }
+            }
+            Context context = picker.getContext();
+            android.widget.TextView button = new android.widget.TextView(context);
+            button.setTag(CUSTOM_BUTTON_TAG);
+            button.setText("+");
+            button.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22);
+            button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            button.setGravity(android.view.Gravity.CENTER);
+            button.setIncludeFontPadding(false);
+            button.setElevation(emojiButtonDp(context, 2));
+            ReactionEmojiDialog.styleFab(button, context);
+            button.setOnClickListener(v -> pickAndSendEmoji(picker));
+            picker.addView(button, new android.widget.FrameLayout.LayoutParams(
+                    emojiButtonDp(context, CUSTOM_BUTTON_DP), emojiButtonDp(context, CUSTOM_BUTTON_DP)));
+            SelfCheckRegistry.incrementHit(FEATURE_CUSTOM_REACTION, REACTION_PICKER_CLASS,
+                    "emoji button added");
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markFailed(FEATURE_CUSTOM_REACTION, REACTION_PICKER_CLASS, throwable);
+        }
+    }
+
+    private void layoutEmojiButton(ViewGroup picker) {
+        for (int i = 0; i < picker.getChildCount(); i++) {
+            View child = picker.getChildAt(i);
+            if (!CUSTOM_BUTTON_TAG.equals(child.getTag())) {
+                continue;
+            }
+            int size = emojiButtonDp(picker.getContext(), CUSTOM_BUTTON_DP);
+            child.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY));
+            int right = picker.getWidth() - emojiButtonDp(picker.getContext(), 4);
+            int top = (picker.getHeight() - size) / 2;
+            child.layout(right - size, top, right, top + size);
+        }
+    }
+
+    private void pickAndSendEmoji(ViewGroup picker) {
+        try {
+            if (!ReactionEmojiDialog.show(picker.getContext(), emoji -> sendEmoji(picker, emoji),
+                    () -> closeReactionMenu(picker, 0L), this::renderHostEmoji)) {
+                android.widget.Toast.makeText(picker.getContext(), "Emoji list unavailable",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
+        } catch (Throwable throwable) {
+            SelfCheckRegistry.markFailed(FEATURE_CUSTOM_REACTION, "emoji picker", throwable);
+        }
+    }
+
+    /**
+     * Sends through the bar's own listener exactly like a tap on a built-in reaction. The
+     * listener interface, its reaction-chosen callback and the reaction factory are found by
+     * shape (public getListener() on the bar, the one (reaction, String) void callback, and
+     * the Kotlin Companion factory taking (int, int, String, long)), so no symbols are
+     * needed and the same code runs on every Zalo build that keeps this shape.
+     */
+    private void sendEmoji(ViewGroup picker, String emoji) {
+        try {
+            Method getListener = picker.getClass().getMethod("getListener");
+            Object listener = getListener.invoke(picker);
+            Method callback = null;
+            for (Method method : getListener.getReturnType().getDeclaredMethods()) {
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length == 2 && method.getReturnType() == void.class
+                        && params[1] == String.class && !params[0].isPrimitive()
+                        && params[0] != String.class) {
+                    callback = method;
+                    break;
+                }
+            }
+            if (listener == null || callback == null) {
+                throw new NoSuchMethodException("reaction callback not found on bar listener");
+            }
+            Class<?> reactionClass = callback.getParameterTypes()[0];
+            Object companion = reactionClass.getField("Companion").get(null);
+            Method factory = null;
+            for (Method method : companion.getClass().getDeclaredMethods()) {
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length == 4 && params[0] == int.class && params[1] == int.class
+                        && params[2] == String.class && params[3] == long.class
+                        && method.getReturnType() == reactionClass) {
+                    factory = method;
+                    break;
+                }
+            }
+            if (factory == null) {
+                throw new NoSuchMethodException("reaction factory not found");
+            }
+            factory.setAccessible(true);
+            Object reaction = factory.invoke(
+                    java.lang.reflect.Modifier.isStatic(factory.getModifiers()) ? null : companion,
+                    0, 0, emoji, System.currentTimeMillis());
+            callback.invoke(listener, reaction, "msg_reaction_btn");
+            SelfCheckRegistry.incrementHit(FEATURE_CUSTOM_REACTION, REACTION_PICKER_CLASS,
+                    "emoji reaction sent");
+            // The host closes the menu itself after a normal tap; only step back when it didn't.
+            closeReactionMenu(picker, 600L);
+        } catch (Throwable throwable) {
+            Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
+            SelfCheckRegistry.markFailed(FEATURE_CUSTOM_REACTION, REACTION_PICKER_CLASS, cause);
+            android.widget.Toast.makeText(picker.getContext(), "Reaction failed: "
+                    + cause.getClass().getSimpleName() + " " + cause.getMessage(),
+                    android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private Object hostEmojiRenderer;
+    private boolean hostEmojiRendererMissing;
+
+    /**
+     * Draws the emoji with Zalo's own emoji images so the picker matches the chat. Uses the
+     * host's emoji span renderer by its name on the builds that carry it (verified on
+     * 261001905) and falls back to the system emoji font everywhere else.
+     */
+    private CharSequence renderHostEmoji(String emoji, float sizePx) {
+        if (!hostEmojiRendererMissing) {
+            try {
+                if (hostEmojiRenderer == null) {
+                    hostEmojiRenderer = XpReflect.callStaticMethod(
+                            XpReflect.findClass("bj0.n", classLoader), "a");
+                }
+                Object rendered = XpReflect.callMethod(hostEmojiRenderer, "A", emoji,
+                        Float.valueOf(sizePx));
+                if (rendered instanceof CharSequence) {
+                    return (CharSequence) rendered;
+                }
+            } catch (Throwable throwable) {
+                hostEmojiRendererMissing = true;
+            }
+        }
+        return emoji;
+    }
+
+    /** Steps back out of the reaction menu if it is still showing after the delay. */
+    private static void closeReactionMenu(ViewGroup picker, long delayMs) {
+        picker.postDelayed(() -> {
+            android.app.Activity activity = ReactionEmojiDialog.activityOf(picker.getContext());
+            if (activity != null && picker.isAttachedToWindow() && picker.isShown()) {
+                activity.onBackPressed();
+            }
+        }, Math.max(delayMs, 150L));
+    }
+
+    private static int emojiButtonDp(Context context, int value) {
+        return Math.round(android.util.TypedValue.applyDimension(
+                android.util.TypedValue.COMPLEX_UNIT_DIP, value,
+                context.getResources().getDisplayMetrics()));
     }
 
     private int hookPopupSurfaceScans() {
