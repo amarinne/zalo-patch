@@ -108,6 +108,9 @@ final class ReactionEmojiDialog {
             for (String emoji : groups.get(g)) {
                 TextView item = new TextView(context);
                 item.setText(renderer.render(emoji, dp(context, 28)));
+                // Opaque text color: host emoji spans draw with the text paint alpha, so the
+                // default translucent dialog text color would dim and tint them.
+                item.setTextColor(Color.WHITE);
                 item.setGravity(Gravity.CENTER);
                 item.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
                 item.setBackground(ripple(palette.primary, dp(context, 12)));
