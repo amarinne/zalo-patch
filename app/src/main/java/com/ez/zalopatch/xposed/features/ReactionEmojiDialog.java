@@ -91,8 +91,11 @@ final class ReactionEmojiDialog {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         GridLayout grid = new GridLayout(context);
-        grid.setColumnCount(COLUMNS);
         int cell = dp(context, 44);
+        int dialogWidth = Math.min((int) (context.getResources().getDisplayMetrics().widthPixels * 0.92f),
+                dp(context, 400));
+        final int columns = Math.max(4, Math.min(COLUMNS, (dialogWidth - dp(context, 48)) / cell));
+        grid.setColumnCount(columns);
         for (int g = 0; g < groups.size(); g++) {
             TextView label = new TextView(context);
             label.setText(titles.get(g));
@@ -102,7 +105,7 @@ final class ReactionEmojiDialog {
             label.setPadding(0, dp(context, 12), 0, dp(context, 4));
             GridLayout.LayoutParams labelParams = new GridLayout.LayoutParams(
                     GridLayout.spec(GridLayout.UNDEFINED, 1),
-                    GridLayout.spec(0, COLUMNS));
+                    GridLayout.spec(0, columns));
             labelParams.setGravity(Gravity.FILL_HORIZONTAL);
             grid.addView(label, labelParams);
             for (String emoji : groups.get(g)) {
