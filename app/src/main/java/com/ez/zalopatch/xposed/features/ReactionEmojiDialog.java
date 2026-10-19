@@ -146,6 +146,12 @@ final class ReactionEmojiDialog {
         field.setStroke(dp(context, 1), palette.onSurfaceVariant);
         field.setCornerRadius(dp(context, 28));
         input.setBackground(field);
+        input.setOnFocusChangeListener((v, focused) -> {
+            // Make room for the keyboard: shrink the grid so the field keeps its full size.
+            ViewGroup.LayoutParams lp = scroll.getLayoutParams();
+            lp.height = dp(context, focused ? 96 : 340);
+            scroll.setLayoutParams(lp);
+        });
         customRow.addView(input, new LinearLayout.LayoutParams(0, dp(context, 48), 1f));
         TextView send = new TextView(context);
         send.setText(vi ? "Gửi" : "Send");

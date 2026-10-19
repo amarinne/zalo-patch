@@ -322,7 +322,14 @@ public final class ChatFeature extends Feature {
         picker.postDelayed(() -> {
             android.app.Activity activity = ReactionEmojiDialog.activityOf(picker.getContext());
             if (activity != null && picker.isAttachedToWindow() && picker.isShown()) {
-                activity.onBackPressed();
+                View root = picker.getRootView();
+                if (root != null && root != activity.getWindow().getDecorView()) {
+                    // Popup-hosted menu: send Back to the popup window only, never the chat.
+                    root.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_BACK));
+                    root.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK));
+                } else if (delayMs == 0L) {
+                    activity.onBackPressed();
+                }
             }
         }, Math.max(delayMs, 150L));
     }
