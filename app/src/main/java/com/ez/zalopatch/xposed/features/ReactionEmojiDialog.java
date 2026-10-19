@@ -16,6 +16,8 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -128,6 +130,57 @@ final class ReactionEmojiDialog {
         scrollParams.topMargin = dp(context, 8);
         surface.addView(scroll, scrollParams);
 
+        LinearLayout customRow = new LinearLayout(context);
+        customRow.setOrientation(LinearLayout.HORIZONTAL);
+        customRow.setGravity(Gravity.CENTER_VERTICAL);
+        EditText input = new EditText(context);
+        input.setHint(vi ? "Emoji hoặc chữ tùy chỉnh" : "Custom emoji or text");
+        input.setHintTextColor(palette.onSurfaceVariant);
+        input.setTextColor(palette.onSurface);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        input.setSingleLine(true);
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        input.setPadding(dp(context, 16), 0, dp(context, 16), 0);
+        GradientDrawable field = new GradientDrawable();
+        field.setColor(Color.TRANSPARENT);
+        field.setStroke(dp(context, 1), palette.onSurfaceVariant);
+        field.setCornerRadius(dp(context, 28));
+        input.setBackground(field);
+        customRow.addView(input, new LinearLayout.LayoutParams(0, dp(context, 48), 1f));
+        TextView send = new TextView(context);
+        send.setText(vi ? "Gửi" : "Send");
+        send.setTextColor(palette.surface);
+        send.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        send.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        send.setGravity(Gravity.CENTER);
+        send.setPadding(dp(context, 20), 0, dp(context, 20), 0);
+        GradientDrawable sendBg = new GradientDrawable();
+        sendBg.setColor(palette.primary);
+        sendBg.setCornerRadius(dp(context, 20));
+        send.setBackground(sendBg);
+        Runnable submit = () -> {
+            String text = input.getText().toString().trim();
+            if (text.isEmpty()) {
+                return;
+            }
+            picked[0] = true;
+            dialog.dismiss();
+            callback.onEmoji(text);
+        };
+        send.setOnClickListener(v -> submit.run());
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            submit.run();
+            return true;
+        });
+        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, 40));
+        sendParams.leftMargin = dp(context, 8);
+        customRow.addView(send, sendParams);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.topMargin = dp(context, 12);
+        surface.addView(customRow, rowParams);
+
         TextView cancel = new TextView(context);
         cancel.setText(vi ? "Hủy" : "Cancel");
         cancel.setTextColor(palette.primary);
@@ -151,6 +204,7 @@ final class ReactionEmojiDialog {
             DisplayMetrics metrics = context.getResources().getDisplayMetrics();
             int width = Math.min((int) (metrics.widthPixels * 0.92f), dp(context, 400));
             window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
+            window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
         return true;
     }
