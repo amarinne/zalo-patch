@@ -32,6 +32,8 @@ public final class ChatFeature extends Feature {
     private static final String FEATURE_CUSTOM_REACTION = Tweaks.KEY_CUSTOM_REACTION;
     private static final String CUSTOM_BUTTON_TAG = "zalopatch.custom_reaction";
     private static final int CUSTOM_BUTTON_DP = 36;
+    /** Tag key (app-range id) marking host children this feature scaled down. */
+    private static final int CUSTOM_SCALE_KEY = 0x7f7a0001;
     private static final String CHAT_ROW_CLASS = "com.zing.zalo.ui.chat.chatrow.ChatRow";
     private static final String REACTION_PICKER_CLASS =
             "com.zing.zalo.ui.widget.reaction.ReactionPickerInContextMenuView";
@@ -207,18 +209,56 @@ public final class ChatFeature extends Feature {
     }
 
     private void layoutEmojiButton(ViewGroup picker) {
+        View button = null;
+        int hostRight = 0;
         for (int i = 0; i < picker.getChildCount(); i++) {
             View child = picker.getChildAt(i);
-            if (!CUSTOM_BUTTON_TAG.equals(child.getTag())) {
+            if (CUSTOM_BUTTON_TAG.equals(child.getTag())) {
+                button = child;
+            } else if (child.getVisibility() != View.GONE) {
+                hostRight = Math.max(hostRight, child.getRight());
+            }
+        }
+        if (button == null) {
+            return;
+        }
+        Context context = picker.getContext();
+        int full = emojiButtonDp(context, CUSTOM_BUTTON_DP);
+        int min = emojiButtonDp(context, 24);
+        int margin = emojiButtonDp(context, 4);
+        int width = picker.getWidth();
+        int available = width - hostRight - margin * 2;
+        int size = Math.min(full, Math.max(available, min));
+        // Narrow screens: if even the smallest button does not fit beside the reactions,
+        // shrink the host's own children (about the bar's left edge) to make room.
+        float scale = 1f;
+        if (available < min && hostRight > 0) {
+            scale = Math.max(0.6f, (float) (width - min - margin * 3) / hostRight);
+            scale = Math.min(1f, scale);
+        }
+        for (int i = 0; i < picker.getChildCount(); i++) {
+            View child = picker.getChildAt(i);
+            if (child == button || child.getVisibility() == View.GONE) {
                 continue;
             }
-            int size = emojiButtonDp(picker.getContext(), CUSTOM_BUTTON_DP);
-            child.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY));
-            int right = picker.getWidth() - emojiButtonDp(picker.getContext(), 4);
-            int top = (picker.getHeight() - size) / 2;
-            child.layout(right - size, top, right, top + size);
+            if (scale < 1f) {
+                child.setPivotX(-child.getLeft());
+                child.setPivotY(child.getHeight() / 2f);
+                child.setScaleX(scale);
+                child.setScaleY(scale);
+            } else if (child.getScaleX() != 1f && child.getTag(CUSTOM_SCALE_KEY) != null) {
+                child.setScaleX(1f);
+                child.setScaleY(1f);
+            }
+            if (scale < 1f) {
+                child.setTag(CUSTOM_SCALE_KEY, Boolean.TRUE);
+            }
         }
+        button.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY));
+        int right = width - margin;
+        int top = (picker.getHeight() - size) / 2;
+        button.layout(right - size, top, right, top + size);
     }
 
     private void pickAndSendEmoji(ViewGroup picker) {
