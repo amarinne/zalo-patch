@@ -125,11 +125,16 @@ final class ReactionEmojiDialog {
                 grid.addView(item, params);
             }
         }
+        // Fit the grid to the screen: the title, field and Cancel need roughly 230dp, and
+        // the dialog keeps a margin, so short screens get a shorter, scrollable grid.
+        int screenDp = Math.round(context.getResources().getDisplayMetrics().heightPixels
+                / context.getResources().getDisplayMetrics().density);
+        int gridHeight = dp(context, Math.max(96, Math.min(340, (int) (screenDp * 0.92f) - 230)));
         ScrollView scroll = new ScrollView(context);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.addView(grid);
         LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 340));
+                ViewGroup.LayoutParams.MATCH_PARENT, gridHeight);
         scrollParams.topMargin = dp(context, 8);
         surface.addView(scroll, scrollParams);
 
@@ -152,7 +157,7 @@ final class ReactionEmojiDialog {
         input.setOnFocusChangeListener((v, focused) -> {
             // Make room for the keyboard: shrink the grid so the field keeps its full size.
             ViewGroup.LayoutParams lp = scroll.getLayoutParams();
-            lp.height = dp(context, focused ? 96 : 340);
+            lp.height = focused ? Math.min(dp(context, 96), gridHeight) : gridHeight;
             scroll.setLayoutParams(lp);
         });
         customRow.addView(input, new LinearLayout.LayoutParams(0, dp(context, 48), 1f));
