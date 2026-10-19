@@ -107,7 +107,9 @@ final class ReactionEmojiDialog {
             grid.addView(label, labelParams);
             for (String emoji : groups.get(g)) {
                 TextView item = new TextView(context);
-                item.setText(renderer.render(emoji, dp(context, 28)));
+                CharSequence rendered = renderer.render(emoji, dp(context, 28));
+                item.setText(rendered);
+                clearTint(rendered);
                 item.setGravity(Gravity.CENTER);
                 item.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
                 item.setBackground(ripple(palette.primary, dp(context, 12)));
@@ -243,6 +245,20 @@ final class ReactionEmojiDialog {
             return false;
         }
         return !groups.isEmpty();
+    }
+
+    /** Host emoji images must keep their own colors, so drop any filter the span applied. */
+    private static void clearTint(CharSequence text) {
+        if (text instanceof android.text.Spanned) {
+            for (android.text.style.DynamicDrawableSpan span : ((android.text.Spanned) text)
+                    .getSpans(0, text.length(), android.text.style.DynamicDrawableSpan.class)) {
+                android.graphics.drawable.Drawable d = span.getDrawable();
+                if (d != null) {
+                    d.clearColorFilter();
+                    d.setTintList(null);
+                }
+            }
+        }
     }
 
     private static RippleDrawable ripple(int color, int radiusPx) {
