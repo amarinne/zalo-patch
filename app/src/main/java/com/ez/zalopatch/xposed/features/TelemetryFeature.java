@@ -177,8 +177,13 @@ public final class TelemetryFeature extends Feature {
             SelfCheckRegistry.markDisabled(FEATURE_ANALYTICS_DB, "AnalyticsRoomDatabase_Impl");
         }
         try {
-            Class<?> databaseClass = XpReflect.findClass(schemaString("symbols.telemetry.analytics_db_class",
-                    "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl"), classLoader);
+            // Schema-exact, fail-closed: the Room owner comes only from the profile, the same way
+            // SymbolPreflight.checkTelemetry resolves it. A profile without the anchor must stay
+            // stale, not arm from a Java literal. Every bundled profile and the DexKit overlay
+            // supply it, so no shipped path changes; an incomplete profile no longer silently
+            // hooks without schema backing.
+            Class<?> databaseClass = XpReflect.findClass(
+                    schemaString("symbols.telemetry.analytics_db_class", ""), classLoader);
             int hooked = 0;
             Set<String> expectedEnabled = enabledAnalyticsAccessors();
             Set<String> foundEnabled = new HashSet<>();

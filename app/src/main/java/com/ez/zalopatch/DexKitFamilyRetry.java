@@ -19,6 +19,7 @@ public final class DexKitFamilyRetry {
             "zinstant", "webview", "passcode", "backup", "telemetry", "bottom_tabs",
             "me", "inbox", "chat", "call_recording", "media",
             "remote_config", "stories", "original_photo", "adtima", "story_ads",
+            "reaction_send",
             "video_ads_outstream", "video_ads_template", "video_ads_native",
             "video_ads_photo_item", "video_ads_video_item"));
     private static final List<String> STATUSES = Arrays.asList(

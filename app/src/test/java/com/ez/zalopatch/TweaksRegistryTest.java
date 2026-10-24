@@ -22,9 +22,8 @@ public final class TweaksRegistryTest {
     public void integratedCandidatesRemainDefaultOffAndPortable() {
         for (String key : new String[]{Tweaks.KEY_DISABLE_SPONSORED_PLACEMENTS,
                 Tweaks.KEY_VIEW_STORIES_ANONYMOUSLY, Tweaks.KEY_PREFER_ORIGINAL_PHOTO,
-                Tweaks.KEY_CUSTOM_REACTION,
                 Tweaks.KEY_DISABLE_ADTIMA_OFFLINE_TRACKING, Tweaks.KEY_HIDE_STORY_ADS,
-                Tweaks.KEY_HIDE_VIDEO_ADS}) {
+                Tweaks.KEY_HIDE_VIDEO_ADS, Tweaks.KEY_CUSTOM_REACTION}) {
             assertTrue(key, Tweaks.isImplemented(key));
             assertFalse(key, Tweaks.defaultEnabled(key));
             Settings.Setting<?> setting = Settings.find(key);

@@ -10,6 +10,7 @@ import com.ez.zalopatch.xposed.core.XpHooks;
 import com.ez.zalopatch.xposed.core.XpLog;
 import com.ez.zalopatch.xposed.features.BottomTabsFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingFeature;
+import com.ez.zalopatch.xposed.features.ReactionEmojiResources;
 import com.ez.zalopatch.xposed.features.ZcloudBannerFeature;
 
 import io.github.libxposed.api.XposedModule;
@@ -56,6 +57,7 @@ public final class ZaloPatchModule extends XposedModule {
         });
         HookConfig.init();
         try {
+            ReactionEmojiResources.setModuleApplicationInfo(getModuleApplicationInfo());
             SymbolSchema.setModuleApkPath(getModuleApplicationInfo().sourceDir);
         } catch (Throwable throwable) {
             XpLog.w(TAG + ": module APK path unavailable: " + throwable);
@@ -156,6 +158,7 @@ public final class ZaloPatchModule extends XposedModule {
         HookConfig.init();
         HookConfig.reload();
         try {
+            ReactionEmojiResources.setModuleApplicationInfo(getModuleApplicationInfo());
             SymbolSchema.setModuleApkPath(getModuleApplicationInfo().sourceDir);
         } catch (Throwable throwable) {
             XpLog.w(TAG + ": module APK path unavailable: " + throwable);

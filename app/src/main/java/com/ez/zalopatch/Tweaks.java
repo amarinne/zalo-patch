@@ -52,6 +52,7 @@ public final class Tweaks {
     public static final String KEY_HIDE_ZCLOUD_BANNER = "inbox.hide_zcloud_banner";
     public static final String KEY_FILTER_POPOVER_CATEGORIES = "inbox.filter_popover";
     public static final String KEY_HIDE_REACTION_ROW = "messages.hide_reaction_row";
+    public static final String KEY_CUSTOM_REACTION = "messages.custom_reaction";
     public static final String KEY_OPEN_LINKS_EXTERNALLY = "messages.open_links_externally";
     public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
     public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
@@ -79,7 +80,6 @@ public final class Tweaks {
     public static final String KEY_BACKUP_PUSH_INTERVAL = "backup.push_interval";
     public static final String KEY_PREFER_ORIGINAL_PHOTO = "media.prefer_original_photo";
     public static final String KEY_KEEP_EXPIRED_MEDIA = "messages.keep_expired_media";
-    public static final String KEY_CUSTOM_REACTION = "messages.custom_reaction";
     public static final String KEY_PASSCODE_GRACE = "security.passcode_grace";
     public static final String KEY_PASSCODE_GRACE_MS = "security.passcode_grace_ms";
 

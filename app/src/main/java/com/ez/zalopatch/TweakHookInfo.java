@@ -92,7 +92,18 @@ final class TweakHookInfo {
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
                 break;
             case Tweaks.KEY_CUSTOM_REACTION:
-                path = "ReactionPickerInContextMenuView#<init>() + ReactionPickerView#onLayout() + bar listener callback (by shape)";
+                String reactionClass = schema.string(
+                        DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, "<reaction>");
+                path = DexKitReactionSendFingerprint.PICKER_CLASS + "#"
+                        + DexKitReactionSendFingerprint.LISTENER_GETTER + "() -> "
+                        + schema.string(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                        "<listener>")
+                        + "#" + schema.string(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                        "<reaction callback>")
+                        + "(" + reactionClass + ",String) + "
+                        + reactionClass
+                        + "#" + schema.string(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD,
+                        "<factory>") + "(int,String)";
                 break;
             case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
                 path = schema.string("symbols.webview.companion_class", "<webview dispatcher>")
@@ -310,6 +321,18 @@ final class TweakHookInfo {
                     videoAnchors.add("#" + schema.string(route.anchor("marker_method"), "<marker>") + "()");
                 }
                 return videoAnchors;
+            case Tweaks.KEY_CUSTOM_REACTION:
+                String reactionClass = schema.string(
+                        DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, "<reaction>");
+                return Arrays.asList(
+                        DexKitReactionSendFingerprint.PICKER_CLASS,
+                        schema.string(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                                "<listener>"),
+                        "#" + schema.string(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                                "<reaction callback>") + "(" + reactionClass + ",String)",
+                        reactionClass,
+                        "#" + schema.string(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD,
+                                "<factory>") + "(int,String)");
             case Tweaks.KEY_OPEN_LINKS_EXTERNALLY:
                 return Arrays.asList(
                         schema.string("symbols.webview.companion_class", "<webview dispatcher>"),

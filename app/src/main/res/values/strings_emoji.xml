@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Emoji reaction picker. Kept in its own file so the shared string table stays
+         untouched; these are ordinary user-facing copy. -->
+    <string name="zp_emoji_picker_title">Choose an emoji</string>
+    <string name="zp_emoji_picker_cancel">Cancel</string>
+    <string name="zp_emoji_picker_add">Add emoji reaction</string>
+    <string name="zp_emoji_picker_add_label">Emoji</string>
+</resources>

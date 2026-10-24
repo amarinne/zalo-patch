@@ -106,6 +106,12 @@ final class CallRecordingTranscoder {
                     codec.releaseOutputBuffer(outputIndex, false);
                 }
             }
+            // stop() commits the MP4 index. A non-empty file is not publishable if this fails.
+            if (!muxerStarted) {
+                throw new IOException("AAC muxer did not start");
+            }
+            muxer.stop();
+            muxerStarted = false;
         } finally {
             if (codec != null) {
                 try {

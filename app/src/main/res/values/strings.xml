@@ -115,7 +115,8 @@
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
     <string name="zp_tweak_custom_reaction">Emoji reaction button</string>
-    <string name="zp_tweak_custom_reaction_summary">Adds a + button to the reaction bar that opens an emoji picker, so any native emoji can be sent as a reaction. Not available while Hide reaction row is on.</string>
+    <string name="zp_reaction_setting_blocked">Turn off %1$s to enable this setting.</string>
+    <string name="zp_tweak_custom_reaction_summary">Adds a + button to the reaction bar that opens an emoji picker, so a native Unicode emoji can be sent as a reaction. Only plain emoji, sent when you tap one. Not available while Hide reaction row is on.</string>
     <string name="zp_tweak_open_links_externally">Open links in system browser</string>
     <string name="zp_tweak_open_links_externally_summary">Tapped chat and feed links open in your default browser or app, skipping Zalo’s in-app browser and its redirect server. Zalo-owned links, including payment and bank-card actions, stay in-app.</string>
     <string name="zp_tweak_block_seen_status">Block seen status</string>

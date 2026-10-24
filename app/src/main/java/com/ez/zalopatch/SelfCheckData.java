@@ -50,6 +50,17 @@ final class SelfCheckData {
         return map;
     }
 
+    /** Module-side listener and storage rows do not prove that Zalo loaded the module. */
+    static boolean hasHostRuntime(List<Row> rows) {
+        for (Row row : rows) {
+            if ("symbol_schema".equals(row.feature)
+                    && !row.artifactGeneration.isEmpty() && !row.runId.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static Counts counts(List<Row> rows) {
         Counts counts = new Counts();
         for (Row row : rows) {

@@ -5,6 +5,7 @@ import com.ez.zalopatch.DexKitAdtimaFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
 import com.ez.zalopatch.DexKitStoryFingerprint;
 import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
+import com.ez.zalopatch.DexKitReactionSendFingerprint;
 import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.xposed.features.CallRecordingLifecycle;
@@ -162,6 +163,16 @@ final class SymbolPreflight {
                     schema.string(DexKitStoryAdFingerprint.ANCHOR_BIND, ""), result.storyAdsErrors);
         } catch (Throwable throwable) {
             result.storyAdsErrors.add(familyError("story_ads", throwable));
+        }
+        try {
+            result.reactionSend = DexKitReactionSendFingerprint.check(classLoader,
+                    schema.string(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS, ""),
+                    schema.string(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD, ""),
+                    schema.string(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, ""),
+                    schema.string(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD, ""),
+                    result.reactionSendErrors);
+        } catch (Throwable throwable) {
+            result.reactionSendErrors.add(familyError("reaction_send", throwable));
         }
         for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
                 : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
@@ -1367,6 +1378,7 @@ final class SymbolPreflight {
         boolean originalPhoto;
         boolean adtima;
         boolean storyAds;
+        boolean reactionSend;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
@@ -1389,6 +1401,7 @@ final class SymbolPreflight {
         final List<String> originalPhotoErrors = new ArrayList<>();
         final List<String> adtimaErrors = new ArrayList<>();
         final List<String> storyAdsErrors = new ArrayList<>();
+        final List<String> reactionSendErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -1419,12 +1432,13 @@ final class SymbolPreflight {
             if (originalPhoto) count++;
             if (adtima) count++;
             if (storyAds) count++;
+            if (reactionSend) count++;
             for (Boolean resolved : videoAds.values()) if (Boolean.TRUE.equals(resolved)) count++;
             return count;
         }
 
         int total() {
-            return 22 + com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values().length;
+            return 23 + com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values().length;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -1452,6 +1466,7 @@ final class SymbolPreflight {
             append(value, "original_photo", originalPhoto);
             append(value, "adtima", adtima);
             append(value, "story_ads", storyAds);
+            append(value, "reaction_send", reactionSend);
             for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
                     : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
                 append(value, route.family(), Boolean.TRUE.equals(videoAds.get(route)));

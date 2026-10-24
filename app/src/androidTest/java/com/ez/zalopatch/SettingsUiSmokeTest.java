@@ -428,6 +428,90 @@ public final class SettingsUiSmokeTest
         }
     }
 
+    public void testReactionControlsPreserveSavedValuesAndRecoverLegacyConflict() {
+        StatusActivity activity = getActivity();
+        SharedPreferences prefs = TweakStore.preferences(activity);
+        SharedPreferences ui = SettingsChanges.preferences(activity);
+        Map<String, ?> original = new HashMap<>(prefs.getAll());
+        Map<String, ?> originalUi = new HashMap<>(ui.getAll());
+        String published = prefs.getString(ConfigSnapshot.KEY, null);
+        try {
+            for (boolean hide : new boolean[]{false, true}) {
+                for (boolean emoji : new boolean[]{false, true}) {
+                    Map<String, Object> values = new HashMap<>();
+                    values.put(Tweaks.KEY_HIDE_REACTION_ROW, hide);
+                    values.put(Tweaks.KEY_CUSTOM_REACTION, emoji);
+                    assertTrue(SettingsStore.save(activity, values));
+                    long revision = SettingsChanges.generation(activity);
+                    SectionActivity.SettingsFragment fragment =
+                            SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_CHAT);
+                    open(activity, fragment);
+                    getInstrumentation().runOnMainSync(() -> {
+                        assertReactionControls(fragment, hide, emoji);
+                        assertEquals(revision, SettingsChanges.generation(activity));
+                        // A pause/resume rereads desired values without normalizing either preference.
+                        activity.getSupportFragmentManager().beginTransaction().detach(fragment).commitNow();
+                        activity.getSupportFragmentManager().beginTransaction().attach(fragment).commitNow();
+                        assertReactionControls(fragment, hide, emoji);
+                        assertEquals(revision, SettingsChanges.generation(activity));
+                        ZpSwitchPreference changed = fragment.findPreference(hide
+                                ? Tweaks.KEY_HIDE_REACTION_ROW : Tweaks.KEY_CUSTOM_REACTION);
+                        boolean next = hide ? false : !emoji;
+                        assertTrue(changed.callChangeListener(next));
+                        assertReactionControls(fragment, false, hide ? emoji : next);
+                        assertEquals(false, SettingsStore.getBoolean(activity, Tweaks.KEY_HIDE_REACTION_ROW));
+                        assertEquals(hide ? emoji : next,
+                                SettingsStore.getBoolean(activity, Tweaks.KEY_CUSTOM_REACTION));
+                    });
+                }
+            }
+            // The other escape from the both-on legacy state must also remain available.
+            assertTrue(SettingsStore.save(activity, Map.of(
+                    Tweaks.KEY_HIDE_REACTION_ROW, true, Tweaks.KEY_CUSTOM_REACTION, true)));
+            SectionActivity.SettingsFragment fragment =
+                    SectionActivity.SettingsFragment.forSection(Tweaks.SECTION_CHAT);
+            open(activity, fragment);
+            getInstrumentation().runOnMainSync(() -> {
+                ZpSwitchPreference emoji = fragment.findPreference(Tweaks.KEY_CUSTOM_REACTION);
+                assertTrue(emoji.callChangeListener(false));
+                assertReactionControls(fragment, true, false);
+                // A saved edit outside this page is reflected on the next real resume.
+                assertTrue(SettingsStore.save(activity, Map.of(
+                        Tweaks.KEY_HIDE_REACTION_ROW, false, Tweaks.KEY_CUSTOM_REACTION, true)));
+                activity.getSupportFragmentManager().beginTransaction().detach(fragment).commitNow();
+                activity.getSupportFragmentManager().beginTransaction().attach(fragment).commitNow();
+                assertReactionControls(fragment, false, true);
+            });
+            assertEquals(published, prefs.getString(ConfigSnapshot.KEY, null));
+        } finally {
+            restorePreferences(prefs, original);
+            restorePreferences(ui, originalUi);
+        }
+    }
+
+    private void assertReactionControls(SectionActivity.SettingsFragment fragment,
+                                        boolean hide, boolean emoji) {
+        ZpSwitchPreference hideRow = fragment.findPreference(Tweaks.KEY_HIDE_REACTION_ROW);
+        ZpSwitchPreference emojiRow = fragment.findPreference(Tweaks.KEY_CUSTOM_REACTION);
+        assertEquals(hide, hideRow.isChecked());
+        assertEquals(emoji, emojiRow.isChecked());
+        assertEquals(hide || !emoji, hideRow.isEnabled());
+        assertEquals(emoji || !hide, emojiRow.isEnabled());
+        for (ZpSwitchPreference row : new ZpSwitchPreference[]{hideRow, emojiRow}) {
+            if (!row.isEnabled()) {
+                String otherTitle = getActivity().getString(row == hideRow
+                        ? R.string.zp_tweak_custom_reaction : R.string.zp_tweak_hide_reaction_row);
+                assertTrue(row.getSummary().toString().startsWith(getActivity().getString(
+                        R.string.zp_reaction_setting_blocked, otherTitle)));
+                android.view.View view = android.view.LayoutInflater.from(getActivity())
+                        .inflate(row.getLayoutResource(), null, false);
+                row.onBindViewHolder(androidx.preference.PreferenceViewHolder.createInstanceForTests(view));
+                assertFalse(view.isEnabled());
+                assertFalse(view.findViewById(android.R.id.widget_frame).isEnabled());
+            }
+        }
+    }
+
     public void testRestartStateSurvivesActivityRecreationWithoutAnotherWorker() {
         StatusActivity activity = getActivity();
         SettingsRestart[] retained = new SettingsRestart[1];

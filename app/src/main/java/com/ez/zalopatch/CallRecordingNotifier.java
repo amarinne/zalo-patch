@@ -65,36 +65,39 @@ final class CallRecordingNotifier {
     }
 
     static void finishSaved(Context context) {
-        context = UiSettings.localizedContext(context);
-        boolean hadStatus = hasActiveStatus(context);
-        cancelStatus(context);
-        if (!hadStatus || !enabled(context) || !canPost(context)) {
-            return;
-        }
-        NotificationManager manager = manager(context);
-        ensureChannels(context, manager);
-        manager.notify(RESULT_ID, resultBuilder(context, RESULT_CHANNEL)
-                .setContentTitle(context.getString(R.string.zp_call_recording_notification_saved))
-                .setContentText(context.getString(R.string.zp_call_recording_notification_saved_text))
-                .build());
-        updateSelfCheck(context, "active", "saved", true, "");
+        finish(context, true);
     }
 
     static void finishFailed(Context context) {
-        context = UiSettings.localizedContext(context);
-        boolean hadStatus = hasActiveStatus(context);
-        cancelStatus(context);
-        if (!hadStatus || !enabled(context) || !canPost(context)) {
-            return;
+        finish(context, false);
+    }
+
+    private static void finish(Context context, boolean saved) {
+        String state = saved ? "saved" : "failed";
+        try {
+            context = UiSettings.localizedContext(context);
+            boolean hadStatus = hasActiveStatus(context);
+            cancelStatus(context);
+            if (!hadStatus || !enabled(context) || !canPost(context)) {
+                return;
+            }
+            NotificationManager manager = manager(context);
+            ensureChannels(context, manager);
+            manager.notify(RESULT_ID, resultBuilder(context, RESULT_CHANNEL)
+                    .setContentTitle(context.getString(saved
+                            ? R.string.zp_call_recording_notification_saved
+                            : R.string.zp_call_recording_notification_failed))
+                    .setContentText(context.getString(saved
+                            ? R.string.zp_call_recording_notification_saved_text
+                            : R.string.zp_call_recording_notification_failed_text))
+                    .build());
+            updateSelfCheck(context, saved ? "active" : "failed", state, saved,
+                    saved ? "" : "Recording finalization failed");
+        } catch (RuntimeException failure) {
+            // Notification service failures must not turn a published recording into a save failure.
+            updateSelfCheck(context, "failed", state, false,
+                    "Notification delivery failed: " + failure.getClass().getSimpleName());
         }
-        NotificationManager manager = manager(context);
-        ensureChannels(context, manager);
-        manager.notify(RESULT_ID, resultBuilder(context, RESULT_CHANNEL)
-                .setContentTitle(context.getString(R.string.zp_call_recording_notification_failed))
-                .setContentText(context.getString(R.string.zp_call_recording_notification_failed_text))
-                .build());
-        updateSelfCheck(context, "failed", "failed", false,
-                "Recording finalization failed");
     }
 
     static boolean canPost(Context context) {
