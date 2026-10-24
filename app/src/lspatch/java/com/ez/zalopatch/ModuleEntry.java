@@ -10,6 +10,7 @@ import com.ez.zalopatch.xposed.core.XpHooks;
 import com.ez.zalopatch.xposed.core.XpLog;
 import com.ez.zalopatch.xposed.features.BottomTabsFeature;
 import com.ez.zalopatch.xposed.features.CallRecordingFeature;
+import com.ez.zalopatch.xposed.features.ReactionEmojiResources;
 import com.ez.zalopatch.xposed.features.ZcloudBannerFeature;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -24,6 +25,7 @@ public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookZyg
     private static final long RESOURCE_HOOK_OBSERVATION_WINDOW_MS = 5_000L;
     private final AtomicBoolean featuresStarted = new AtomicBoolean(false);
     @Override public void initZygote(StartupParam param) {
+        ReactionEmojiResources.setModuleApkPath(param.modulePath);
         SymbolSchema.setModuleApkPath(param.modulePath);
     }
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {

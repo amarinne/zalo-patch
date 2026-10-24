@@ -23,6 +23,7 @@ import com.ez.zalopatch.DexKitMediaFingerprint;
 import com.ez.zalopatch.DexKitPasscodeFingerprint;
 import com.ez.zalopatch.DexKitPilotPolicy;
 import com.ez.zalopatch.DexKitRemoteConfigFingerprint;
+import com.ez.zalopatch.DexKitReactionSendFingerprint;
 import com.ez.zalopatch.DexKitStoryFingerprint;
 import com.ez.zalopatch.DexKitTelemetryFingerprint;
 import com.ez.zalopatch.DexKitWebviewFingerprint;
@@ -119,6 +120,7 @@ final class DexKitFamilyResolver {
         boolean zinstantFeed;
         boolean adtima;
         boolean storyAds;
+        boolean reactionSend;
     }
 
     /**
@@ -161,6 +163,12 @@ final class DexKitFamilyResolver {
                     DexKitAdtimaFingerprint.TRACKING_GATE_CLASS,
                     DexKitAdtimaFingerprint.TRACKING_GATE_METHOD);
             states.storyAds = checked.storyAds;
+            states.reactionSend = checked.reactionSend
+                    && anchorsQualified(exact, overlay, extended,
+                    DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                    DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                    DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS,
+                    DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
             if (checked.me) {
                 states.me = true;
             } else if (extended != null) {
@@ -281,7 +289,8 @@ final class DexKitFamilyResolver {
                 && checked.webviewExternalize && checked.telemetryDao && checked.remoteConfig
                 && checked.callRecording
                 && checked.inboxRows && checked.bottomTabsSymbols && checked.chatReaction
-                && checked.zinstantSymbols && checked.originalPhoto && checked.adtima && checked.storyAds && allVideoAds(checked);
+                && checked.zinstantSymbols && checked.originalPhoto && checked.adtima && checked.storyAds
+                && checked.reactionSend && allVideoAds(checked);
     }
 
     private static boolean allVideoAds(SymbolPreflight.Result checked) {
@@ -675,14 +684,14 @@ final class DexKitFamilyResolver {
         Map<String, DexKitBridgeRunner.QueryResult> results;
         try {
             List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
-            for (DexKitBridgeRunner.MethodSpec spec : familySpecs()) {
+            for (DexKitBridgeRunner.MethodSpec spec : familySpecs(loaderOf(host))) {
                 if (pending.contains(queryFamily(spec.id))) specs.add(spec);
             }
             results = specs.isEmpty() ? new LinkedHashMap<>()
                     : DexKitBridgeRunner.scanMethods(host.sourceDir, specs);
         } catch (Throwable throwable) {
             results = new LinkedHashMap<>();
-            for (DexKitBridgeRunner.MethodSpec spec : familySpecs()) {
+            for (DexKitBridgeRunner.MethodSpec spec : familySpecs(loaderOf(host))) {
                 if (pending.contains(queryFamily(spec.id))) {
                     results.put(spec.id, new DexKitBridgeRunner.QueryResult(0, "query_error"));
                 }
@@ -765,6 +774,9 @@ final class DexKitFamilyResolver {
                         found = resolveStoryAds(loaderOf(host), results, anchorStatus);
                         break;
                     case "chat": found = resolveChat(host, results, anchorStatus); break;
+                    case "reaction_send":
+                        found = resolveReactionSend(host, results, anchorStatus);
+                        break;
                     case "stories": found = resolveStoryRequests(results, anchorStatus); break;
                     case "adtima": found = resolveAdtima(host.sourceDir, results, anchorStatus); break;
                     default:
@@ -856,6 +868,84 @@ final class DexKitFamilyResolver {
         return found;
     }
 
+    /**
+     * The native emoji reaction send chain. The listener callback is found by a bounded
+     * query scoped to the listener named by the stable {@code ReactionPickerView#getListener()};
+     * the companion factory is then found by a second bounded query scoped to the companion of
+     * the reaction class the callback names. Ambiguity anywhere leaves the family unavailable.
+     */
+    private static Map<String, String> resolveReactionSend(
+            DexKitZinstantResolver.HostIdentity host,
+            Map<String, DexKitBridgeRunner.QueryResult> results,
+            Map<String, String> anchorStatus) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        String listener = DexKitReactionSendFingerprint.listenerClassOf(host.loader);
+        if (listener.isEmpty()) {
+            anchorStatus.put(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                    "no_picker_anchor");
+            return resolved;
+        }
+        DexKitBridgeRunner.QueryResult callbackQuery =
+                results.get(DexKitReactionSendFingerprint.QUERY_LISTENER_CALLBACK);
+        boolean complete = callbackQuery != null && callbackQuery.error.isEmpty()
+                && callbackQuery.matchCount == callbackQuery.hits.size();
+        List<DexKitReactionSendFingerprint.MethodHit> callbackHits = new ArrayList<>();
+        if (complete) {
+            for (DexKitBridgeRunner.RawHit raw : callbackQuery.hits) {
+                callbackHits.add(new DexKitReactionSendFingerprint.MethodHit(
+                        raw.className, raw.methodName, raw.returnTypeName, raw.paramTypeNames));
+            }
+        }
+        DexKitReactionSendFingerprint.CallbackResolution callback =
+                DexKitReactionSendFingerprint.evaluateCallback(callbackHits, listener);
+        anchorStatus.put(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                complete ? callback.status : "query_error");
+        if (!complete || !callback.resolved()) {
+            return resolved;
+        }
+        String companion = DexKitReactionSendFingerprint.companionClassOf(
+                host.loader, callback.reactionClass);
+        if (companion.isEmpty()) {
+            anchorStatus.put(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, "no_companion");
+            return resolved;
+        }
+        DexKitBridgeRunner.QueryResult factoryQuery;
+        try {
+            factoryQuery = DexKitBridgeRunner.scanMethods(host.sourceDir,
+                    java.util.Collections.singletonList(new DexKitBridgeRunner.MethodSpec(
+                            DexKitReactionSendFingerprint.QUERY_FACTORY, companion,
+                            callback.reactionClass, 2)))
+                    .get(DexKitReactionSendFingerprint.QUERY_FACTORY);
+        } catch (Throwable throwable) {
+            anchorStatus.put(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD, "query_error");
+            return resolved;
+        }
+        boolean factoryComplete = factoryQuery != null && factoryQuery.error.isEmpty()
+                && factoryQuery.matchCount == factoryQuery.hits.size();
+        List<DexKitReactionSendFingerprint.MethodHit> factoryHits = new ArrayList<>();
+        if (factoryComplete) {
+            for (DexKitBridgeRunner.RawHit raw : factoryQuery.hits) {
+                factoryHits.add(new DexKitReactionSendFingerprint.MethodHit(
+                        raw.className, raw.methodName, raw.returnTypeName, raw.paramTypeNames));
+            }
+        }
+        DexKitReactionSendFingerprint.FactoryResolution factory =
+                DexKitReactionSendFingerprint.evaluateFactory(
+                        factoryHits, callback.reactionClass, companion);
+        anchorStatus.put(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD,
+                factoryComplete ? factory.status : "query_error");
+        if (!factoryComplete || !factory.resolved()) {
+            return resolved;
+        }
+        resolved.put(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS, listener);
+        resolved.put(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                callback.callbackMethod);
+        resolved.put(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS,
+                callback.reactionClass);
+        resolved.put(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD, factory.factoryMethod);
+        return resolved;
+    }
+
     static String queryFamily(String id) {
         if (id.equals(DexKitZinstantFingerprint.ANCHOR_AD_BIND)
                 || id.equals(DexKitZinstantFingerprint.ANCHOR_FEED_BIND)) return "zinstant";
@@ -879,6 +969,8 @@ final class DexKitFamilyResolver {
         if (id.equals(DexKitStoryFingerprint.QUERY_SEEN)
                 || id.equals(DexKitStoryFingerprint.QUERY_SUGGESTED)) return "stories";
         if (id.equals(DexKitStoryAdFingerprint.QUERY_BIND)) return "story_ads";
+        if (id.equals(DexKitReactionSendFingerprint.QUERY_LISTENER_CALLBACK)
+                || id.equals(DexKitReactionSendFingerprint.QUERY_FACTORY)) return "reaction_send";
         for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
             if (id.equals(route.query())) return route.family();
         }
@@ -909,6 +1001,15 @@ final class DexKitFamilyResolver {
     }
 
     static List<DexKitBridgeRunner.MethodSpec> familySpecs() {
+        return familySpecs(null);
+    }
+
+    /**
+     * The full query set. The reaction-send callback query is owner-scoped to the listener
+     * named by the stable {@code ReactionPickerView#getListener()}, so it needs a loader;
+     * without one (replay tooling) that spec is simply absent and the family stays pending.
+     */
+    static List<DexKitBridgeRunner.MethodSpec> familySpecs(ClassLoader loader) {
         List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryAdFingerprint.QUERY_BIND,
                 null, "void", null, false, null, false, DexKitStoryAdFingerprint.MARKERS));
@@ -964,6 +1065,12 @@ final class DexKitFamilyResolver {
             specs.add(new DexKitBridgeRunner.MethodSpec(route.query(), route.returnType,
                     route.parameters.size(), route.semanticMethod,
                     DexKitVideoAdsFingerprint.strings(route)));
+        }
+        String reactionListener = DexKitReactionSendFingerprint.listenerClassOf(loader);
+        if (!reactionListener.isEmpty()) {
+            specs.add(new DexKitBridgeRunner.MethodSpec(
+                    DexKitReactionSendFingerprint.QUERY_LISTENER_CALLBACK,
+                    reactionListener, "void", 2));
         }
         return specs;
     }
@@ -2684,6 +2791,23 @@ final class DexKitFamilyResolver {
             kept.remove(DexKitStoryAdFingerprint.ANCHOR_CLASS);
             kept.remove(DexKitStoryAdFingerprint.ANCHOR_BIND);
         }
+        dropIncompleteFamily(kept,
+                DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
+                DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS,
+                DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
+        if (DexKitReactionSendFingerprint.complete(kept)
+                && !DexKitReactionSendFingerprint.checkShape(loader,
+                        kept.get(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS),
+                        kept.get(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD),
+                        kept.get(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS),
+                        kept.get(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD),
+                        new ArrayList<>())) {
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
+        }
         // Passcode arms on the reader alone when the setter is unresolvable; the
         // setter pair is kept only when fully resolved.
         dropIncompleteFamily(kept,
@@ -2822,6 +2946,7 @@ final class DexKitFamilyResolver {
         boolean storySuggestedOk = false;
         boolean adtimaOk = false;
         boolean storyAdsOk = false;
+        boolean reactionSendOk = false;
         if (overlay != null) {
             FamilyStates states = familyStates(overlay, loader, kept, exact);
             originalPhotoOk = states.originalPhoto;
@@ -2843,6 +2968,7 @@ final class DexKitFamilyResolver {
             storySuggestedOk = states.storySuggested;
             adtimaOk = states.adtima;
             storyAdsOk = states.storyAds;
+            reactionSendOk = states.reactionSend;
         }
         if (!originalPhotoOk) {
             for (String anchor : DexKitOriginalPhotoFingerprint.ANCHORS) kept.remove(anchor);
@@ -2903,6 +3029,12 @@ final class DexKitFamilyResolver {
         if (!storyAdsOk) {
             kept.remove(DexKitStoryAdFingerprint.ANCHOR_CLASS);
             kept.remove(DexKitStoryAdFingerprint.ANCHOR_BIND);
+        }
+        if (!reactionSendOk) {
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS);
+            kept.remove(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
         }
         if (!chatRepositoryOk(loaderOf(host), kept)) {
             kept.remove(DexKitChatFingerprint.ANCHOR_REPOSITORY_CLASS);

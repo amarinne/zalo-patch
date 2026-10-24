@@ -130,7 +130,8 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertFalse(active.valid);
         assertTrue(active.bundleValid);
         assertTrue(active.validation.contains("No exact bundled symbol profile"));
-        assertEquals("260602901, 260701901, 260801903, 260802903, 261001903, 261001905",
+        assertEquals("260602901, 260701901, 260801903, 260802903, 261001903, 261001905, "
+                        + "261002901, 261002903",
                 active.supportedVersionCodes);
     }
 
@@ -164,8 +165,46 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertEquals(23, remote.schemaRevision);
         assertEquals("of1.h1", remote.string("symbols.inbox.message_adapter_class", ""));
 
-        SymbolSchema.Active selected = bundled.valid ? bundled : remote;
+        SymbolSchema.Active selected = SymbolProfileSelection.select(bundled, remote);
         assertEquals("Remote catalog 14", selected.source);
+    }
+
+    /**
+     * A signed remote profile that names the bundled schema revision replaces the bundled exact
+     * profile. The client keeps the bundled profile when the signed profile names no revision or
+     * an older one.
+     */
+    public void testSignedRemoteSupersedesOnlyTheNamedBundledRevision() throws Exception {
+        JSONObject bundle = new JSONObject(bundleJson);
+        JSONArray profiles = bundle.getJSONArray("profiles");
+        JSONObject bundledProfile = null;
+        for (int index = 0; index < profiles.length(); index++) {
+            JSONObject profile = profiles.getJSONObject(index);
+            if (profile.getJSONObject("zalo_version").getLong("min_code") == 261001905L) {
+                bundledProfile = profile;
+            }
+        }
+        assertNotNull(bundledProfile);
+
+        SymbolSchema.Active bundled = SymbolSchema.select(bundleJson, "Bundled", 261001905L);
+        assertTrue(bundled.valid);
+        int bundledRevision = bundled.schemaRevision;
+
+        JSONObject correction = new JSONObject(bundledProfile.toString())
+                .put("schema_revision", bundledRevision + 1)
+                .put(SymbolProfileSelection.SUPERSEDES_KEY, bundledRevision);
+        SymbolSchema.Active remote = SymbolSchema.select(correction.toString(),
+                "Remote catalog 33", 261001905L);
+        assertTrue(remote.valid);
+        assertEquals("Remote catalog 33",
+                SymbolProfileSelection.select(bundled, remote).source);
+
+        JSONObject unnamed = new JSONObject(bundledProfile.toString())
+                .put("schema_revision", bundledRevision + 1);
+        SymbolSchema.Active unnamedRemote = SymbolSchema.select(unnamed.toString(),
+                "Remote catalog 33", 261001905L);
+        assertEquals("Bundled profile 261001905",
+                SymbolProfileSelection.select(bundled, unnamedRemote).source);
     }
 
     public void testProbeProfileSelectsTheNewestRevisionForAnUnmappedVersion() throws Exception {
@@ -226,6 +265,54 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
 
     public void testEmbeddedFallbackMatchesPackagedProfiles() {
         assertEquals(bundleJson, BundledSymbolSchemaJson.json());
+    }
+
+    /**
+     * A resolved reaction-send overlay is the case that a bundled profile cannot cover:
+     * every placeholder must be gone and the displayed path must still carry each drift
+     * symbol. The anchor values are the independently inspected Zalo 26.10.02 evidence
+     * recorded on {@link DexKitReactionSendFingerprint}; nothing here is added to a bundled
+     * profile.
+     */
+    public void testResolvedReactionSendOverlayDropsPlaceholdersAndKeepsDriftSymbols()
+            throws Exception {
+        JSONObject profile = new JSONObject()
+                .put("schema_version", 1)
+                .put("schema_revision", 34)
+                .put("zalo_package", "com.zing.zalo")
+                .put("zalo_version", new JSONObject()
+                        .put("min_code", 261002901L).put("max_code", 261002901L))
+                .put("artifact", new JSONObject()
+                        .put("base_apk_sha256",
+                                "3bbe323515c5b68f86dd87e957202f5abdbfdf308dce429bd795632cfb46aa03")
+                        .put("signer_sha256",
+                                "d86efe151e09bf4ca8440cb3bfa0a81be2544f70c78587daf0266dfca2fa25df")
+                        .put("hook_code_apk", "base")
+                        .put("verification", "static-verified"))
+                .put("symbols", new JSONObject().put("reaction_send", new JSONObject()
+                        .put("listener_class", "lo1.r")
+                        .put("callback_method", "Z")
+                        .put("reaction_class", "m00.i")
+                        .put("factory_method", "a")));
+
+        SymbolSchema.Active active = SymbolSchema.select(
+                profile.toString(), "Synthetic overlay", 261002901L);
+        assertTrue(active.validation, active.valid);
+        TweakHookInfo.Info info = TweakHookInfo.forKey(Tweaks.KEY_CUSTOM_REACTION, active);
+
+        assertEquals("com.zing.zalo.ui.widget.reaction.ReactionPickerView#getListener() -> "
+                + "lo1.r#Z(m00.i,String) + m00.i#a(int,String)", info.path);
+        assertFalse("Resolved overlay must not display a placeholder", info.path.contains("<"));
+        assertEquals(java.util.Arrays.asList(
+                "com.zing.zalo.ui.widget.reaction.ReactionPickerView",
+                "lo1.r",
+                "#Z(m00.i,String)",
+                "m00.i",
+                "#a(int,String)"), info.driftSymbols);
+        for (String symbol : info.driftSymbols) {
+            assertFalse("Placeholder drift symbol " + symbol, symbol.contains("<"));
+            assertTrue("Hook path omits drift symbol " + symbol, info.path.contains(symbol));
+        }
     }
 
     public void testOctoberMaintenanceHasExactArtifactAndReviewedRoutes() throws Exception {
@@ -500,6 +587,25 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                     || Tweaks.KEY_KEEP_GROUP_TAB.equals(item.key))
                     && active.strings("symbols.bottom_tabs.current_state_classes").isEmpty()) {
                 assertTrue(info.path.contains("<bottom-tab state>"));
+                continue;
+            }
+            // The reaction-send family is resolved at runtime, so no bundled profile carries
+            // it. Absence of its first anchor must mean every anchor is absent, and the
+            // displayed identity is the honest placeholder set instead of a guessed name.
+            if (Tweaks.KEY_CUSTOM_REACTION.equals(item.key)
+                    && active.string(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS,
+                    "").isEmpty()) {
+                assertMissingAnchors(active, DexKitReactionSendFingerprint.ANCHORS);
+                assertEquals(DexKitReactionSendFingerprint.PICKER_CLASS + "#"
+                        + DexKitReactionSendFingerprint.LISTENER_GETTER
+                        + "() -> <listener>#<reaction callback>(<reaction>,String) + "
+                        + "<reaction>#<factory>(int,String)", info.path);
+                assertEquals(java.util.Arrays.asList(
+                        DexKitReactionSendFingerprint.PICKER_CLASS,
+                        "<listener>",
+                        "#<reaction callback>(<reaction>,String)",
+                        "<reaction>",
+                        "#<factory>(int,String)"), info.driftSymbols);
                 continue;
             }
             for (String symbol : info.driftSymbols) {

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="zp_emoji_picker_title">Chọn emoji</string>
+    <string name="zp_emoji_picker_cancel">Hủy</string>
+    <string name="zp_emoji_picker_add">Thêm cảm xúc emoji</string>
+    <string name="zp_emoji_picker_add_label">Emoji</string>
+</resources>

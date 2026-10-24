@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ez.zalopatch.xposed.core.XpHooks;
@@ -50,6 +51,7 @@ public final class CallRecordingFeature extends Feature {
     private static final java.util.Set<String> OBSERVED_CALLBACKS =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final String FEATURE_NATIVE = "calls.auto_record.native";
+    private static final String FEATURE_TRANSFER = "calls.auto_record.transfer";
     private static final String FEATURE_STORAGE = "calls.auto_record.storage";
     private static final String FEATURE_NOTIFICATIONS = "calls.auto_record.notifications";
     private static final String FEATURE_VIDEO_STATE = "calls.auto_record.video_state";
@@ -60,6 +62,7 @@ public final class CallRecordingFeature extends Feature {
     private static final int ACTIVITY_FALLBACK_ATTEMPTS = 5;
     private static final long WAV_READY_TIMEOUT_MS = 5_000L;
     private static final long WAV_READY_POLL_MS = 100L;
+    private static final long IMPORT_ACK_TIMEOUT_MS = 30_000L;
     private static final String[] CALL_ACTIVITIES = new String[]{
             "zm.voip.ui.incall.ZmInCallActivity"
     };
@@ -139,6 +142,7 @@ public final class CallRecordingFeature extends Feature {
         if (!HookConfig.isEnabled(Tweaks.KEY_AUTO_RECORD_CALLS)) {
             SelfCheckRegistry.markDisabled(FEATURE_HOOKS, "ZRTC one-to-one call audio recorder");
             SelfCheckRegistry.markDisabled(FEATURE_NATIVE, "ZRTC native WAV recorder");
+            SelfCheckRegistry.markDisabled(FEATURE_TRANSFER, "Private WAV transfer acknowledgment");
             SelfCheckRegistry.markDisabled(FEATURE_STORAGE, "MediaStore shared M4A");
             SelfCheckRegistry.markDisabled(FEATURE_NOTIFICATIONS, "Recording status notifications");
             SelfCheckRegistry.markDisabled(FEATURE_VIDEO_STATE, "ZRTC video state");
@@ -178,6 +182,8 @@ public final class CallRecordingFeature extends Feature {
                 "PeerJNI callback and ZmInCallActivity audio lifecycle", hooks);
         SelfCheckRegistry.markInstalled(FEATURE_NATIVE,
                 "PeerJNI#zrtc_peer_start_record_audio", 1);
+        SelfCheckRegistry.markInstalled(FEATURE_TRANSFER,
+                "CallRecordingImportReceiver private WAV copy", 1);
         SelfCheckRegistry.markInstalled(FEATURE_STORAGE,
                 "MediaStore shared M4A finalizer", 1);
         SelfCheckRegistry.markInstalled(FEATURE_VIDEO_STATE,
@@ -850,15 +856,25 @@ public final class CallRecordingFeature extends Feature {
             String displayName,
             String phoneNumber,
             String trigger) {
+        SelfCheckRegistry.markStatus(FEATURE_TRANSFER, "installed_no_hits",
+                "CallRecordingImportReceiver acknowledgment", "trigger=" + trigger, "");
+        AtomicBoolean acknowledged = new AtomicBoolean();
         IBinder source = CallRecordingImportProtocol.source(sourceFile, accepted -> {
-            if (accepted) {
-                sourceFile.delete();
-            } else {
-                SelfCheckRegistry.markStatus(FEATURE_STORAGE, "failed",
-                        "CallRecordingImportReceiver", "trigger=" + trigger,
-                        "Native WAV could not be queued for conversion");
-                sendRecordingNotification(application,
-                        CallRecordingNotificationReceiver.STATE_FAILED);
+            synchronized (acknowledged) {
+                acknowledged.set(true);
+                if (accepted) {
+                    SelfCheckRegistry.markInstalled(FEATURE_TRANSFER,
+                            "CallRecordingImportReceiver private WAV copy", 1);
+                    SelfCheckRegistry.incrementHit(FEATURE_TRANSFER,
+                            "CallRecordingImportReceiver private WAV copy", "trigger=" + trigger);
+                    sourceFile.delete();
+                } else {
+                    SelfCheckRegistry.markStatus(FEATURE_TRANSFER, "failed",
+                            "CallRecordingImportReceiver", "trigger=" + trigger,
+                            "Private WAV copy rejected; source preserved");
+                    sendRecordingNotification(application,
+                            CallRecordingNotificationReceiver.STATE_FAILED);
+                }
             }
         });
         Intent intent = new Intent();
@@ -871,10 +887,21 @@ public final class CallRecordingFeature extends Feature {
         extras.putString(CallRecordingImportReceiver.EXTRA_PHONE_NUMBER, phoneNumber);
         intent.putExtras(extras);
         try {
+            STOP_SCHEDULER.schedule(() -> {
+                synchronized (acknowledged) {
+                    if (!acknowledged.get()) {
+                        // A late positive acknowledgment still permits cleanup. A timeout never does.
+                        SelfCheckRegistry.markStatus(FEATURE_TRANSFER, "failed",
+                                "CallRecordingImportReceiver acknowledgment", "trigger=" + trigger,
+                                "Private WAV copy not acknowledged within 30 seconds; source preserved");
+                    }
+                }
+            }, IMPORT_ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             application.sendBroadcast(intent);
             return true;
         } catch (Throwable throwable) {
-            SelfCheckRegistry.markFailed(FEATURE_STORAGE,
+            acknowledged.set(true);
+            SelfCheckRegistry.markFailed(FEATURE_TRANSFER,
                     "CallRecordingImportReceiver#send", throwable);
             return false;
         }

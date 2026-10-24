@@ -52,6 +52,7 @@ public final class Tweaks {
     public static final String KEY_HIDE_ZCLOUD_BANNER = "inbox.hide_zcloud_banner";
     public static final String KEY_FILTER_POPOVER_CATEGORIES = "inbox.filter_popover";
     public static final String KEY_HIDE_REACTION_ROW = "messages.hide_reaction_row";
+    public static final String KEY_CUSTOM_REACTION = "messages.custom_reaction";
     public static final String KEY_OPEN_LINKS_EXTERNALLY = "messages.open_links_externally";
     public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
     public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
@@ -155,7 +156,8 @@ public final class Tweaks {
         }
         if (SECTION_CHAT.equals(section)) {
             return Arrays.asList(
-                    new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW),
+                    new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW,
+                            KEY_CUSTOM_REACTION),
                     new Group(R.string.zp_group_external_links, KEY_OPEN_LINKS_EXTERNALLY),
                     new Group(R.string.zp_group_status_privacy,
                             KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS,
@@ -283,6 +285,9 @@ public final class Tweaks {
 
             new Item(SECTION_CHAT, KEY_HIDE_REACTION_ROW,
                     R.string.zp_tweak_hide_reaction_row, R.string.zp_tweak_hide_reaction_row_summary,
+                    true, false),
+            new Item(SECTION_CHAT, KEY_CUSTOM_REACTION,
+                    R.string.zp_tweak_custom_reaction, R.string.zp_tweak_custom_reaction_summary,
                     true, false),
             new Item(SECTION_CHAT, KEY_OPEN_LINKS_EXTERNALLY,
                     R.string.zp_tweak_open_links_externally,

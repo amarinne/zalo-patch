@@ -121,6 +121,12 @@ public final class DexKitAnchors {
         ANCHORS.add(new Anchor("symbols.chat.seen_ack_type_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.chat.send_seen_single_method", Kind.METHOD));
         ANCHORS.add(new Anchor("symbols.chat.send_seen_batch_method", Kind.METHOD));
+        // Native emoji reaction send chain: stable ReactionPickerView#getListener ->
+        // listener reaction callback -> reaction data class -> companion factory.
+        ANCHORS.add(new Anchor(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD, Kind.METHOD));
         // Story/community sponsored placements share one keyed integer config reader.
         ANCHORS.add(new Anchor(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, Kind.CLASS));
         ANCHORS.add(new Anchor(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, Kind.METHOD));

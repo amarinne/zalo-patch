@@ -102,6 +102,7 @@ public final class SectionActivity {
                     dirtySwitches.add(entry.getValue());
                 }
             }
+            refreshReactionControls();
             for (Map.Entry<ZpRowPreference, String[]> entry : pageStatuses.entrySet()) {
                 ZpRowStyle.Chip[] chips = trackingChipsForFeatures(entry.getValue());
                 if (!entry.getKey().rowStyle().hasChips(chips)) {
@@ -165,6 +166,20 @@ public final class SectionActivity {
                 for (String key : group.keys) {
                     addRowsForKey(zpSection, schema, key);
                 }
+            }
+            refreshReactionControls();
+        }
+
+        private void refreshReactionControls() {
+            for (String key : new String[]{Tweaks.KEY_HIDE_REACTION_ROW, Tweaks.KEY_CUSTOM_REACTION}) {
+                ZpSwitchPreference preference = switches.get(key);
+                if (preference == null) continue;
+                String other = Tweaks.KEY_HIDE_REACTION_ROW.equals(key)
+                        ? Tweaks.KEY_CUSTOM_REACTION : Tweaks.KEY_HIDE_REACTION_ROW;
+                boolean checked = TweakStore.isEnabled(requireContext(), key);
+                preference.setChecked(checked);
+                // A legacy pair with both values on must still allow either value to be turned off.
+                preference.setEnabled(checked || !TweakStore.isEnabled(requireContext(), other));
             }
         }
 
@@ -508,6 +523,15 @@ public final class SectionActivity {
             preference.setChecked(TweakStore.isEnabled(context, item.key));
             preference.chips(trackingChips(item.key));
             switches.put(item.key, preference);
+            if (Tweaks.KEY_HIDE_REACTION_ROW.equals(item.key)
+                    || Tweaks.KEY_CUSTOM_REACTION.equals(item.key)) {
+                CharSequence originalSummary = summary;
+                int otherTitle = Tweaks.KEY_HIDE_REACTION_ROW.equals(item.key)
+                        ? R.string.zp_tweak_custom_reaction : R.string.zp_tweak_hide_reaction_row;
+                preference.setSummaryProvider(ignored -> preference.isEnabled() ? originalSummary
+                        : android.text.TextUtils.concat(getString(R.string.zp_reaction_setting_blocked,
+                                getString(otherTitle)), "\n", originalSummary));
+            }
             preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
                 boolean enabled = (Boolean) newValue;
                 if (Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS.equals(item.key)
@@ -519,6 +543,8 @@ public final class SectionActivity {
                 }
                 if (!SettingsStore.confirmSaved(context,
                         TweakStore.setEnabled(context, item.key, enabled))) return false;
+                if (Tweaks.KEY_HIDE_REACTION_ROW.equals(item.key)
+                        || Tweaks.KEY_CUSTOM_REACTION.equals(item.key)) refreshReactionControls();
                 if (telemetryMaster != null && item.key.startsWith("telemetry.")) {
                     telemetryMaster.setChecked(allTelemetryDisabled(context));
                 }
@@ -640,6 +666,9 @@ public final class SectionActivity {
             if (Tweaks.KEY_HIDE_REACTION_ROW.equals(key)) {
                 return new String[]{"messages.reaction_row"};
             }
+            if (Tweaks.KEY_CUSTOM_REACTION.equals(key)) {
+                return new String[]{"messages.custom_reaction", "messages.custom_reaction.button"};
+            }
             if (Tweaks.KEY_OPEN_LINKS_EXTERNALLY.equals(key)) {
                 return new String[]{Tweaks.KEY_OPEN_LINKS_EXTERNALLY};
             }
@@ -665,7 +694,8 @@ public final class SectionActivity {
             }
             if (Tweaks.KEY_AUTO_RECORD_CALLS.equals(key)) {
                 return new String[]{"calls.auto_record.hooks", "calls.auto_record.native",
-                        "calls.auto_record.storage", "calls.auto_record.video_state",
+                        "calls.auto_record.transfer", "calls.auto_record.storage",
+                        "calls.auto_record.video_state",
                         "calls.auto_record.metadata"};
             }
             if (Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS.equals(key)) {

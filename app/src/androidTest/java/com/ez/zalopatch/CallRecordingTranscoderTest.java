@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ProviderInfo;
 import android.content.res.Configuration;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.content.Intent;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
@@ -244,7 +245,66 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         assertPublicationOutcome(1, false, false);
     }
 
+    public void testNotificationServiceFailureDoesNotUndoSuccessfulPublication() throws Exception {
+        assertPublicationOutcome(1, false, false, true);
+    }
+
+    public void testNotificationServiceFailureDoesNotEscapeFailedPublication() throws Exception {
+        assertPublicationOutcome(0, false, false, true);
+    }
+
+    public void testRecordingsListExcludesUnpublishedMedia() throws Exception {
+        Context base = getInstrumentation().getTargetContext();
+        File directory = Files.createTempDirectory(base.getCacheDir().toPath(),
+                "recording-list-").toFile();
+        try (SQLiteDatabase database = SQLiteDatabase.create(null)) {
+            database.execSQL("CREATE TABLE audio (_id INTEGER, _display_name TEXT, _size INTEGER, "
+                    + "duration INTEGER, date_added INTEGER, relative_path TEXT, is_pending INTEGER)");
+            database.execSQL("INSERT INTO audio VALUES (1,'saved.m4a',100,500,10,"
+                    + "'Recordings/Zalo Call Recordings/',0)");
+            database.execSQL("INSERT INTO audio VALUES (2,'saving.m4a',0,0,11,"
+                    + "'Recordings/Zalo Call Recordings/',1)");
+            database.execSQL("INSERT INTO audio VALUES (3,'other.m4a',100,500,12,'Music/',0)");
+            ContentProvider provider = new ContentProvider() {
+                @Override public boolean onCreate() { return true; }
+                @Override public String getType(Uri uri) { return "audio/mp4"; }
+                @Override public Cursor query(Uri uri, String[] projection, String selection,
+                        String[] args, String sortOrder) {
+                    return database.query("audio", projection, selection, args, null, null, sortOrder);
+                }
+                @Override public Uri insert(Uri uri, ContentValues values) {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public int update(Uri uri, ContentValues values, String s, String[] args) {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public int delete(Uri uri, String s, String[] args) {
+                    throw new UnsupportedOperationException();
+                }
+            };
+            Context context = new ContextWrapper(base) {
+                @Override public File getFilesDir() { return directory; }
+                @Override public ContentResolver getContentResolver() { return ContentResolver.wrap(provider); }
+            };
+            ProviderInfo info = new ProviderInfo();
+            info.authority = "media";
+            provider.attachInfo(context, info);
+            java.util.List<CallRecordingStore.Entry> entries = CallRecordingStore.list(context);
+            assertEquals(1, entries.size());
+            assertEquals("saved.m4a", entries.get(0).name);
+        } finally {
+            new File(directory, "call_recordings").delete();
+            directory.delete();
+        }
+    }
+
     private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete)
+            throws Exception {
+        assertPublicationOutcome(updated, throwUpdate, throwDelete, false);
+    }
+
+    private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete,
+            boolean throwNotification)
             throws Exception {
         Context base = getInstrumentation().getTargetContext();
         String preferencesName = "recording-publication-fixture-" + UUID.randomUUID();
@@ -269,6 +329,9 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
             }
             @Override public Context createConfigurationContext(Configuration configuration) { return this; }
             @Override public Object getSystemService(String name) {
+                if (throwNotification && NOTIFICATION_SERVICE.equals(name)) {
+                    throw new IllegalStateException("Fixture notification service unavailable");
+                }
                 return NOTIFICATION_SERVICE.equals(name) ? null : super.getSystemService(name);
             }
         };
@@ -296,6 +359,12 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
             String prefix = "selfcheck.calls.auto_record.storage.";
             assertEquals(expectedSaved ? "active" : "failed", preferences.getString(prefix + "status", ""));
             assertEquals(expectedSaved ? 1 : 0, preferences.getInt(prefix + "hit_count", 0));
+            if (throwNotification) {
+                assertEquals("failed", preferences.getString(
+                        "selfcheck.calls.auto_record.notifications.status", ""));
+                assertEquals("state=" + (expectedSaved ? "saved" : "failed"), preferences.getString(
+                        "selfcheck.calls.auto_record.notifications.detail", ""));
+            }
             assertEquals(expectedSaved ? 0 : 1, provider.deletes);
             if (expectedSaved) {
                 assertFalse(raw.exists());

@@ -9,6 +9,7 @@
 ## Features
 
 - Clean up navigation, inbox, chat and Me-screen elements.
+- Add a native Unicode emoji picker to the reaction bar.
 - Filter promotional notifications.
 - Block analytics and advertising services.
 - Local notification history.
@@ -20,7 +21,7 @@
 - Rooted device with Android 8.0 (API 26) or newer.
 - LSPosed or another framework that supports LibXposed API 102.
 - Zalo selected in the module scope.
-- Zalo 26.10.01 (`versionCode 261001903` or `261001905`). Earlier supported versions appear in the compatibility catalog.
+- Zalo 26.10.02 (`versionCode 261002901` or `261002903`) and 26.10.01 (`261001903` or `261001905`). Earlier supported versions appear in the compatibility catalog.
 
 Saving call recordings requires Android 10 or newer.
 

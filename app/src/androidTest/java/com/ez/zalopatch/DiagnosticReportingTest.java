@@ -6,6 +6,41 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class DiagnosticReportingTest extends AndroidTestCase {
+    public void testModuleSideRowsDoNotMakeHostSetupReady() {
+        java.util.List<SelfCheckData.Row> rows = java.util.Arrays.asList(
+                selfCheckRow("notifications.listener", "active", "", ""),
+                selfCheckRow("notifications.listener_observer", "active", "", ""),
+                selfCheckRow("calls.auto_record.storage", "active", "", ""));
+
+        assertFalse(SelfCheckData.hasHostRuntime(rows));
+        assertEquals("warning", DiagnosticReportFactory.setupState(true, true,
+                SelfCheckData.hasHostRuntime(rows), SelfCheckData.counts(rows)));
+    }
+
+    public void testHostSchemaEvidenceRequiresArtifactAndRunIdentity() {
+        java.util.List<SelfCheckData.Row> legacy = java.util.Collections.singletonList(
+                selfCheckRow("symbol_schema", "active", "", ""));
+        assertFalse(SelfCheckData.hasHostRuntime(legacy));
+
+        java.util.List<SelfCheckData.Row> admitted = java.util.Collections.singletonList(
+                selfCheckRow("symbol_schema", "active", "artifact", "run"));
+        assertTrue(SelfCheckData.hasHostRuntime(admitted));
+        SelfCheckData.Counts counts = SelfCheckData.counts(admitted);
+        assertEquals("ready", DiagnosticReportFactory.setupState(true, true, true, counts));
+        // The report rejects a previous module/artifact epoch even if its rows remain stored.
+        assertEquals("warning", DiagnosticReportFactory.setupState(true, true, false, counts));
+        assertEquals("failed", DiagnosticReportFactory.setupState(false, true, true, counts));
+        assertEquals("failed", DiagnosticReportFactory.setupState(true, false, true, counts));
+        counts.failed = 1;
+        assertEquals("failed", DiagnosticReportFactory.setupState(true, true, false, counts));
+    }
+
+    private static SelfCheckData.Row selfCheckRow(
+            String feature, String status, String artifact, String run) {
+        return new SelfCheckData.Row(feature, status, 1, 1, "fixture", "", "", 1L,
+                artifact, run);
+    }
+
     public void testFiniteReceiptDisplaysTheServiceExpiry() throws Exception {
         String expires = "2027-01-11T07:00:00Z";
         DiagnosticUploader.Receipt receipt = syntheticReceipt("finite", expires);

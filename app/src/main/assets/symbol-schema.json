@@ -1,6 +1,6 @@
 {
   "bundle_version": 1,
-  "bundle_revision": 10,
+  "bundle_revision": 12,
   "zalo_package": "com.zing.zalo",
   "profiles": [
     {
@@ -2138,6 +2138,635 @@
         },
         "call_recording": {
           "callback_class": "ac2.p2",
+          "peer_manager_class": "kj.a",
+          "peer_manager_instance_method": "a",
+          "peer_container_field": "a",
+          "peer_handle_field": "e"
+        }
+      }
+    },
+    {
+      "schema_version": 1,
+      "schema_revision": 33,
+      "zalo_package": "com.zing.zalo",
+      "zalo_version": {
+        "min_code": 261002901,
+        "max_code": 261002901,
+        "name": "26.10.02",
+        "notes": "Reviewed exact profile for Zalo 26.10.02 build 261002901. Static semantic anchors cover renamed inbox, Me, tab, reaction, and shared-reader targets. Runtime behavior verification remains feature-specific."
+      },
+      "artifact": {
+        "base_apk_sha256": "fba559d18aa49079ed7b4fe32f8fa0cfd22ce78b486ab51e628539a00c159dbf",
+        "signer_sha256": "d86efe151e09bf4ca8440cb3bfa0a81be2544f70c78587daf0266dfca2fa25df",
+        "hook_code_apk": "base",
+        "verification": "static-verified"
+      },
+      "ui": {
+        "sections": {
+          "Navigation": {
+            "title": "Navigation",
+            "summary": "Bottom tabs and startup behavior",
+            "order": 10
+          },
+          "Me / Settings": {
+            "title": "Me / Settings",
+            "summary": "Hide Me-screen services and future settings cleanup",
+            "order": 20
+          },
+          "Telemetry": {
+            "title": "Telemetry",
+            "summary": "Analytics, ad ID, Crashlytics, measurement",
+            "order": 30
+          },
+          "Inbox": {
+            "title": "Inbox",
+            "summary": "Media Box and category routing",
+            "order": 40
+          },
+          "Chat": {
+            "title": "Chat",
+            "summary": "Chat rendering and message popup controls",
+            "order": 45
+          },
+          "Ads / Promotions": {
+            "title": "Ads / Promotions",
+            "summary": "Zinstant ads, promo services, and promo notifications",
+            "order": 50
+          }
+        },
+        "settings": {
+          "ui.hide_discovery_tab": {
+            "title": "Hide Discovery tab",
+            "summary": "Remove the bottom-bar Discovery tab."
+          },
+          "ui.hide_timeline_tab": {
+            "title": "Hide Newsfeed tab",
+            "summary": "Remove the bottom-bar Timeline/Newsfeed tab."
+          },
+          "ui.keep_group_tab": {
+            "title": "Keep Group tab",
+            "summary": "Keep the native Group tab if it appears in a later build/account state."
+          },
+          "ui.force_messages_as_home": {
+            "title": "Use Messages as home",
+            "summary": "Open Messages when launching Zalo. Other bottom tabs remain usable."
+          },
+          "me.hide_qr_wallet": {
+            "title": "Hide QR Wallet",
+            "summary": "Hide the QR Wallet entry on the Me screen."
+          },
+          "me.hide_zcloud": {
+            "title": "Hide zCloud",
+            "summary": "Hide the zCloud entry on the Me screen."
+          },
+          "me.hide_zstyle": {
+            "title": "Hide zStyle",
+            "summary": "Hide the zStyle promotional card/menu on the Me screen."
+          },
+          "me.hide_zbusiness": {
+            "title": "Hide zBusiness",
+            "summary": "Hide the zBusiness entry on the Me screen when Zalo exposes it for the account."
+          },
+          "messages.hide_reaction_row": {
+            "title": "Hide reaction row",
+            "summary": "Hide only emoji reactions in the long-press message popup while keeping action items."
+          }
+        }
+      },
+      "features": {
+        "me_cleanup.qr_wallet": {
+          "display_name": "QR Wallet",
+          "setting_key": "me.hide_qr_wallet",
+          "text_markers": [
+            "qr wallet",
+            "qr code",
+            "my qr",
+            "m\u00e3 qr",
+            "vi qr"
+          ],
+          "tracking_ids": [
+            "tab_me_qr_wallet"
+          ]
+        },
+        "me_cleanup.zcloud": {
+          "display_name": "zCloud",
+          "setting_key": "me.hide_zcloud",
+          "text_markers": [
+            "zcloud",
+            "z cloud",
+            "zalo cloud",
+            "cloud c\u1ee7a t\u00f4i",
+            "my cloud"
+          ],
+          "tracking_ids": [
+            "tab_me_z_cloud"
+          ]
+        },
+        "me_cleanup.zstyle": {
+          "display_name": "zStyle",
+          "setting_key": "me.hide_zstyle",
+          "text_markers": [
+            "zstyle",
+            "z style",
+            "music library",
+            "background and music library"
+          ]
+        },
+        "me_cleanup.zbusiness": {
+          "display_name": "zBusiness",
+          "setting_key": "me.hide_zbusiness",
+          "text_markers": [
+            "zbusiness",
+            "z business",
+            "zalo business",
+            "zalo for business",
+            "t\u00e0i kho\u1ea3n kinh doanh",
+            "tai khoan kinh doanh",
+            "doanh nghi\u1ec7p",
+            "doanh nghiep"
+          ],
+          "tracking_ids": [
+            "tab_me_z_business",
+            "tab_me_zbusiness",
+            "tab_me_business"
+          ]
+        }
+      },
+      "symbols": {
+        "passcode": {
+          "prefs_int_reader_class": "p60.p0",
+          "prefs_int_reader_method": "l",
+          "active_time_setter_class": "s10.j",
+          "active_time_setter_method": "z3",
+          "active_time_pref_key": "SaveActiveTimePasscodeSetting"
+        },
+        "backup": {
+          "interval_reader_class": "p60.p0",
+          "interval_reader_method": "m"
+        },
+        "webview": {
+          "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
+          "companion_class": "com.zing.zalo.ui.zviews.os",
+          "open_dispatch_method": "l",
+          "redirect_transform_method": "N8"
+        },
+        "me": {
+          "tab_me_class": "com.zing.zalo.ui.maintab.me.TabMeView",
+          "adapter_class": "nj1.k",
+          "setting_item_class": "nj1.e",
+          "current_builder_method": "O6",
+          "setting_id_field": "c",
+          "setting_id_value_field": "a",
+          "setting_title_field": "e",
+          "setting_summary_field": "f",
+          "qr_wallet_item_id": 6,
+          "zcloud_item_id": 10,
+          "zinstant_view_class": "com.zing.zalo.ui.maintab.me.TabMeZinstantView",
+          "zstyle_view_class": "",
+          "zinstant_item_class": "",
+          "zstyle_item_classes": [],
+          "zstyle_view_exclusive": false,
+          "full_zinstant_predicate_method": "g7"
+        },
+        "inbox": {
+          "message_view_class": "com.zing.zalo.ui.maintab.msg.MessagesView",
+          "message_adapter_class": "qj1.g1",
+          "messages_view_adapter_field": "H2",
+          "adapter_item_method": "V",
+          "normal_item_class": "l20.d",
+          "normal_item_classes": [
+            "l20.d",
+            "l20.h0"
+          ],
+          "media_box_item_class": "l20.x",
+          "biz_box_item_class": "l20.a",
+          "conversation_class": "com.zing.zalo.data.chat.model.tabmessage.Conversation",
+          "conversation_field": "f",
+          "row_uid_method": "f",
+          "conversation_uid_field": "b",
+          "category_int_field": "f",
+          "stranger_messages_view_class": "com.zing.zalo.ui.zviews.StrangerMessagesView",
+          "deleted_group_repository_class": "wb0.c",
+          "deleted_group_repository_field": "a",
+          "deleted_group_check_method": "b",
+          "stranger_box_item_class": "l20.c0",
+          "top_out_field": "g",
+          "top_out_value_field": "a",
+          "friend_manager_class": "",
+          "friend_manager_instance_method": "",
+          "friend_manager_follow_methods": [],
+          "profile_field": "",
+          "profile_name_fields": [],
+          "group_flag_method": ""
+        },
+        "chat": {
+          "reaction_long_press_method": "p",
+          "reaction_long_press_armed_field": "H5",
+          "send_seen_manager_class": "tg0.h0",
+          "seen_ack_class": "i20.b",
+          "seen_ack_type_field": "a",
+          "send_seen_single_method": "d",
+          "send_seen_batch_method": "e",
+          "message_repository_class": "f20.s",
+          "send_ack_method": "Q",
+          "send_typing_method": "S"
+        },
+        "media": {
+          "state_class": "in0.a",
+          "state_classifier_class": "in0.h",
+          "state_classifier_method": "n"
+        },
+        "zinstant": {
+          "ad_item_view_class": "com.zing.zalo.ui.widget.ZinstantAdItemView",
+          "ad_bind_method": "c",
+          "feed_ads_class": "com.zing.zalo.social.presentation.timeline.components.ads.FeedItemZInstantAds",
+          "feed_bind_method": "c",
+          "communicator_class": "com.zing.zalo.zinstant.utils.ZinstantCommunicatorHelper",
+          "network_methods": [
+            "sendHttpRequest"
+          ],
+          "script_helper_class": "com.zing.zalo.zinstant.utils.ScriptHelperImpl",
+          "script_object_methods": [
+            "getScriptContent",
+            "getEncryptedScriptContent"
+          ],
+          "script_void_methods": [
+            "downloadScripts",
+            "get",
+            "post"
+          ]
+        },
+        "telemetry": {
+          "analytics_db_class": "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl",
+          "analytics_event_accessor": "z",
+          "analytics_screen_accessor": "A",
+          "analytics_session_accessor": "B",
+          "analytics_view_accessor": "C"
+        },
+        "bottom_tabs": {
+          "current_methods": {
+            "rebuild": "p",
+            "refresh": "q",
+            "singleton": "h",
+            "hide_discovery": "a",
+            "group_flag": "b",
+            "message_index": "k",
+            "phonebook_index": "l",
+            "group_index": "f",
+            "discovery_index": "e",
+            "timeline_index": "n",
+            "more_index": "j",
+            "me_index": "i",
+            "size": "m",
+            "icon_resolver": "g"
+          },
+          "main_tab_view_class": "com.zing.zalo.ui.maintab.MainTabView",
+          "custom_main_tab_class": "com.zing.zalo.ui.maintab.widget.CustomMainTab",
+          "consumer_adapter_classes": [
+            "kj1.e0"
+          ],
+          "current_state_classes": [
+            "kj1.v"
+          ],
+          "current_tab_symbols": [
+            {
+              "state_class": "kj1.v",
+              "enum_class": "kj1.t",
+              "group_tab_field": "GROUP",
+              "enabled_fields": {
+                "group": "j",
+                "timeline": "k",
+                "discovery": "l",
+                "more": "m",
+                "me": "n"
+              },
+              "index_fields": {
+                "message": "b",
+                "phonebook": "c",
+                "group": "d",
+                "discovery": "e",
+                "timeline": "f",
+                "more": "g",
+                "me": "h",
+                "size": "i"
+              },
+              "icons_field": "p",
+              "preloaded_field": "o"
+            }
+          ]
+        },
+        "call_recording": {
+          "callback_class": "md2.r1",
+          "peer_manager_class": "kj.a",
+          "peer_manager_instance_method": "a",
+          "peer_container_field": "a",
+          "peer_handle_field": "e"
+        }
+      }
+    },
+    {
+      "schema_version": 1,
+      "schema_revision": 34,
+      "zalo_package": "com.zing.zalo",
+      "zalo_version": {
+        "min_code": 261002903,
+        "max_code": 261002903,
+        "name": "26.10.02",
+        "notes": "Bundled static candidate. All populated .901 anchors have per-entry static evidence; baseline-unavailable slots remain omitted. No runtime compatibility claim. Revision is provisional."
+      },
+      "artifact": {
+        "base_apk_sha256": "20f9f4eb76393af3b2a73d6d483ad93b6f69703d645f362c79ddafe592cfacff",
+        "signer_sha256": "d86efe151e09bf4ca8440cb3bfa0a81be2544f70c78587daf0266dfca2fa25df",
+        "hook_code_apk": "base",
+        "verification": "static-verified"
+      },
+      "ui": {
+        "sections": {
+          "Navigation": {
+            "title": "Navigation",
+            "summary": "Bottom tabs and startup behavior",
+            "order": 10
+          },
+          "Me / Settings": {
+            "title": "Me / Settings",
+            "summary": "Hide Me-screen services and future settings cleanup",
+            "order": 20
+          },
+          "Telemetry": {
+            "title": "Telemetry",
+            "summary": "Analytics, ad ID, Crashlytics, measurement",
+            "order": 30
+          },
+          "Inbox": {
+            "title": "Inbox",
+            "summary": "Media Box and category routing",
+            "order": 40
+          },
+          "Chat": {
+            "title": "Chat",
+            "summary": "Chat rendering and message popup controls",
+            "order": 45
+          },
+          "Ads / Promotions": {
+            "title": "Ads / Promotions",
+            "summary": "Zinstant ads, promo services, and promo notifications",
+            "order": 50
+          }
+        },
+        "settings": {
+          "ui.hide_discovery_tab": {
+            "title": "Hide Discovery tab",
+            "summary": "Remove the bottom-bar Discovery tab."
+          },
+          "ui.hide_timeline_tab": {
+            "title": "Hide Newsfeed tab",
+            "summary": "Remove the bottom-bar Timeline/Newsfeed tab."
+          },
+          "ui.keep_group_tab": {
+            "title": "Keep Group tab",
+            "summary": "Keep the native Group tab if it appears in a later build/account state."
+          },
+          "ui.force_messages_as_home": {
+            "title": "Use Messages as home",
+            "summary": "Open Messages when launching Zalo. Other bottom tabs remain usable."
+          },
+          "me.hide_qr_wallet": {
+            "title": "Hide QR Wallet",
+            "summary": "Hide the QR Wallet entry on the Me screen."
+          },
+          "me.hide_zcloud": {
+            "title": "Hide zCloud",
+            "summary": "Hide the zCloud entry on the Me screen."
+          },
+          "me.hide_zstyle": {
+            "title": "Hide zStyle",
+            "summary": "Hide the zStyle promotional card/menu on the Me screen."
+          },
+          "me.hide_zbusiness": {
+            "title": "Hide zBusiness",
+            "summary": "Hide the zBusiness entry on the Me screen when Zalo exposes it for the account."
+          },
+          "messages.hide_reaction_row": {
+            "title": "Hide reaction row",
+            "summary": "Hide only emoji reactions in the long-press message popup while keeping action items."
+          }
+        }
+      },
+      "features": {
+        "me_cleanup.qr_wallet": {
+          "display_name": "QR Wallet",
+          "setting_key": "me.hide_qr_wallet",
+          "text_markers": [
+            "qr wallet",
+            "qr code",
+            "my qr",
+            "mã qr",
+            "vi qr"
+          ],
+          "tracking_ids": [
+            "tab_me_qr_wallet"
+          ]
+        },
+        "me_cleanup.zcloud": {
+          "display_name": "zCloud",
+          "setting_key": "me.hide_zcloud",
+          "text_markers": [
+            "zcloud",
+            "z cloud",
+            "zalo cloud",
+            "cloud của tôi",
+            "my cloud"
+          ],
+          "tracking_ids": [
+            "tab_me_z_cloud"
+          ]
+        },
+        "me_cleanup.zstyle": {
+          "display_name": "zStyle",
+          "setting_key": "me.hide_zstyle",
+          "text_markers": [
+            "zstyle",
+            "z style",
+            "music library",
+            "background and music library"
+          ]
+        },
+        "me_cleanup.zbusiness": {
+          "display_name": "zBusiness",
+          "setting_key": "me.hide_zbusiness",
+          "text_markers": [
+            "zbusiness",
+            "z business",
+            "zalo business",
+            "zalo for business",
+            "tài khoản kinh doanh",
+            "tai khoan kinh doanh",
+            "doanh nghiệp",
+            "doanh nghiep"
+          ],
+          "tracking_ids": [
+            "tab_me_z_business",
+            "tab_me_zbusiness",
+            "tab_me_business"
+          ]
+        }
+      },
+      "symbols": {
+        "passcode": {
+          "prefs_int_reader_class": "p60.p0",
+          "prefs_int_reader_method": "l",
+          "active_time_setter_class": "s10.j",
+          "active_time_setter_method": "z3",
+          "active_time_pref_key": "SaveActiveTimePasscodeSetting"
+        },
+        "backup": {
+          "interval_reader_class": "p60.p0",
+          "interval_reader_method": "m"
+        },
+        "webview": {
+          "zalo_web_view_class": "com.zing.zalo.ui.zviews.ZaloWebView",
+          "companion_class": "com.zing.zalo.ui.zviews.os",
+          "open_dispatch_method": "l",
+          "redirect_transform_method": "N8"
+        },
+        "me": {
+          "tab_me_class": "com.zing.zalo.ui.maintab.me.TabMeView",
+          "adapter_class": "nj1.k",
+          "setting_item_class": "nj1.e",
+          "current_builder_method": "O6",
+          "setting_id_field": "c",
+          "setting_id_value_field": "a",
+          "setting_title_field": "e",
+          "setting_summary_field": "f",
+          "qr_wallet_item_id": 6,
+          "zcloud_item_id": 10,
+          "zinstant_view_class": "com.zing.zalo.ui.maintab.me.TabMeZinstantView",
+          "zstyle_view_exclusive": false,
+          "full_zinstant_predicate_method": "g7"
+        },
+        "inbox": {
+          "message_view_class": "com.zing.zalo.ui.maintab.msg.MessagesView",
+          "message_adapter_class": "qj1.g1",
+          "messages_view_adapter_field": "H2",
+          "adapter_item_method": "V",
+          "normal_item_class": "l20.d",
+          "normal_item_classes": [
+            "l20.d",
+            "l20.h0"
+          ],
+          "media_box_item_class": "l20.x",
+          "biz_box_item_class": "l20.a",
+          "conversation_class": "com.zing.zalo.data.chat.model.tabmessage.Conversation",
+          "conversation_field": "f",
+          "row_uid_method": "f",
+          "conversation_uid_field": "b",
+          "category_int_field": "f",
+          "stranger_messages_view_class": "com.zing.zalo.ui.zviews.StrangerMessagesView",
+          "deleted_group_repository_class": "wb0.c",
+          "deleted_group_repository_field": "a",
+          "deleted_group_check_method": "b",
+          "stranger_box_item_class": "l20.c0",
+          "top_out_field": "g",
+          "top_out_value_field": "a"
+        },
+        "chat": {
+          "reaction_long_press_method": "p",
+          "reaction_long_press_armed_field": "H5",
+          "send_seen_manager_class": "tg0.h0",
+          "seen_ack_class": "i20.b",
+          "seen_ack_type_field": "a",
+          "send_seen_single_method": "d",
+          "send_seen_batch_method": "e",
+          "message_repository_class": "f20.s",
+          "send_ack_method": "Q",
+          "send_typing_method": "S"
+        },
+        "media": {
+          "state_class": "in0.a",
+          "state_classifier_class": "in0.h",
+          "state_classifier_method": "n"
+        },
+        "zinstant": {
+          "ad_item_view_class": "com.zing.zalo.ui.widget.ZinstantAdItemView",
+          "ad_bind_method": "c",
+          "feed_ads_class": "com.zing.zalo.social.presentation.timeline.components.ads.FeedItemZInstantAds",
+          "feed_bind_method": "c",
+          "communicator_class": "com.zing.zalo.zinstant.utils.ZinstantCommunicatorHelper",
+          "network_methods": [
+            "sendHttpRequest"
+          ],
+          "script_helper_class": "com.zing.zalo.zinstant.utils.ScriptHelperImpl",
+          "script_object_methods": [
+            "getScriptContent",
+            "getEncryptedScriptContent"
+          ],
+          "script_void_methods": [
+            "downloadScripts",
+            "get",
+            "post"
+          ]
+        },
+        "telemetry": {
+          "analytics_db_class": "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl",
+          "analytics_event_accessor": "z",
+          "analytics_screen_accessor": "A",
+          "analytics_session_accessor": "B",
+          "analytics_view_accessor": "C"
+        },
+        "bottom_tabs": {
+          "current_methods": {
+            "rebuild": "p",
+            "refresh": "q",
+            "singleton": "h",
+            "hide_discovery": "a",
+            "group_flag": "b",
+            "message_index": "k",
+            "phonebook_index": "l",
+            "group_index": "f",
+            "discovery_index": "e",
+            "timeline_index": "n",
+            "more_index": "j",
+            "me_index": "i",
+            "size": "m",
+            "icon_resolver": "g"
+          },
+          "main_tab_view_class": "com.zing.zalo.ui.maintab.MainTabView",
+          "custom_main_tab_class": "com.zing.zalo.ui.maintab.widget.CustomMainTab",
+          "consumer_adapter_classes": [
+            "kj1.e0"
+          ],
+          "current_state_classes": [
+            "kj1.v"
+          ],
+          "current_tab_symbols": [
+            {
+              "state_class": "kj1.v",
+              "enum_class": "kj1.t",
+              "group_tab_field": "GROUP",
+              "enabled_fields": {
+                "group": "j",
+                "timeline": "k",
+                "discovery": "l",
+                "more": "m",
+                "me": "n"
+              },
+              "index_fields": {
+                "message": "b",
+                "phonebook": "c",
+                "group": "d",
+                "discovery": "e",
+                "timeline": "f",
+                "more": "g",
+                "me": "h",
+                "size": "i"
+              },
+              "icons_field": "p",
+              "preloaded_field": "o"
+            }
+          ]
+        },
+        "call_recording": {
+          "callback_class": "md2.r1",
           "peer_manager_class": "kj.a",
           "peer_manager_instance_method": "a",
           "peer_container_field": "a",

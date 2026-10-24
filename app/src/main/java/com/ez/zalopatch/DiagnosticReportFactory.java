@@ -125,6 +125,9 @@ final class DiagnosticReportFactory {
         SymbolSchema.Active schema = SymbolSchema.active(context);
         List<SelfCheckData.Row> rows = SelfCheckData.load(context);
         SelfCheckData.Counts counts = SelfCheckData.counts(rows);
+        boolean runtimeSelfCheckPresent = SelfCheckData.hasHostRuntime(rows)
+                && ZaloArtifactState.currentEvidenceEpoch(context).equals(
+                        TweakStore.preferences(context).getString("internal.selfcheck_generation", ""));
         JSONObject product = new JSONObject();
         product.put("debugLoggingEnabled", HookConfig.isDebugEnabled());
         product.put("traceLoggingEnabled", systemPropertyEnabled("debug.zalopatch.trace"));
@@ -184,10 +187,11 @@ final class DiagnosticReportFactory {
         product.put("runtimeStatusTrace", runtimeTrace);
 
         JSONObject setup = new JSONObject();
-        setup.put("setupState", setupState(packages.zalo.present, schema.valid, rows, counts));
+        setup.put("setupState", setupState(packages.zalo.present, schema.valid,
+                runtimeSelfCheckPresent, counts));
         setup.put("zaloPackagePresent", packages.zalo.present);
         setup.put("symbolSchemaValid", schema.valid);
-        setup.put("runtimeSelfCheckPresent", !rows.isEmpty());
+        setup.put("runtimeSelfCheckPresent", runtimeSelfCheckPresent);
         boolean internetGranted = context.checkSelfPermission(
                 android.Manifest.permission.INTERNET) == PackageManager.PERMISSION_GRANTED;
         setup.put("internetPermissionGranted", internetGranted);
@@ -412,11 +416,11 @@ final class DiagnosticReportFactory {
         }
     }
 
-    private static String setupState(
-            boolean zaloPresent, boolean schemaValid, List<SelfCheckData.Row> rows,
+    static String setupState(
+            boolean zaloPresent, boolean schemaValid, boolean runtimeSelfCheckPresent,
             SelfCheckData.Counts counts) {
         if (!zaloPresent || !schemaValid || counts.failed > 0) return "failed";
-        if (rows.isEmpty() || counts.stale > 0) return "warning";
+        if (!runtimeSelfCheckPresent || counts.stale > 0) return "warning";
         return "ready";
     }
 

@@ -162,7 +162,8 @@ public final class CallRecordingStore {
                     MediaStore.Audio.Media.DURATION,
                     MediaStore.Audio.Media.DATE_ADDED
             };
-            String selection = MediaStore.Audio.Media.RELATIVE_PATH + "=?";
+            String selection = MediaStore.Audio.Media.RELATIVE_PATH + "=? AND "
+                    + MediaStore.Audio.Media.IS_PENDING + "=0";
             String[] args = new String[]{SHARED_DIRECTORY + "/"};
             try (Cursor cursor = context.getContentResolver().query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,

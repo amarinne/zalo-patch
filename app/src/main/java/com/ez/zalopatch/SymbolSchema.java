@@ -35,15 +35,19 @@ public final class SymbolSchema {
     private SymbolSchema() {
     }
 
+    /**
+     * The profile the module process reports and reconciles against.
+     *
+     * <p>A valid bundled exact profile stays selected unless a signed remote profile explicitly
+     * corrects it. The choice is the shared {@link SymbolProfileSelection} policy, so the module
+     * process, the hook startup path, and reconciliation cannot disagree.
+     */
     public static Active active(Context context) {
         context = hookContext(context);
         long installedVersionCode = installedZaloVersionCode(context);
         Active bundled = bundledForVersion(context, installedVersionCode);
-        if (bundled.valid) {
-            return bundled;
-        }
         Active remote = remoteForModule(context, installedVersionCode);
-        return remote == null ? bundled : remote;
+        return SymbolProfileSelection.select(bundled, remote);
     }
 
     public static Active activeForHooks(Context context) {
@@ -56,18 +60,17 @@ public final class SymbolSchema {
         synchronized (SymbolSchema.class) {
             cached = cachedHookSchema;
             if (cached == null || cachedHookVersionCode != installedVersionCode) {
-                cached = bundledForVersion(context, installedVersionCode);
-                if (!cached.valid) {
-                    Active remote = HookConfig.hasAuthoritativeSnapshot()
-                            ? SymbolCatalogMirror.read(installedVersionCode)
-                            : remoteFromProvider(context, installedVersionCode);
-                    if (remote == null) {
-                        remote = SymbolCatalogMirror.read(installedVersionCode);
-                    }
-                    if (remote != null && remote.valid) {
-                        cached = remote;
-                    }
+                Active bundled = bundledForVersion(context, installedVersionCode);
+                // The remote profile is consulted even when a bundled profile exists: a signed
+                // correction names the bundled revision it replaces. The mirror and the provider
+                // both carry the module-selected profile, and neither fetches over the network.
+                Active remote = HookConfig.hasAuthoritativeSnapshot()
+                        ? SymbolCatalogMirror.read(installedVersionCode)
+                        : remoteFromProvider(context, installedVersionCode);
+                if (remote == null) {
+                    remote = SymbolCatalogMirror.read(installedVersionCode);
                 }
+                cached = SymbolProfileSelection.select(bundled, remote);
                 cachedHookSchema = cached;
                 cachedHookVersionCode = installedVersionCode;
             }

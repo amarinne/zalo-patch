@@ -158,9 +158,9 @@ public final class ZaloArtifactState {
                     context, identity.versionCode);
             SymbolSchema.Active remote = SymbolSchema.selectRemoteEntry(
                     catalogEntry, identity.versionCode);
-            // Shadow mode for already-bundled versions. Remote activation is enabled only when the
-            // installed exact artifact has no bundled map.
-            SymbolSchema.Active profile = bundled.valid ? bundled : remote;
+            // One shared policy: a signed remote profile replaces the bundled exact profile only
+            // when it names the bundled schema revision and carries a newer one.
+            SymbolSchema.Active profile = SymbolProfileSelection.select(bundled, remote);
             if (profile == null) profile = bundled;
             String expectedHash = profile.string("artifact.base_apk_sha256", "");
             String expectedSigner = profile.string("artifact.signer_sha256", "");
