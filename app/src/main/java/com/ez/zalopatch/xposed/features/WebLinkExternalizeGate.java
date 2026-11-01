@@ -37,6 +37,41 @@ final class WebLinkExternalizeGate {
         return isWebUrl(url) ? Decision.EXTERNAL : Decision.LEAVE_IN_APP;
     }
 
+    /**
+     * Bounded, URL-free description of why a tapped link stayed in app. Every dispatch keeps a
+     * record so a report can distinguish "the open dispatch never ran" from "it ran and the gate
+     * said no"; the URL itself never reaches the log.
+     */
+    static String explain(boolean hasSourceLink, boolean fromMiniApp, boolean oaH5, String url) {
+        return "source_link=" + (hasSourceLink ? 1 : 0)
+                + " mini_app=" + (fromMiniApp ? 1 : 0)
+                + " oa_h5=" + (oaH5 ? 1 : 0)
+                + " scheme=" + scheme(url)
+                + " zalo_owned=" + (isZaloOwnedUrl(url) ? 1 : 0)
+                + " decision=" + classify(hasSourceLink, fromMiniApp, oaH5, url);
+    }
+
+    /** Coarse scheme for logs; the rest of the URL is never logged. */
+    static String scheme(String url) {
+        if (url == null) {
+            return "none";
+        }
+        String trimmed = url.trim();
+        String lower = trimmed.toLowerCase(Locale.US);
+        if (lower.startsWith("https://")) {
+            return "https";
+        }
+        if (lower.startsWith("http://")) {
+            return "http";
+        }
+        int separator = trimmed.indexOf(':');
+        if (separator <= 0) {
+            return "none";
+        }
+        String scheme = trimmed.substring(0, separator).toLowerCase(Locale.US);
+        return scheme.length() > 16 ? scheme.substring(0, 16) : scheme;
+    }
+
     static boolean isZaloOwnedUrl(String url) {
         if (!isWebUrl(url)) {
             return false;

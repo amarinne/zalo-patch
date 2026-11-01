@@ -16,6 +16,9 @@ public final class DexKitRemoteConfigFingerprint {
 
     public static final String STORY_KEY = "social@story@story_ads@enable";
     public static final String COMMUNITY_KEY = "community.community_ads.enable";
+    /** Picker entitlement key read through the same integer reader. */
+    public static final String ALLOW_ORIGINAL_KEY =
+            "media_picker@pick_quality@allow_send_original_photo";
 
     private DexKitRemoteConfigFingerprint() {
     }

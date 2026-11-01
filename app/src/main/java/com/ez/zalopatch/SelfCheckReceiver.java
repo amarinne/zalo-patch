@@ -66,8 +66,10 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
         if (ACTION_RECORD_DEXKIT_CACHE.equals(intent.getAction())) {
             String json = intent.getStringExtra("json");
             if (json != null && !json.isEmpty()) {
-                DexKitStore.save(context, json);
-                DexKitMirror.sync(context);
+                if (DexKitStore.save(context, json)) {
+                    DexKitMirror.sync(context);
+                    ZaloArtifactState.requestRemapUpload(context);
+                }
             }
             return;
         }

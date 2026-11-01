@@ -303,7 +303,10 @@ public final class ConfigProvider extends ContentProvider {
         if ("record_dexkit_cache".equals(method)) {
             if (!callerAllowed() || extras == null) return null;
             boolean recorded = DexKitStore.save(getContext(), extras.getString("json", ""));
-            if (recorded) DexKitMirror.sync(getContext());
+            if (recorded) {
+                DexKitMirror.sync(getContext());
+                ZaloArtifactState.requestRemapUpload(getContext());
+            }
             Bundle result = new Bundle();
             result.putBoolean("recorded", recorded);
             return result;

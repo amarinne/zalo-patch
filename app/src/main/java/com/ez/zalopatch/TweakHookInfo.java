@@ -115,12 +115,20 @@ final class TweakHookInfo {
                         + "(Uri)";
                 break;
             case Tweaks.KEY_BLOCK_SEEN_STATUS:
-                path = schema.string("symbols.chat.send_seen_manager_class", "<seen manager>")
-                        + "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>")
-                        + "()/" + schema.string("symbols.chat.send_seen_batch_method", "<enqueue batch>")
-                        + "() + "
-                        + schema.string("symbols.chat.message_repository_class", "<message repository>")
-                        + "#" + schema.string("symbols.chat.send_ack_method", "<send ack>") + "()";
+                if (!schema.string("symbols.chat.seen_transport_class", "").isEmpty()) {
+                    path = schema.string("symbols.chat.seen_transport_class", "<seen transport>")
+                            + "#" + schema.string("symbols.chat.seen_transport_seen_method",
+                            "<send seen>")
+                            + "()/" + schema.string(
+                            "symbols.chat.seen_transport_marker_method", "<seen marker>") + "()";
+                } else {
+                    path = schema.string("symbols.chat.send_seen_manager_class", "<seen manager>")
+                            + "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>")
+                            + "()/" + schema.string("symbols.chat.send_seen_batch_method", "<enqueue batch>")
+                            + "() + "
+                            + schema.string("symbols.chat.message_repository_class", "<message repository>")
+                            + "#" + schema.string("symbols.chat.send_ack_method", "<send ack>") + "()";
+                }
                 break;
             case Tweaks.KEY_BLOCK_TYPING_STATUS:
                 path = schema.string("symbols.chat.message_repository_class", "<message repository>")
@@ -137,10 +145,16 @@ final class TweakHookInfo {
                                 "<suggested seen>") + "(int,int,String)";
                 break;
             case Tweaks.KEY_PREFER_ORIGINAL_PHOTO:
-                path = DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#"
+                path = schema.string(DexKitOriginalPhotoFingerprint.PICKER, "<photo picker>")
+                        + "#" + schema.string(DexKitOriginalPhotoFingerprint.GET_QUALITY,
+                        "<quality>") + "() + " + DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#"
                         + schema.string(DexKitOriginalPhotoFingerprint.APPLY, "<apply quality>")
-                        + "(int) + " + DexKitOriginalPhotoFingerprint.SHARE_VIEW + "#"
-                        + schema.string(DexKitOriginalPhotoFingerprint.SHARE, "<photo share>") + "(Bundle)";
+                        + "(int) + " + schema.string(DexKitOriginalPhotoFingerprint.OUTGOING,
+                        "<photo conversion>") + "#" + schema.string(
+                        DexKitOriginalPhotoFingerprint.OUTGOING_METHOD, "<convert>")
+                        + "() + " + DexKitOriginalPhotoFingerprint.SHARE_VIEW + "#"
+                        + schema.string(DexKitOriginalPhotoFingerprint.SHARE, "<photo share>")
+                        + "(Bundle)";
                 break;
             case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
                 path = schema.string("symbols.media.state_classifier_class", "<media classifier>")
@@ -195,7 +209,7 @@ final class TweakHookInfo {
                         + "(String,int)int";
                 break;
             case Tweaks.KEY_HIDE_VIDEO_ADS:
-                path = "Qualified Zalo Video ad roots: constructor and native bind after-hooks";
+                path = videoAdRoots(schema);
                 break;
             case Tweaks.KEY_HIDE_PROMO_SERVICES:
                 path = "ZinstantCommunicatorHelper#sendHttpRequest()/get()/post()"
@@ -226,6 +240,26 @@ final class TweakHookInfo {
         return method(schema, "symbols.telemetry.analytics_db_class",
                 "com.zing.zalo.analytics.db.AnalyticsRoomDatabase_Impl",
                 "symbols.telemetry." + accessor, "<DAO accessor>");
+    }
+
+    /**
+     * Bundled profiles that map the video-ad roots display them; a profile without them keeps the
+     * generic description so the dialog never invents class names.
+     */
+    private static String videoAdRoots(SymbolSchema.Active schema) {
+        if (schema.string(DexKitVideoAdsFingerprint.Route.OUTSTREAM.anchor("view_class"), "")
+                .isEmpty()) {
+            return "Qualified Zalo Video ad roots: constructor and native bind after-hooks";
+        }
+        StringBuilder roots = new StringBuilder();
+        for (DexKitVideoAdsFingerprint.Route route : DexKitVideoAdsFingerprint.Route.values()) {
+            if (roots.length() > 0) roots.append(" + ");
+            roots.append(schema.string(route.anchor("view_class"), "<" + route.id + ">"))
+                    .append('#')
+                    .append(schema.string(route.anchor("marker_method"), "<marker>"))
+                    .append("()");
+        }
+        return roots.toString();
     }
 
     private static String inboxListSetter(SymbolSchema.Active schema) {
@@ -342,6 +376,14 @@ final class TweakHookInfo {
                         "#" + schema.string("symbols.webview.redirect_transform_method",
                                 "<redirect>") + "(Uri)");
             case Tweaks.KEY_BLOCK_SEEN_STATUS:
+                if (!schema.string("symbols.chat.seen_transport_class", "").isEmpty()) {
+                    return Arrays.asList(
+                            schema.string("symbols.chat.seen_transport_class", "<seen transport>"),
+                            "#" + schema.string("symbols.chat.seen_transport_seen_method",
+                                    "<send seen>") + "()",
+                            schema.string("symbols.chat.seen_transport_marker_method",
+                                    "<seen marker>") + "()");
+                }
                 return Arrays.asList(
                         schema.string("symbols.chat.send_seen_manager_class", "<seen manager>"),
                         "#" + schema.string("symbols.chat.send_seen_single_method", "<enqueue>") + "()",
@@ -367,6 +409,8 @@ final class TweakHookInfo {
                         "#" + schema.string(DexKitOriginalPhotoFingerprint.GET_QUALITY, "<quality>") + "()",
                         "#" + schema.string(DexKitOriginalPhotoFingerprint.APPLY, "<apply quality>") + "(int)",
                         schema.string(DexKitOriginalPhotoFingerprint.OUTGOING, "<photo conversion>"),
+                        "#" + schema.string(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD,
+                        "<convert>") + "()",
                         "#" + schema.string(DexKitOriginalPhotoFingerprint.SHARE, "<photo share>") + "(Bundle)");
             case Tweaks.KEY_KEEP_EXPIRED_MEDIA:
                 return Arrays.asList(

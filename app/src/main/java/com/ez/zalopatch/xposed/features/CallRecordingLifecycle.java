@@ -4,6 +4,9 @@ package com.ez.zalopatch.xposed.features;
 public final class CallRecordingLifecycle {
     static final int UNKNOWN_STATE = Integer.MIN_VALUE;
     static final int CONNECTED_AUDIO_STATE = 32;
+    /** A WAV that never grew past its RIFF/fmt/data header holds no captured frames. */
+    static final int EMPTY_WAV_BYTES = 44;
+    static final int MAX_CAPTURE_ATTEMPTS = 2;
     /**
      * Connected-call state carried by {@code onCallState}. Verified on device: a connected
      * one-to-one call emitted {@code onCallState(3)}, {@code (4)}, then {@code (5)}, and the
@@ -48,6 +51,19 @@ public final class CallRecordingLifecycle {
 
     static boolean shouldStartAudio(boolean confirmed, boolean audioConnected) {
         return confirmed && audioConnected;
+    }
+
+    /**
+     * A native start can land before ZRTC attaches the peer to the live audio path, leaving a
+     * header-only file for the whole call. Re-attach once on the same thread boundary; a second
+     * empty result is reported instead of looping.
+     */
+    static boolean shouldReattachEmptyCapture(int attempts, long bytes) {
+        return bytes <= EMPTY_WAV_BYTES && attempts < MAX_CAPTURE_ATTEMPTS;
+    }
+
+    static boolean hasCaptureAudio(long bytes) {
+        return bytes > EMPTY_WAV_BYTES;
     }
 
     static boolean shouldStopAudio(String methodName, int state) {

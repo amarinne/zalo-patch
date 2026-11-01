@@ -84,15 +84,16 @@ public final class SymbolOctoberMaintenanceTest {
      * <p>The expected values are the accepted per-entry static evidence for that exact artifact
      * (Level 4), not a runtime observation. The test keeps the profile selectable for that one
      * versionCode, keeps the reviewed recording, inbox and bottom-tab routes, keeps the explicit
-     * false zStyle guard, and leaves the nine baseline-unavailable slots absent. Neighbouring
-     * version codes stay unresolved, and build 261001905 keeps its own independent profile.
+     * false zStyle guard, pins the DexKit-resolved original-photo family, and leaves the nine
+     * baseline-unavailable slots absent. Neighbouring version codes stay unresolved, and build
+     * 261001905 keeps its own independent profile.
      */
     @Test
     public void exactTwentySixTenZeroTwoProfileKeepsReviewedAnchors() throws Exception {
         String bundle = BundledSymbolSchemaJson.json();
         SymbolSchema.Active active = SymbolSchema.select(bundle, "Test", 261002903L);
         assertTrue(active.validation, active.valid);
-        assertEquals(34, active.schemaRevision);
+        assertEquals(35, active.schemaRevision);
         assertEquals(261002903L, active.minCode);
         assertEquals(261002903L, active.maxCode);
 
@@ -123,6 +124,20 @@ public final class SymbolOctoberMaintenanceTest {
 
         assertFalse(symbols.getJSONObject("me").getBoolean("zstyle_view_exclusive"));
 
+        JSONObject photo = symbols.getJSONObject("original_photo");
+        assertEquals("yl1.d", photo.getString("quality_class"));
+        assertEquals("O1", photo.getString("apply_quality_method"));
+        assertEquals("p", photo.getString("quality_flag_one_field"));
+        assertEquals("q", photo.getString("quality_flag_two_field"));
+        assertEquals("xl1.u", photo.getString("policy_class"));
+        assertEquals("xl1.f3", photo.getString("picker_class"));
+        assertEquals("com.zing.zalo.ui.picker.s", photo.getString("outgoing_class"));
+        assertEquals("run", photo.getString("outgoing_method"));
+        assertEquals("im0.n", symbols.getJSONObject("remote_config")
+                .getString("int_reader_class"));
+        assertEquals("f", symbols.getJSONObject("remote_config")
+                .getString("int_reader_method"));
+
         JSONObject baseline = symbols(261002901L);
         for (String path : OPTIONAL_SLOTS) {
             assertFalse("optional slot must stay absent: " + path, hasSymbolPath(symbols, path));
@@ -135,6 +150,25 @@ public final class SymbolOctoberMaintenanceTest {
         SymbolSchema.Active previous = SymbolSchema.select(bundle, "Test", 261001905L);
         assertTrue(previous.valid);
         assertEquals(32, previous.schemaRevision);
+    }
+
+    /**
+     * Revision 42 maps the Zinstant ad and feed bind methods. Without them the ad hooks report a
+     * structural preflight failure on a freshly installed device, before any DexKit cache exists.
+     */
+    @Test
+    public void exactTwentySixElevenOneProfileMapsZinstantAdBindings() throws Exception {
+        SymbolSchema.Active active = SymbolSchema.select(
+                BundledSymbolSchemaJson.json(), "Test", 261101901L);
+        assertTrue(active.validation, active.valid);
+        assertEquals(42, active.schemaRevision);
+        JSONObject zinstant = active.root.getJSONObject("symbols").getJSONObject("zinstant");
+        assertEquals("com.zing.zalo.ui.widget.ZinstantAdItemView",
+                zinstant.getString("ad_item_view_class"));
+        assertEquals("c", zinstant.getString("ad_bind_method"));
+        assertEquals("com.zing.zalo.social.presentation.timeline.components.ads.FeedItemZInstantAds",
+                zinstant.getString("feed_ads_class"));
+        assertEquals("c", zinstant.getString("feed_bind_method"));
     }
 
     private static boolean hasSymbolPath(JSONObject symbols, String path) {

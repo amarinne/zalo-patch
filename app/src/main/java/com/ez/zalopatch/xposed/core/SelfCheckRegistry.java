@@ -12,6 +12,9 @@ import com.ez.zalopatch.HookConfig;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.UUID;
 
@@ -23,6 +26,19 @@ public final class SelfCheckRegistry {
     private static final Map<String, Entry> ENTRIES = new ConcurrentHashMap<>();
     private static final AtomicBoolean UPDATE_REJECTION_LOGGED = new AtomicBoolean(false);
     private static final AtomicBoolean FALLBACK_ONLY = new AtomicBoolean(false);
+    /**
+     * Hit counters are reported at most once per interval per feature, off the calling thread.
+     * Photo conversion and inbox filters call {@link #incrementHit} for every item, so a
+     * synchronous provider or broadcast round trip there blocks the host UI thread.
+     */
+    private static final long HIT_MIRROR_INTERVAL_MS = SelfCheckHitMirrorPolicy.INTERVAL_MS;
+    private static final ScheduledExecutorService HIT_MIRROR =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "ZaloPatch-self-check");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private static final Map<String, HitMirror> HIT_MIRRORS = new ConcurrentHashMap<>();
 
     private SelfCheckRegistry() {
     }
@@ -76,7 +92,7 @@ public final class SelfCheckRegistry {
         entry.target = target;
         entry.detail = detail == null ? "" : detail;
         entry.hitCount++;
-        mirror(feature, entry);
+        mirrorHits(feature, entry);
     }
 
     public static void incrementHit(String feature, String target, String detail) {
@@ -142,6 +158,71 @@ public final class SelfCheckRegistry {
         }
     }
 
+    /**
+     * Coalesce a hit update and deliver it on the shared background thread. The in-memory
+     * count is exact; only the persisted snapshot is rate-limited, so a hot hook never waits
+     * on the module provider or a broadcast.
+     */
+    private static void mirrorHits(String feature, Entry entry) {
+        entry.updatedAt = System.currentTimeMillis();
+        HitMirror mirror = HIT_MIRRORS.computeIfAbsent(feature, key -> new HitMirror());
+        long delay;
+        synchronized (mirror) {
+            mirror.status = entry.status;
+            mirror.target = entry.target;
+            mirror.installCount = entry.installCount;
+            mirror.hitCount = entry.hitCount;
+            mirror.detail = entry.detail;
+            mirror.error = entry.error;
+            mirror.hasPending = true;
+            if (mirror.scheduled) {
+                return;
+            }
+            mirror.scheduled = true;
+            delay = SelfCheckHitMirrorPolicy.delayMillis(
+                    System.currentTimeMillis(), mirror.lastMirroredAt, HIT_MIRROR_INTERVAL_MS);
+        }
+        HIT_MIRROR.schedule(() -> flushHits(feature), delay, TimeUnit.MILLISECONDS);
+    }
+
+    private static void flushHits(String feature) {
+        HitMirror mirror = HIT_MIRRORS.get(feature);
+        if (mirror == null) {
+            return;
+        }
+        String status;
+        String target;
+        String detail;
+        String error;
+        int installCount;
+        int hitCount;
+        boolean pending;
+        synchronized (mirror) {
+            pending = mirror.hasPending;
+            status = mirror.status;
+            target = mirror.target;
+            detail = mirror.detail;
+            error = mirror.error;
+            installCount = mirror.installCount;
+            hitCount = mirror.hitCount;
+            mirror.hasPending = false;
+            mirror.scheduled = false;
+            mirror.lastMirroredAt = System.currentTimeMillis();
+        }
+        if (!pending) {
+            return;
+        }
+        Context context = HookConfig.resolveModuleContextForHooks();
+        if (context == null) {
+            return;
+        }
+        submit(context, feature, status, target, installCount, hitCount, detail, error, RUN_ID);
+        if (HookConfig.isDebugEnabled()) {
+            logForHooks("ZaloPatch: [SelfCheck] " + feature + " " + status
+                    + " hits=" + hitCount + " target=" + target);
+        }
+    }
+
     public static void submit(Context context, String feature, String status, String target,
                               int installCount, int hitCount, String detail, String error) {
         submit(context, feature, status, target, installCount, hitCount, detail, error, RUN_ID);
@@ -184,11 +265,19 @@ public final class SelfCheckRegistry {
             android.os.Bundle response = context.getContentResolver().call(
                     Uri.parse("content://com.ez.zalopatch.config"),
                     "record_self_check", null, request);
-            int updated = response == null ? 0 : response.getInt("recorded", 0);
+            if (response == null) {
+                // No answer means the caller was refused or the transport failed; the broadcast
+                // is the only remaining route.
+                sendFallback(context, feature, values);
+                return;
+            }
+            int updated = response.getInt("recorded", 0);
             if (updated != 1 && UPDATE_REJECTION_LOGGED.compareAndSet(false, true)) {
+                // A definite rejection (another run owns the epoch, or the artifact identity
+                // moved) is re-decided identically inside the receiver, so a broadcast cannot
+                // recover it. Sending one only wakes the module process.
                 logForHooks("ZaloPatch: SelfCheck provider rejected update code=" + updated);
             }
-            if (updated != 1) sendFallback(context, feature, values);
         } catch (Throwable updateThrowable) {
             if (Build.VERSION.SDK_INT >= 34) FALLBACK_ONLY.set(true);
             Log.i("ZaloPatch", "SelfCheck provider update failed: " + errorText(updateThrowable));
@@ -241,6 +330,19 @@ public final class SelfCheckRegistry {
             XpLog.i(message);
         } catch (Throwable ignored) {
         }
+    }
+
+    /** Per-feature coalescing state for hit reporting. */
+    private static final class HitMirror {
+        String status = "";
+        String target = "";
+        String detail = "";
+        String error = "";
+        int installCount;
+        int hitCount;
+        boolean hasPending;
+        boolean scheduled;
+        long lastMirroredAt;
     }
 
     private static final class Entry {

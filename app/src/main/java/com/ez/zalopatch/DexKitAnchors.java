@@ -153,6 +153,7 @@ public final class DexKitAnchors {
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.PROPERTY_READ, Kind.METHOD));
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.SELECTION, Kind.FIELD));
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.OUTGOING, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD, Kind.METHOD));
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.SHARE, Kind.METHOD));
 
         // Adtima offline-ad and active-view gate family.

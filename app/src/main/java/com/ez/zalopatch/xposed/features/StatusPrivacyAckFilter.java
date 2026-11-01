@@ -32,6 +32,14 @@ final class StatusPrivacyAckFilter {
         return seen;
     }
 
+    /**
+     * Zalo's shared ACK transport uses two read-receipt opcodes: the last-message
+     * receipt and the read-marker path. Other seen=true ACKs also carry delivery.
+     */
+    static boolean isSeenTransportType(int type) {
+        return type == 203 || type == 107;
+    }
+
     static final class Result {
         final ArrayList<Object> kept;
         final int dropped;

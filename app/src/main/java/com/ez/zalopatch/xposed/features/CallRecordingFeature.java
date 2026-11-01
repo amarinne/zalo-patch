@@ -5,7 +5,9 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import com.ez.zalopatch.CallRecordingImportProtocol;
 import com.ez.zalopatch.CallRecordingImportReceiver;
@@ -25,18 +27,22 @@ import java.lang.reflect.Modifier;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.ez.zalopatch.xposed.core.XpHooks;
 import com.ez.zalopatch.xposed.core.XpReflect;
@@ -62,7 +68,24 @@ public final class CallRecordingFeature extends Feature {
     private static final int ACTIVITY_FALLBACK_ATTEMPTS = 5;
     private static final long WAV_READY_TIMEOUT_MS = 5_000L;
     private static final long WAV_READY_POLL_MS = 100L;
+    /**
+     * A native start can land before ZRTC's peer is attached to the live audio path: the
+     * recorder file then holds only its 44-byte WAV header for the whole call. One bounded
+     * re-attach on the same main-thread boundary recovers that call; a second start is not
+     * attempted, so a genuinely dead native path stays visible instead of looping.
+     */
+    private static final long CAPTURE_PROBE_DELAY_MS = 2_000L;
+    /**
+     * Ordered call-path evidence for {@code calls.auto_record.callbacks}. The hit set is
+     * unordered, so it cannot show whether a start followed the connect edge or a rebind.
+     */
+    private static final int EVENT_TRACE_LIMIT = 10;
+    private static final long EVENT_TRACE_GAP_MS = 5_000L;
+    private static final Deque<String> CALL_EVENTS = new ConcurrentLinkedDeque<>();
+    private static final AtomicLong LAST_EVENT_AT = new AtomicLong();
+    private static volatile long callEpoch;
     private static final long IMPORT_ACK_TIMEOUT_MS = 30_000L;
+    private static final long NATIVE_DISPATCH_TIMEOUT_MS = 2_000L;
     private static final String[] CALL_ACTIVITIES = new String[]{
             "zm.voip.ui.incall.ZmInCallActivity"
     };
@@ -85,6 +108,10 @@ public final class CallRecordingFeature extends Feature {
                 thread.setDaemon(true);
                 return thread;
             });
+    private static volatile Handler mainHandler;
+    /** ZRTC's FileRecorder is process-wide even though the JNI entry accepts a peer handle. */
+    private static final Object NATIVE_RECORDER_LOCK = new Object();
+    private static Session activeNativeSession;
     private static volatile Method recordMethod;
     private static volatile Method isInCallMethod;
     private static final AtomicInteger FINALIZER_ACTIVE = new AtomicInteger();
@@ -97,6 +124,7 @@ public final class CallRecordingFeature extends Feature {
     private static final Object PEER_BINDING_LOCK = new Object();
     private static volatile PeerBinding PEER_BINDING;
     private static final AtomicInteger PEER_BINDING_REPORTED = new AtomicInteger();
+    private static final AtomicLong SESSION_SEQUENCE = new AtomicLong();
 
     /**
      * Hot reload guard: true while a recording is capturing or a finalization is
@@ -221,6 +249,8 @@ public final class CallRecordingFeature extends Feature {
                         }
                         SESSIONS.put(callback, session);
                         SESSIONS_BY_PEER.put(peerHandle, session);
+                        recordEvent("reg:" + peerTag(peerHandle) + "#"
+                                + Integer.toHexString(System.identityHashCode(callback)));
                     }
                 });
         return hooks.size();
@@ -279,8 +309,9 @@ public final class CallRecordingFeature extends Feature {
                     session = new Session(peerHandle, partner);
                     SESSIONS_BY_PEER.put(peerHandle, session);
                 }
-                session.direction = "zrtc_peer_make_call".equals(param.method.getName())
-                        ? "outgoing" : "incoming";
+                boolean outgoing = "zrtc_peer_make_call".equals(param.method.getName());
+                session.direction = outgoing ? "outgoing" : "incoming";
+                recordEvent("bind:" + (outgoing ? "out" : "in") + ":" + peerTag(peerHandle));
             }
         };
         count += XpHooks.hookAllMethods(FEATURE_HOOKS, peerClass, "zrtc_peer_make_call", bindPeer).size();
@@ -312,6 +343,8 @@ public final class CallRecordingFeature extends Feature {
                         session.confirmed = true;
                         session.audioConnected = true;
                     }
+                    recordEvent("stream:" + methodName.replace("zrtc_peer_register_", "")
+                            + ":" + peerTag(peerHandle));
                     start(session, methodName);
                 }
             }).size();
@@ -372,14 +405,18 @@ public final class CallRecordingFeature extends Feature {
                 int entryState = firstInt(param.args);
                 OBSERVED_CALLBACKS.add(methodName
                         + (entryState == Integer.MIN_VALUE ? "" : "(" + entryState + ")"));
+                recordEvent(methodName
+                        + (entryState == Integer.MIN_VALUE ? "" : "(" + entryState + ")"));
                 SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
                         param.thisObject.getClass().getName() + "#" + methodName,
-                        "seen=" + String.join(",", OBSERVED_CALLBACKS));
+                        "seen=" + String.join(",", OBSERVED_CALLBACKS)
+                                + " events=" + eventTrace());
                 Session session = SESSIONS.get(param.thisObject);
                 // Zalo can reuse its callback after replacing the native peer. A new call
                 // must resolve the current handle instead of reviving the retired session.
                 if (session == null || CallRecordingLifecycle.beginsCall(methodName)) {
-                    Session current = resolveCurrentSession(param.thisObject);
+                    Session current = resolveCurrentSession(param.thisObject,
+                            CallRecordingLifecycle.beginsCall(methodName));
                     if (current != null) session = current;
                 }
                 // Older hosts can bind through native callback registration without a
@@ -387,7 +424,8 @@ public final class CallRecordingFeature extends Feature {
                 if (session == null || session.deleted) {
                     SelfCheckRegistry.markStatus(FEATURE_CALLBACKS, "stale", "no bound session",
                             "seen=" + String.join(",", OBSERVED_CALLBACKS)
-                                    + " deleted=" + (session != null), "");
+                                    + " deleted=" + (session != null)
+                                    + " events=" + eventTrace(), "");
                     return;
                 }
                 if ("onIncomingCall".equals(methodName)) {
@@ -431,44 +469,55 @@ public final class CallRecordingFeature extends Feature {
                             "seen=" + String.join(",", OBSERVED_CALLBACKS)
                                     + " confirmed=" + session.confirmed
                                     + " audio=" + session.audioConnected
-                                    + " peer=" + (session.peerHandle != 0L), "");
+                                    + " peer=" + (session.peerHandle != 0L)
+                                    + " events=" + eventTrace(), "");
                 }
             }
         };
     }
 
-    private static Session resolveCurrentSession(Object callback) {
-        // Stable binding first: the PeerJNI make/incoming/register hooks already map
-        // the live callback to its session by peer handle (T1b). The obfuscated
-        // manager chain below is only an optional refinement when it resolves.
+    private static Session resolveCurrentSession(Object callback, boolean refresh) {
+        // Stable binding first, except at a new call: Zalo can reuse its callback object after
+        // replacing the native peer, and returning the previous call's session would start the
+        // recorder on a dead handle. The refresh only replaces the binding when the manager
+        // chain resolves a handle; a missing symbol keeps the stable binding.
         Session bound = SESSIONS.get(callback);
-        if (bound != null) {
+        if (bound != null && !refresh) {
             return bound;
         }
         PeerBinding binding = peerBinding(callback == null
                 ? null : callback.getClass().getClassLoader());
         if (binding == null || !binding.usable()) {
-            return null;
+            return bound;
         }
         try {
             Object manager = binding.accessor.invoke(null);
             Object container = binding.container.get(manager);
             if (container == null) {
-                return null;
+                return bound;
             }
             long peerHandle = binding.handle.getLong(container);
             if (peerHandle == 0L) {
-                return null;
+                return bound;
+            }
+            if (bound != null && bound.peerHandle == peerHandle) {
+                return bound;
             }
             Session session = SESSIONS_BY_PEER.get(peerHandle);
             if (session == null) {
                 session = new Session(peerHandle, PEER_PARTNERS.get(peerHandle));
                 SESSIONS_BY_PEER.put(peerHandle, session);
             }
+            // Only a handle bound for this call may displace the stable binding; the manager
+            // can still expose the previous peer while the new call is being set up.
+            if (bound != null && session.sequence <= bound.sequence) {
+                return bound;
+            }
             SESSIONS.put(callback, session);
             SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
                     binding.manager.getName() + "#" + binding.accessor.getName(),
-                    "callback bound to current peer");
+                    "callback bound to current peer " + peerTag(peerHandle));
+            recordEvent("rebind:" + peerTag(peerHandle));
             return session;
         } catch (Throwable throwable) {
             // A drifted or renamed symbol is migration work, not an unexpected hook
@@ -485,7 +534,7 @@ public final class CallRecordingFeature extends Feature {
                             binding.manager.getName() + " peer handle", throwable);
                 }
             }
-            return null;
+            return bound;
         }
     }
 
@@ -654,110 +703,251 @@ public final class CallRecordingFeature extends Feature {
         return count;
     }
 
-    // Native ZRTC may keep the file at zero bytes while its audio pipeline warms up.
-    // Do not stop and restart capture from a timer; terminal lifecycle owns finalization.
+    // PeerJNI callbacks can arrive on Zalo's WebRTC/audio threads. Zalo's own recording
+    // action calls this native entry from the main/UI thread; keep the same thread contract
+    // so FileRecorderImpl cannot race its audio mixer while it is being installed or removed.
     private static void start(Session session, String trigger) {
-        int attempt;
         synchronized (session) {
             if (session.deleted || session.started
                     || !CallRecordingLifecycle.shouldStartAudio(
                     session.confirmed, session.audioConnected)) {
                 return;
             }
-            Context application = HookConfig.resolveFallbackContextForHooks();
-            Method nativeRecord = recordMethod;
-            if (application == null || nativeRecord == null) {
-                SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed",
-                        "ZRTC native WAV recorder", "trigger=" + trigger,
-                        "Application or native method unavailable");
+        }
+        runOnMainAndWait(() -> startOnMain(session, trigger),
+                "PeerJNI#zrtc_peer_start_record_audio start");
+    }
+
+    private static void startOnMain(Session session, String trigger) {
+        int attempt;
+        synchronized (NATIVE_RECORDER_LOCK) {
+            if (activeNativeSession != null && activeNativeSession != session) {
+                synchronized (activeNativeSession) {
+                    if (activeNativeSession.started) {
+                        SelfCheckRegistry.markStatus(FEATURE_NATIVE, "installed_no_hits",
+                                "ZRTC native WAV recorder", "trigger=" + trigger,
+                                "Another native recording session is active");
+                        return;
+                    }
+                }
+                activeNativeSession = null;
+            }
+            synchronized (session) {
+                if (session.deleted || session.started
+                        || !CallRecordingLifecycle.shouldStartAudio(
+                        session.confirmed, session.audioConnected)) {
+                    return;
+                }
+                Context application = HookConfig.resolveFallbackContextForHooks();
+                Method nativeRecord = recordMethod;
+                if (application == null || nativeRecord == null) {
+                    SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed",
+                            "ZRTC native WAV recorder", "trigger=" + trigger,
+                            "Application or native method unavailable");
+                    return;
+                }
+                if (session.tempFile == null) {
+                    session.startedAt = System.currentTimeMillis();
+                    session.pendingName = CallRecordingStore.newPendingName(
+                            session.startedAt, session.direction);
+                }
+                try {
+                    File directory = new File(application.getCacheDir(), TEMP_DIRECTORY);
+                    if (!directory.exists() && !directory.mkdirs()) {
+                        throw new IllegalStateException("Could not create temporary recording directory");
+                    }
+                    if (session.tempFile == null) {
+                        session.tempFile = new File(directory, session.pendingName);
+                    }
+                    attempt = ++session.startAttempts;
+                    nativeRecord.invoke(null, session.peerHandle, true,
+                            session.tempFile.getAbsolutePath());
+                    activeNativeSession = session;
+                    session.started = true;
+                    if (attempt == 1
+                            && HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
+                        sendRecordingNotification(application,
+                                CallRecordingNotificationReceiver.STATE_RUNNING);
+                    }
+                    SelfCheckRegistry.incrementHit(FEATURE_NATIVE,
+                            "PeerJNI#zrtc_peer_start_record_audio",
+                            "start direction=" + session.direction + " trigger=" + trigger
+                                    + " media=audio_only attempt=" + attempt
+                                    + " peer=" + peerTag(session.peerHandle)
+                                    + " events=" + eventTrace());
+                    scheduleCaptureProbe(session, attempt);
+                } catch (Throwable throwable) {
+                    if (session.tempFile != null) {
+                        session.tempFile.delete();
+                    }
+                    SelfCheckRegistry.markFailed(FEATURE_NATIVE,
+                            "PeerJNI#zrtc_peer_start_record_audio", unwrap(throwable));
+                    return;
+                }
+            }
+        }
+    }
+
+    private static void scheduleCaptureProbe(Session session, int attempt) {
+        try {
+            STOP_SCHEDULER.schedule(() -> probeCapture(session, attempt),
+                    CAPTURE_PROBE_DELAY_MS, TimeUnit.MILLISECONDS);
+        } catch (RuntimeException rejected) {
+            // A retired generation already shut the scheduler down; the start itself stands.
+        }
+    }
+
+    /**
+     * A header-only native file after the probe delay means ZRTC created the recorder but never
+     * fed it: the peer was not yet attached to the live audio path. Stop that recorder and
+     * re-attach once, then keep the result honest in the native row either way.
+     */
+    private static void probeCapture(Session session, int attempt) {
+        long size;
+        synchronized (session) {
+            if (!session.started || session.startAttempts != attempt || session.tempFile == null) {
                 return;
             }
-            if (session.tempFile == null) {
+            size = session.tempFile.isFile() ? session.tempFile.length() : 0L;
+        }
+        String peer = peerTag(session.peerHandle);
+        if (CallRecordingLifecycle.hasCaptureAudio(size)) {
+            SelfCheckRegistry.markStatus(FEATURE_NATIVE, "active",
+                    "PeerJNI#zrtc_peer_start_record_audio",
+                    "attempt=" + attempt + " bytes=" + size + " peer=" + peer, "");
+            return;
+        }
+        if (!CallRecordingLifecycle.shouldReattachEmptyCapture(attempt, size)) {
+            SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed",
+                    "PeerJNI#zrtc_peer_start_record_audio",
+                    "attempt=" + attempt + " bytes=" + size + " peer=" + peer,
+                    "Native recorder produced no audio after re-attach");
+            return;
+        }
+        recordEvent("probe:" + size + "B");
+        runOnMainAndWait(() -> retryCaptureOnMain(session, attempt),
+                "PeerJNI#zrtc_peer_start_record_audio re-attach");
+    }
+
+    private static void retryCaptureOnMain(Session session, int attempt) {
+        synchronized (NATIVE_RECORDER_LOCK) {
+            synchronized (session) {
+                if (!session.started || session.startAttempts != attempt
+                        || activeNativeSession != session || session.tempFile == null) {
+                    return;
+                }
+                Method nativeRecord = recordMethod;
+                if (nativeRecord == null) {
+                    return;
+                }
+                File stale = session.tempFile;
+                try {
+                    nativeRecord.invoke(null, session.peerHandle, false,
+                            stale.getAbsolutePath());
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markFailed(FEATURE_NATIVE,
+                            "PeerJNI#zrtc_peer_start_record_audio re-attach", unwrap(throwable));
+                    return;
+                }
                 session.startedAt = System.currentTimeMillis();
                 session.pendingName = CallRecordingStore.newPendingName(
                         session.startedAt, session.direction);
-            }
-            try {
-                File directory = new File(application.getCacheDir(), TEMP_DIRECTORY);
-                if (!directory.exists() && !directory.mkdirs()) {
-                    throw new IllegalStateException("Could not create temporary recording directory");
+                File next = new File(stale.getParentFile(), session.pendingName);
+                int nextAttempt = ++session.startAttempts;
+                try {
+                    nativeRecord.invoke(null, session.peerHandle, true, next.getAbsolutePath());
+                    session.tempFile = next;
+                    stale.delete();
+                    recordEvent("retry:" + nextAttempt);
+                    SelfCheckRegistry.markStatus(FEATURE_NATIVE, "active",
+                            "PeerJNI#zrtc_peer_start_record_audio",
+                            "re-attached attempt=" + nextAttempt
+                                    + " peer=" + peerTag(session.peerHandle),
+                            "");
+                    scheduleCaptureProbe(session, nextAttempt);
+                } catch (Throwable throwable) {
+                    session.tempFile = stale;
+                    SelfCheckRegistry.markFailed(FEATURE_NATIVE,
+                            "PeerJNI#zrtc_peer_start_record_audio re-attach", unwrap(throwable));
                 }
-                if (session.tempFile == null) {
-                    session.tempFile = new File(directory, session.pendingName);
-                }
-                attempt = ++session.startAttempts;
-                nativeRecord.invoke(null, session.peerHandle, true,
-                        session.tempFile.getAbsolutePath());
-                session.started = true;
-                if (attempt == 1
-                        && HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
-                    sendRecordingNotification(application,
-                            CallRecordingNotificationReceiver.STATE_RUNNING);
-                }
-                SelfCheckRegistry.incrementHit(FEATURE_NATIVE,
-                        "PeerJNI#zrtc_peer_start_record_audio",
-                        "start direction=" + session.direction + " trigger=" + trigger
-                                + " media=audio_only attempt=" + attempt);
-            } catch (Throwable throwable) {
-                if (session.tempFile != null) {
-                    session.tempFile.delete();
-                }
-                SelfCheckRegistry.markFailed(FEATURE_NATIVE,
-                        "PeerJNI#zrtc_peer_start_record_audio", unwrap(throwable));
-                return;
             }
         }
     }
 
     private static void stop(Session session, String trigger) {
-        Context application;
-        File tempFile;
-        String pendingName;
-        String effectivePeerUid;
-        CallRecordingMetadata.Snapshot observed;
         synchronized (session) {
             if (!session.started) {
                 session.confirmed = false;
                 session.audioConnected = false;
                 return;
             }
-            application = HookConfig.resolveFallbackContextForHooks();
-            try {
-                Method nativeRecord = recordMethod;
-                if (nativeRecord != null) {
-                    nativeRecord.invoke(null, session.peerHandle, false,
-                            session.tempFile == null ? "" : session.tempFile.getAbsolutePath());
+        }
+        runOnMainAndWait(() -> stopOnMain(session, trigger),
+                "PeerJNI#zrtc_peer_start_record_audio stop");
+    }
+
+    private static void stopOnMain(Session session, String trigger) {
+        Context application;
+        File tempFile;
+        String pendingName;
+        String effectivePeerUid;
+        CallRecordingMetadata.Snapshot observed;
+        synchronized (NATIVE_RECORDER_LOCK) {
+            synchronized (session) {
+                if (!session.started) {
+                    session.confirmed = false;
+                    session.audioConnected = false;
+                    return;
                 }
-            } catch (Throwable throwable) {
-                SelfCheckRegistry.markFailed(FEATURE_NATIVE,
-                        "PeerJNI#zrtc_peer_start_record_audio stop", unwrap(throwable));
-            } finally {
-                session.started = false;
+                if (activeNativeSession != session) {
+                    SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed",
+                            "ZRTC native WAV recorder", "trigger=" + trigger,
+                            "Native recording session ownership changed before stop");
+                    session.started = false;
+                    session.confirmed = false;
+                    session.audioConnected = false;
+                    return;
+                }
+                recordEvent("stop:" + trigger);
+                application = HookConfig.resolveFallbackContextForHooks();
+                try {
+                    Method nativeRecord = recordMethod;
+                    if (nativeRecord != null) {
+                        nativeRecord.invoke(null, session.peerHandle, false,
+                                session.tempFile == null ? "" : session.tempFile.getAbsolutePath());
+                    }
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markFailed(FEATURE_NATIVE,
+                            "PeerJNI#zrtc_peer_start_record_audio stop", unwrap(throwable));
+                } finally {
+                    session.started = false;
+                    activeNativeSession = null;
+                }
+                if (application == null) {
+                    return;
+                }
+                if (HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
+                    sendRecordingNotification(application,
+                            CallRecordingNotificationReceiver.STATE_FINALIZING);
+                }
+                observed = CallRecordingMetadata.current();
+                String mappedPeerUid = PEER_PARTNERS.get(session.peerHandle);
+                effectivePeerUid = mappedPeerUid == null || mappedPeerUid.isEmpty()
+                        ? (session.peerUid == null ? observed.peerUid : session.peerUid)
+                        : mappedPeerUid;
+                tempFile = session.tempFile;
+                pendingName = session.pendingName;
+                CallRecordingMetadata.clear();
+                // A ZRTC peer handle can survive across calls. Clear per-call state before
+                // the next callback reuses this Session; finalizer already owns captured values.
+                session.confirmed = false;
+                session.audioConnected = false;
+                session.tempFile = null;
+                session.pendingName = null;
+                session.startedAt = 0L;
+                session.startAttempts = 0;
+                session.direction = "unknown";
             }
-            if (application == null) {
-                return;
-            }
-            if (HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
-                sendRecordingNotification(application,
-                        CallRecordingNotificationReceiver.STATE_FINALIZING);
-            }
-            observed = CallRecordingMetadata.current();
-            String mappedPeerUid = PEER_PARTNERS.get(session.peerHandle);
-            effectivePeerUid = mappedPeerUid == null || mappedPeerUid.isEmpty()
-                    ? (session.peerUid == null ? observed.peerUid : session.peerUid)
-                    : mappedPeerUid;
-            tempFile = session.tempFile;
-            pendingName = session.pendingName;
-            CallRecordingMetadata.clear();
-            // A ZRTC peer handle can survive across calls. Clear per-call state before
-            // the next callback reuses this Session; finalizer already owns captured values.
-            session.confirmed = false;
-            session.audioConnected = false;
-            session.tempFile = null;
-            session.pendingName = null;
-            session.startedAt = 0L;
-            session.startAttempts = 0;
-            session.direction = "unknown";
         }
         final Context finalApplication = application;
         final File finalTempFile = tempFile;
@@ -775,6 +965,59 @@ public final class CallRecordingFeature extends Feature {
         });
     }
 
+    private static void runOnMainAndWait(Runnable action, String operation) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action.run();
+            return;
+        }
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        Handler handler = mainHandler();
+        Runnable dispatch = () -> {
+            try {
+                if (!cancelled.get()) {
+                    action.run();
+                }
+            } finally {
+                completed.countDown();
+            }
+        };
+        if (!handler.post(dispatch)) {
+            SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed", operation, "",
+                    "Main thread dispatch rejected");
+            return;
+        }
+        try {
+            if (!completed.await(NATIVE_DISPATCH_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                cancelled.set(true);
+                handler.removeCallbacks(dispatch);
+                SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed", operation, "",
+                        "Main thread dispatch timed out");
+            }
+        } catch (InterruptedException interrupted) {
+            cancelled.set(true);
+            handler.removeCallbacks(dispatch);
+            Thread.currentThread().interrupt();
+            SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed", operation, "",
+                    "Main thread dispatch interrupted");
+        }
+    }
+
+    private static Handler mainHandler() {
+        Handler handler = mainHandler;
+        if (handler != null) {
+            return handler;
+        }
+        synchronized (CallRecordingFeature.class) {
+            handler = mainHandler;
+            if (handler == null) {
+                handler = new Handler(Looper.getMainLooper());
+                mainHandler = handler;
+            }
+            return handler;
+        }
+    }
+
     private static void finalizeRecording(
             Context application,
             File tempFile,
@@ -785,7 +1028,8 @@ public final class CallRecordingFeature extends Feature {
         if (!awaitNativeWav(tempFile)) {
             long size = tempFile == null || !tempFile.isFile() ? 0L : tempFile.length();
             SelfCheckRegistry.markStatus(FEATURE_STORAGE, "failed",
-                    "ZRTC native WAV readiness", "trigger=" + trigger + " size=" + size,
+                    "ZRTC native WAV readiness", "trigger=" + trigger + " size=" + size
+                            + " events=" + eventTrace(),
                     "Native WAV did not finalize within 5 seconds; private source preserved");
             sendRecordingNotification(application,
                     CallRecordingNotificationReceiver.STATE_FAILED);
@@ -995,17 +1239,40 @@ public final class CallRecordingFeature extends Feature {
         Session session = SESSIONS_BY_PEER.get(peerHandle);
         if (session != null) {
             synchronized (session) {
-                // Keep retirement and native stop atomic with start(). Late callbacks
-                // may still hold this Session after the host frees its native pointer.
                 if (trigger.endsWith("zrtc_peer_delete")) {
                     session.deleted = true;
                 }
-                stop(session, trigger);
-                if (session.deleted) {
-                    SESSIONS_BY_PEER.remove(peerHandle, session);
-                }
+            }
+            // stop() may synchronously dispatch to the main thread. Do not hold the session
+            // monitor while waiting, or the main thread cannot enter stopOnMain().
+            stop(session, trigger);
+            synchronized (session) {
+                if (session.deleted) SESSIONS_BY_PEER.remove(peerHandle, session);
             }
         }
+    }
+
+    /** Records one ordered call-path entry; a new call starts a fresh trace after a quiet gap. */
+    private static void recordEvent(String text) {
+        long now = System.currentTimeMillis();
+        if (now - LAST_EVENT_AT.getAndSet(now) > EVENT_TRACE_GAP_MS) {
+            CALL_EVENTS.clear();
+            callEpoch = now;
+        }
+        long epoch = callEpoch;
+        CALL_EVENTS.addLast(epoch == 0L ? text : "+" + (now - epoch) + "ms " + text);
+        while (CALL_EVENTS.size() > EVENT_TRACE_LIMIT) {
+            CALL_EVENTS.pollFirst();
+        }
+    }
+
+    private static String eventTrace() {
+        return String.join(",", CALL_EVENTS);
+    }
+
+    /** Short peer-handle tag for the self-check row. */
+    private static String peerTag(long peerHandle) {
+        return "0x" + Long.toHexString(peerHandle);
     }
 
     private static int firstInt(Object[] args) {
@@ -1044,6 +1311,8 @@ public final class CallRecordingFeature extends Feature {
     private static final class Session {
         final long peerHandle;
         final String peerUid;
+        /** Creation order lets a new call's binding displace a reused callback's old session. */
+        final long sequence = SESSION_SEQUENCE.incrementAndGet();
         String direction = "unknown";
         long startedAt;
         String pendingName;

@@ -152,12 +152,21 @@ final class DexKitOriginalPhotoResolver {
                 throw new IllegalStateException("outgoing query incomplete");
             }
             for (DexKitBridgeRunner.RawHit raw : query.hits) {
-                if (raw.isStatic || !"run".equals(raw.methodName) || !raw.usedFields.contains(apply.owner + "#" + orderedFlags.get(0))
-                        || !raw.usedFields.contains(apply.owner + "#" + orderedFlags.get(1))) continue;
-                if (DexKitOriginalPhotoFingerprint.outgoingConstructor(Class.forName(raw.className, false, host.loader)) != null) conversions.add(shape(raw));
+                MethodShape method = shape(raw);
+                if (!DexKitOriginalPhotoFingerprint.isOutgoing(method, apply.owner,
+                        orderedFlags.get(0), orderedFlags.get(1))) continue;
+                if (!Runnable.class.isAssignableFrom(Class.forName(raw.className, false, host.loader))) continue;
+                conversions.add(method);
             }
         }
-        result.put(DexKitOriginalPhotoFingerprint.OUTGOING, unique(conversions, "photo conversion runnable").owner);
+        // Trace route: if the photo-provider anchor is gone, follow the two native
+        // quality flags to the runnable that reads both. A non-empty anchored set is
+        // never replaced, so anchored ambiguity still fails closed.
+        if (conversions.isEmpty()) conversions = traceConversions(host, apply.owner,
+                orderedFlags.get(0), orderedFlags.get(1));
+        MethodShape conversion = unique(conversions, "photo conversion runnable");
+        result.put(DexKitOriginalPhotoFingerprint.OUTGOING, conversion.owner);
+        result.put(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD, conversion.name);
         List<MethodShape> shares = new ArrayList<>();
         for (DexKitBridgeRunner.RawHit raw : hits(strings, "share")) {
             MethodShape method = shape(raw);
@@ -175,9 +184,56 @@ final class DexKitOriginalPhotoResolver {
     private static List<DexKitBridgeRunner.MethodSpec> outgoingSpecs(List<DexKitBridgeRunner.RawHit> anchors) {
         List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
         Set<String> owners = new LinkedHashSet<>();
-        for (DexKitBridgeRunner.RawHit anchor : anchors) if ("run".equals(anchor.methodName)) owners.add(anchor.className);
+        for (DexKitBridgeRunner.RawHit anchor : anchors) owners.add(anchor.className);
         for (String owner : owners) specs.add(new DexKitBridgeRunner.MethodSpec(owner, owner, "void", 0, true, null, false));
         return specs;
+    }
+
+    /**
+     * Independent trace of the outgoing conversion: methods that read both native photo
+     * flags, then only the zero-argument {@code run()} of a {@link Runnable} owner. The
+     * field query keeps the candidate set small, and a duplicate hit still fails closed.
+     */
+    private static List<MethodShape> traceConversions(DexKitZinstantResolver.HostIdentity host,
+            String mediaItem, String flagOne, String flagTwo) throws Exception {
+        Map<String, DexKitBridgeRunner.QueryResult> reads = DexKitBridgeRunner.scanFieldUses(
+                host.sourceDir, Arrays.asList(
+                        new DexKitBridgeRunner.FieldUseSpec("flag_one", mediaItem, flagOne, null),
+                        new DexKitBridgeRunner.FieldUseSpec("flag_two", mediaItem, flagTwo, null)));
+        Map<String, DexKitBridgeRunner.RawHit> both = new LinkedHashMap<>();
+        for (DexKitBridgeRunner.RawHit hit : hits(reads, "flag_one")) {
+            if (qualifiesAsConversion(hit)) both.put(hit.className + "#" + hit.methodName, hit);
+        }
+        Set<String> second = new LinkedHashSet<>();
+        for (DexKitBridgeRunner.RawHit hit : hits(reads, "flag_two")) {
+            if (qualifiesAsConversion(hit)) second.add(hit.className + "#" + hit.methodName);
+        }
+        both.keySet().retainAll(second);
+        List<DexKitBridgeRunner.MethodSpec> specs = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit hit : both.values()) {
+            specs.add(new DexKitBridgeRunner.MethodSpec(hit.className, hit.className, "void", 0, true, null, false));
+        }
+        List<MethodShape> traced = new ArrayList<>();
+        Map<String, DexKitBridgeRunner.QueryResult> details = specs.isEmpty()
+                ? Collections.<String, DexKitBridgeRunner.QueryResult>emptyMap()
+                : DexKitBridgeRunner.scanMethods(host.sourceDir, specs);
+        for (DexKitBridgeRunner.QueryResult query : details.values()) {
+            if (!query.error.isEmpty() || query.matchCount != query.hits.size()) {
+                throw new IllegalStateException("photo flag trace incomplete");
+            }
+            for (DexKitBridgeRunner.RawHit raw : query.hits) {
+                if (!both.containsKey(raw.className + "#" + raw.methodName)) continue;
+                if (!DexKitOriginalPhotoFingerprint.isOutgoing(shape(raw), mediaItem, flagOne, flagTwo)) continue;
+                if (!Runnable.class.isAssignableFrom(Class.forName(raw.className, false, host.loader))) continue;
+                traced.add(shape(raw));
+            }
+        }
+        return traced;
+    }
+
+    private static boolean qualifiesAsConversion(DexKitBridgeRunner.RawHit hit) {
+        return !hit.isStatic && "void".equals(hit.returnTypeName) && hit.paramCount == 0
+                && "run".equals(hit.methodName);
     }
     private static MethodShape propertyGetter(List<DexKitBridgeRunner.RawHit> hits, String metadata) {
         List<MethodShape> matches = new ArrayList<>();

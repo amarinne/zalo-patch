@@ -290,8 +290,23 @@ final class SymbolPreflight {
                                    List<String> errors) {
         Class<?> tabMe = load(schema.string("symbols.me.tab_me_class", ""), loader, errors);
         if (tabMe != null) {
-            method(tabMe, schema.string("symbols.me.current_builder_method", ""),
-                    ArrayList.class, 1, errors);
+            String builder = schema.string("symbols.me.current_builder_method", "");
+            if (builder.isEmpty()) {
+                errors.add("me builder method name missing");
+            } else {
+                boolean matched = false;
+                for (Method method : tabMe.getDeclaredMethods()) {
+                    if (builder.equals(method.getName())
+                            && method.getParameterTypes().length == 1
+                            && List.class.isAssignableFrom(method.getReturnType())) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    errors.add(tabMe.getName() + "#" + builder + " builder shape changed");
+                }
+            }
             String fullZinstant = schema.string("symbols.me.full_zinstant_predicate_method", "");
             if (!fullZinstant.isEmpty()) {
                 method(tabMe, fullZinstant, Boolean.TYPE, 0, errors);

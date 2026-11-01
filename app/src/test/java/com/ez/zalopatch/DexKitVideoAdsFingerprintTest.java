@@ -141,6 +141,35 @@ public class DexKitVideoAdsFingerprintTest {
                 true, Collections.singletonList(staticMarker))), true).resolved());
     }
 
+    @Test public void defaultPackageObfuscatedTypesAreHostReferences() {
+        // Zalo keeps obfuscated classes in the default package; a package separator is
+        // not a usable reference test for either the item state type or a family callback.
+        MethodShape bind = method("contentBind", "void", CONTENT, "java.lang.String", "int",
+                "j0s", "boolean", CONTENT, PLAYLIST);
+        MethodShape payload = method("payloadBind", "void", CONTENT, "java.util.List",
+                "java.lang.String", "int", "j0s", CONTENT, PLAYLIST);
+        Resolution item = evaluate(Route.PHOTO_ITEM, Collections.singletonList(
+                candidate(Route.PHOTO_ITEM, true, bind, payload)), true);
+        assertTrue(item.status, item.resolved());
+        assertEquals("contentBind", item.descriptors.get(Route.PHOTO_ITEM.anchor("bind_method")));
+        assertEquals("payloadBind", item.descriptors.get(Route.PHOTO_ITEM.anchor("payload_bind_method")));
+        Candidate primitiveState = candidate(Route.PHOTO_ITEM, true, method("contentBind", "void",
+                CONTENT, "java.lang.String", "int", "int", "boolean", CONTENT, PLAYLIST), payload);
+        assertFalse(evaluate(Route.PHOTO_ITEM, Collections.singletonList(primitiveState), true).resolved());
+
+        Candidate family = candidate(Route.TEMPLATE, false,
+                new MethodShape("a", "void",
+                        Arrays.asList(CONTENT, "java.lang.String", "j0s", "f0"), false, true),
+                new MethodShape("b", "void", Arrays.asList(CONTENT, "cg"), false, true));
+        Candidate implementation = new Candidate("com.zing.zalo.shortvideo.ui.ads.LayoutA", null, true,
+                Arrays.asList(method("a", "void", CONTENT, "java.lang.String", "j0s", "f0"),
+                        method("b", "void", CONTENT, "cg")));
+        Resolution resolved = evaluate(Route.TEMPLATE, Collections.singletonList(new Candidate(
+                family.owner, family.marker, false, family.declaredMethods,
+                Collections.singletonList(implementation))), true);
+        assertTrue(resolved.status, resolved.resolved());
+    }
+
     @Test public void anchorsAndRetryFamiliesRoundTripForEveryRoute() {
         java.util.Map<String, String> descriptors = new java.util.LinkedHashMap<>();
         for (Route route : Route.values()) {

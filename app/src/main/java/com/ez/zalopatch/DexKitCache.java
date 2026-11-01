@@ -29,8 +29,9 @@ public final class DexKitCache {
      * Revision 4 adds the extended per-family descriptor map.
      * Revision 5 adds bounded per-family recovery state.
      * Revision 6 adds the native emoji reaction send family.
+     * Revision 7 replaces the photo-conversion constructor anchor with its runnable method.
      */
-    public static final int RESOLVER_FORMAT = 6;
+    public static final int RESOLVER_FORMAT = 7;
     public static final int MAX_ENTRY_BYTES = 8 * 1024;
     static final int MAX_REASON_BYTES = 256;
 

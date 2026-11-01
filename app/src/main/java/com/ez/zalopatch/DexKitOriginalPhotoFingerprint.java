@@ -1,6 +1,5 @@
 package com.ez.zalopatch;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -39,10 +38,11 @@ public final class DexKitOriginalPhotoFingerprint {
     public static final String CAMERA_STATE = "OPEN_FROM_CAMERA_SAVED_STATE_KEY";
     public static final String SELECTION = PREFIX + "picker_selection_field";
     public static final String OUTGOING = PREFIX + "outgoing_class";
+    public static final String OUTGOING_METHOD = PREFIX + "outgoing_method";
     public static final String SHARE = PREFIX + "share_method";
     public static final List<String> ANCHORS = Arrays.asList(ENUM, CODE, APPLY, FLAG_ONE, FLAG_TWO,
             POLICY, GATE, ELIGIBLE, ENTITLEMENT, PICKER, GET_QUALITY, METADATA, PROPERTY_CLASS, PROPERTY_READ, SELECTION,
-            OUTGOING, SHARE);
+            OUTGOING, OUTGOING_METHOD, SHARE);
 
     private DexKitOriginalPhotoFingerprint() { }
 
@@ -85,9 +85,9 @@ public final class DexKitOriginalPhotoFingerprint {
                 && method.calls.stream().allMatch(call -> call.startsWith(policy + "#"));
     }
 
-    /** A getter can run before a single item enters the list, so empty stays native. */
+    /** The picker's own quality state is the default, so an empty selection still shows Original. */
     public static boolean preferInPicker(boolean camera, int photos, int otherMedia) {
-        return !camera && photos > 0;
+        return !camera;
     }
 
     public static boolean isSelectedPhoto(Class<?> photo, Object item, List<?> selected) {
@@ -131,22 +131,30 @@ public final class DexKitOriginalPhotoFingerprint {
         return standard >= 0 && standard < hd && hd < original;
     }
 
-    /** One verified outgoing constructor with an explicit media-list argument. */
-    public static Constructor<?> outgoingConstructor(Class<?> type) {
-        if (!Runnable.class.isAssignableFrom(type)) return null;
-        Constructor<?> found = null;
-        for (Constructor<?> candidate : type.getDeclaredConstructors()) {
-            Class<?>[] parameters = candidate.getParameterTypes();
-            // This is the photo-conversion constructor shape, not the other merged
-            // Runnable cases. Drift to a different prototype stays unavailable.
-            if (parameters.length != 5 || parameters[0].isPrimitive()
-                    || parameters[1] != java.util.ArrayList.class
-                    || parameters[2] != int.class || parameters[3].isPrimitive()
-                    || parameters[4] != int.class) continue;
-            if (found != null) return null;
-            found = candidate;
+    /** The outgoing photo conversion is the runnable that reads both native quality flags. */
+    public static boolean isOutgoing(MethodShape method, String mediaItem,
+            String flagOne, String flagTwo) {
+        return "run".equals(method.name) && !method.isStatic
+                && "void".equals(method.returns) && method.parameters.isEmpty()
+                && method.fields.contains(mediaItem + "#" + flagOne)
+                && method.fields.contains(mediaItem + "#" + flagTwo);
+    }
+
+    /**
+     * List values on one outgoing conversion object. The host keeps the media list in a
+     * synthetic {@code Object} field, so the declared type says nothing; read every
+     * instance field and keep the live values that are lists.
+     */
+    public static List<List<?>> mediaLists(Object holder) throws IllegalAccessException {
+        List<List<?>> lists = new ArrayList<>();
+        if (holder == null) return lists;
+        for (Field field : holder.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) continue;
+            field.setAccessible(true);
+            Object value = field.get(holder);
+            if (value instanceof List) lists.add((List<?>) value);
         }
-        return found;
+        return lists;
     }
 
     /** Find the property index from the host's own metadata, without a fixed slot. */
@@ -248,12 +256,12 @@ public final class DexKitOriginalPhotoFingerprint {
             throw new IllegalArgumentException("photo picker selection is not an instance List");
         }
         selection.setAccessible(true);
-        Constructor<?> outgoing = outgoingConstructor(Class.forName(symbols.get(OUTGOING), false, loader));
-        if (outgoing == null) throw new NoSuchMethodException("unique photo-list constructor missing");
+        Method outgoingRun = method(Class.forName(symbols.get(OUTGOING), false, loader),
+                symbols.get(OUTGOING_METHOD), void.class, false);
         Method share = method(Class.forName(SHARE_VIEW, false, loader), symbols.get(SHARE),
                 void.class, false, Class.forName("android.os.Bundle", false, loader));
         return new Binding(media, apply, flagOne, flagTwo, gate, eligible, entitlement,
-                getter, metadata, propertyRead, selection, outgoing, share, original);
+                getter, metadata, propertyRead, selection, outgoingRun, share, original);
     }
 
     private static Method method(Class<?> owner, String name, Class<?> returns,
@@ -279,14 +287,14 @@ public final class DexKitOriginalPhotoFingerprint {
         public final Class<?> media, video;
         public final Method apply, gate, eligible, entitlement, getter, propertyRead, share;
         public final Field flagOne, flagTwo, selection, metadata;
-        public final Constructor<?> outgoing;
+        public final Method outgoingRun;
         public final int originalCode;
         public boolean camera(Object picker) throws Exception {
             return cameraFromPicker(picker, metadata, propertyRead);
         }
         Binding(Class<?> media, Method apply, Field flagOne, Field flagTwo,
                 Method gate, Method eligible, Method entitlement, Method getter, Field metadata, Method propertyRead,
-                Field selection, Constructor<?> outgoing, Method share, int originalCode) throws Exception {
+                Field selection, Method outgoingRun, Method share, int originalCode) throws Exception {
             this.media = media;
             this.video = Class.forName("com.zing.zalo.data.mediapicker.model.VideoItem", false, media.getClassLoader());
             if (!media.isAssignableFrom(video) || video == media) {
@@ -295,7 +303,7 @@ public final class DexKitOriginalPhotoFingerprint {
             this.apply = apply; this.flagOne = flagOne; this.flagTwo = flagTwo;
             this.gate = gate; this.eligible = eligible; this.entitlement = entitlement;
             this.getter = getter; this.metadata = metadata; this.propertyRead = propertyRead; this.selection = selection;
-            this.outgoing = outgoing; this.share = share; this.originalCode = originalCode;
+            this.outgoingRun = outgoingRun; this.share = share; this.originalCode = originalCode;
         }
     }
 }

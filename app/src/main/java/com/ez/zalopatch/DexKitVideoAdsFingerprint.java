@@ -210,8 +210,20 @@ public final class DexKitVideoAdsFingerprint {
         return chosen;
     }
 
+    /**
+     * A host reference type. Zalo keeps most obfuscated classes in the default package, so a
+     * package separator is not a usable test; exclude primitives, arrays, and platform types
+     * instead. The surrounding positional predicates keep the match narrow.
+     */
     private static boolean referenceType(String type) {
-        return type.contains(".") && !type.startsWith("java.") && !type.startsWith("android.");
+        if (type == null || type.isEmpty() || type.startsWith("[")) return false;
+        switch (type) {
+            case "boolean": case "byte": case "char": case "short":
+            case "int": case "long": case "float": case "double": case "void":
+                return false;
+            default:
+                return !type.startsWith("java.") && !type.startsWith("android.");
+        }
     }
 
     private static boolean sameOverride(MethodShape base, List<MethodShape> methods) {
@@ -236,8 +248,7 @@ public final class DexKitVideoAdsFingerprint {
                         : "java.lang.String".equals(p.get(1)) && "int".equals(p.get(2))
                             && "boolean".equals(p.get(4)));
             String state = p.get(payload ? 4 : 3);
-            if (!matches || !state.contains(".") || state.startsWith("java.")
-                    || state.startsWith("android.")) continue;
+            if (!matches || !referenceType(state)) continue;
             // Names are the persisted anchor vocabulary; overloaded names cannot be bound safely.
             int sameName = 0;
             for (MethodShape other : methods) if (other.name.equals(method.name)) sameName++;

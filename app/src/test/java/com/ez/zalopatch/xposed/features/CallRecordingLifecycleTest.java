@@ -49,6 +49,17 @@ public final class CallRecordingLifecycleTest {
     }
 
     @Test
+    public void headerOnlyCaptureReattachesOnce() {
+        // A recorder that never received a frame leaves exactly the 44-byte WAV header.
+        assertFalse(CallRecordingLifecycle.hasCaptureAudio(44));
+        assertTrue(CallRecordingLifecycle.shouldReattachEmptyCapture(1, 44));
+        assertFalse(CallRecordingLifecycle.shouldReattachEmptyCapture(2, 44));
+        // Any captured frame, even one 10 ms block, is never thrown away by a re-attach.
+        assertTrue(CallRecordingLifecycle.hasCaptureAudio(45));
+        assertFalse(CallRecordingLifecycle.shouldReattachEmptyCapture(1, 45));
+    }
+
+    @Test
     public void nativePeerTeardownIsAnEarlyStopBoundary() {
         assertTrue(CallRecordingLifecycle.isPeerTermination("zrtc_peer_end_call"));
         assertTrue(CallRecordingLifecycle.isPeerTermination("zrtc_peer_force_stop"));

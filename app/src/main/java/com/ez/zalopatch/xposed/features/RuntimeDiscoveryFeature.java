@@ -35,8 +35,8 @@ import com.ez.zalopatch.xposed.core.XpReflect;
  * conversation adapter, its backing list item classes, and the conversation category fields
  * without depending on any obfuscated Zalo method name.
  *
- * Installed only after a compatibility-report diagnostics request, then cleared after the first
- * candidate dump for that installed Zalo version.
+ * Installed after an explicit compatibility request or an unknown catalog version, then cleared
+ * after the first candidate dump for that installed Zalo version.
  */
 public final class RuntimeDiscoveryFeature extends Feature {
     private static final String FEATURE_DISCOVERY = "runtime_discovery";
@@ -698,10 +698,24 @@ public final class RuntimeDiscoveryFeature extends Feature {
             return true;
         }
         // Obfuscated short package names (e.g. mw.c, rc1.x, jp.h) have no dots-deep java/android prefix.
-        return !name.startsWith("java.") && !name.startsWith("javax.")
+        if (!name.startsWith("java.") && !name.startsWith("javax.")
                 && !name.startsWith("android.") && !name.startsWith("androidx.")
                 && !name.startsWith("kotlin.") && name.indexOf('.') >= 0
-                && name.length() < 24;
+                && name.length() < 24) {
+            return true;
+        }
+        // Single-segment obfuscated Zalo classes (e.g. gug, j3w, mm4) carry no package dot. Only
+        // short lowercase names qualify so platform types such as View or Bundle stay excluded.
+        if (name.indexOf('.') >= 0) {
+            return false;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if ((c < 'a' || c > 'z') && (c < '0' || c > '9')) {
+                return false;
+            }
+        }
+        return name.length() >= 2 && name.length() <= 6;
     }
 
 }

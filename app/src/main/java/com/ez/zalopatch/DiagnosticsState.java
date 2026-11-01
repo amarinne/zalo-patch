@@ -47,6 +47,9 @@ public final class DiagnosticsState {
         editor.putBoolean(KEY_RUNTIME_DISCOVERY_REQUESTED, false);
         editor.putLong(KEY_RUNTIME_DISCOVERY_LAST_VERSION_CODE, versionCode);
         editor.apply();
+        // An unknown catalog request can now be completed automatically with the bounded
+        // runtime trace and any validated DexKit cache produced by the Zalo process.
+        ZaloArtifactState.requestRemapUpload(context);
         TweakStore.initialize(context);
         FrameworkConfig.refreshState(context);
     }

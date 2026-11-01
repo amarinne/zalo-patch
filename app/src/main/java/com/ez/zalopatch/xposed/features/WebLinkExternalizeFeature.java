@@ -1,5 +1,6 @@
 package com.ez.zalopatch.xposed.features;
 
+import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
@@ -101,20 +102,28 @@ public final class WebLinkExternalizeFeature extends Feature {
             public void before(XpHooks.HookParam param) {
                 Object bundleArg = param.args.length > 2 ? param.args[2] : null;
                 if (!(bundleArg instanceof Bundle)) {
+                    log("dispatch without a Bundle argument, keeping in-app open");
                     return;
                 }
                 Bundle bundle = (Bundle) bundleArg;
                 String url = param.args[1] instanceof String ? (String) param.args[1] : null;
+                boolean hasSourceLink = bundle.containsKey(WebLinkExternalizeGate.KEY_SOURCE_LINK);
+                boolean fromMiniApp = bundle.getBoolean(
+                        WebLinkExternalizeGate.KEY_FROM_MINI_APP, false);
+                boolean oaH5 = bundle.containsKey(WebLinkExternalizeGate.KEY_OA_H5);
+                // One bounded line per dispatch: a report can then separate "dispatch never
+                // reached" from "dispatch reached and the gate declined" without the URL.
+                log("dispatch " + WebLinkExternalizeGate.explain(
+                        hasSourceLink, fromMiniApp, oaH5, url));
                 if (WebLinkExternalizeGate.classify(
-                        bundle.containsKey(WebLinkExternalizeGate.KEY_SOURCE_LINK),
-                        bundle.getBoolean(WebLinkExternalizeGate.KEY_FROM_MINI_APP, false),
-                        bundle.containsKey(WebLinkExternalizeGate.KEY_OA_H5),
-                        url) != WebLinkExternalizeGate.Decision.EXTERNAL) {
+                        hasSourceLink, fromMiniApp, oaH5, url)
+                        != WebLinkExternalizeGate.Decision.EXTERNAL) {
                     return;
                 }
                 Context hostContext = resolveHostContext(param.args.length > 0
                         ? param.args[0] : null);
                 if (hostContext == null) {
+                    log("no host context, keeping in-app open");
                     return;
                 }
                 try {
@@ -123,6 +132,7 @@ public final class WebLinkExternalizeFeature extends Feature {
                     hostContext.startActivity(intent);
                 } catch (ActivityNotFoundException missingHandler) {
                     // No external handler for this URL: let the original in-app open proceed.
+                    log("no external handler, keeping in-app open");
                     return;
                 } catch (Throwable startFailure) {
                     log("external open failed, keeping in-app open: "
@@ -175,34 +185,41 @@ public final class WebLinkExternalizeFeature extends Feature {
 
     /**
      * Primary path: the dispatch host exposes the activity/view Context through a no-arg getter.
-     * The getter's own name drifts, so candidates are found by shape and the first one returning a
-     * live Context wins. The running application is the stable fallback; with
-     * {@link Intent#FLAG_ACTIVITY_NEW_TASK} either is a valid launch identity. No context means no
-     * safe external open: leave Zalo's own path alone.
+     * The getter's own name drifts, so candidates are found by shape and the first live Activity
+     * wins; any other Context is kept only as a weaker fallback. The running application is the
+     * last resort; with {@link Intent#FLAG_ACTIVITY_NEW_TASK} either is a valid launch identity.
+     * No context means no safe external open: leave Zalo's own path alone.
      */
     private Context resolveHostContext(Object host) {
-        if (host instanceof Context) {
-            return (Context) host;
+        if (host instanceof Activity) {
+            return (Activity) host;
         }
+        Context fallback = host instanceof Context ? (Context) host : null;
         if (host != null) {
             Class<?> current = host.getClass();
             while (current != null && current != Object.class) {
                 for (Method method : current.getDeclaredMethods()) {
                     if (method.getParameterTypes().length != 0
-                            || method.getReturnType() != Context.class) {
+                            || !Context.class.isAssignableFrom(method.getReturnType())) {
                         continue;
                     }
                     try {
                         method.setAccessible(true);
                         Object result = method.invoke(host);
-                        if (result instanceof Context) {
-                            return (Context) result;
+                        if (result instanceof Activity) {
+                            return (Activity) result;
+                        }
+                        if (result instanceof Context && fallback == null) {
+                            fallback = (Context) result;
                         }
                     } catch (Throwable ignored) {
                     }
                 }
                 current = current.getSuperclass();
             }
+        }
+        if (fallback != null) {
+            return fallback;
         }
         return HookConfig.resolveFallbackContextForHooks();
     }

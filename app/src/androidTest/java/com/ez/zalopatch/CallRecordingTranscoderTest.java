@@ -31,6 +31,8 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -134,6 +136,9 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
 
     public void testFailedRawWaveRemainsInCatalogAndCanBeDeleted() throws Exception {
         Context context = getInstrumentation().getTargetContext();
+        // The retry path writes the runtime storage self-check row, which the device gate reads
+        // as live evidence. A test must not overwrite what a real recording reported.
+        Map<String, ?> selfCheckBefore = storageSelfCheck(context);
         File directory = new File(context.getFilesDir(), "call_recordings");
         assertTrue(directory.isDirectory() || directory.mkdirs());
         File raw = new File(directory,
@@ -157,7 +162,44 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
             assertFalse(raw.exists());
         } finally {
             raw.delete();
+            restoreStorageSelfCheck(context, selfCheckBefore);
         }
+    }
+
+    private static Map<String, ?> storageSelfCheck(Context context) {
+        Map<String, Object> values = new HashMap<>();
+        for (Map.Entry<String, ?> entry : TweakStore.preferences(context).getAll().entrySet()) {
+            if (entry.getKey().startsWith("selfcheck.calls.auto_record.storage.")) {
+                values.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return values;
+    }
+
+    private static void restoreStorageSelfCheck(Context context, Map<String, ?> before) {
+        SharedPreferences preferences = TweakStore.preferences(context);
+        SharedPreferences.Editor editor = preferences.edit();
+        for (Map.Entry<String, ?> entry : storageSelfCheck(context).entrySet()) {
+            if (!before.containsKey(entry.getKey())) {
+                editor.remove(entry.getKey());
+            }
+        }
+        for (Map.Entry<String, ?> entry : before.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if (value instanceof String) {
+                editor.putString(key, (String) value);
+            } else if (value instanceof Integer) {
+                editor.putInt(key, (Integer) value);
+            } else if (value instanceof Long) {
+                editor.putLong(key, (Long) value);
+            } else if (value instanceof Boolean) {
+                editor.putBoolean(key, (Boolean) value);
+            } else if (value instanceof Float) {
+                editor.putFloat(key, (Float) value);
+            }
+        }
+        assertTrue("Self-check state was not restored", editor.commit());
     }
 
     public void testIdentityAttestationCapturesSourceUid() throws Exception {

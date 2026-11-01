@@ -3,6 +3,7 @@ package com.ez.zalopatch.xposed.features;
 import android.os.Bundle;
 
 import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
+import com.ez.zalopatch.DexKitRemoteConfigFingerprint;
 import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
@@ -11,7 +12,7 @@ import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 import com.ez.zalopatch.xposed.core.XpHooks;
 
 import java.lang.reflect.Method;
-import java.lang.ref.WeakReference;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,8 +25,8 @@ public final class OriginalPhotoFeature extends Feature {
     private static final String SHARE = SEND + ".share";
     private final DexKitOriginalPhotoFingerprint.VideoQualityState selection =
             new DexKitOriginalPhotoFingerprint.VideoQualityState();
-    private volatile WeakReference<Object> lastPicker = new WeakReference<>(null);
-    private final ThreadLocal<Boolean> photoPolicy = new ThreadLocal<>();
+    private final java.util.concurrent.atomic.AtomicBoolean qualityDefaultReported =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private final boolean compatible;
     private final String compatibilityError;
 
@@ -69,9 +70,11 @@ public final class OriginalPhotoFeature extends Feature {
         try {
             for (Method policy : new Method[]{binding.gate, binding.eligible, binding.entitlement}) {
                 hooks.add(XpHooks.hookMethod(SEND, policy, (XpHooks.After) param -> {
-                    if (Boolean.TRUE.equals(photoPolicy.get()) && !param.hasThrowable()) param.setResult(true);
+                    if (!param.hasThrowable()) param.setResult(true);
                 }));
             }
+            hooks.addAll(installQualityDefaults(binding));
+            hooks.add(installConfigOverride(schema));
             hooks.add(XpHooks.hookMethod(PICKER, binding.getter, (XpHooks.After) param -> {
                 try {
                     if (param.hasThrowable() || !(param.getResult() instanceof Integer)) return;
@@ -82,7 +85,6 @@ public final class OriginalPhotoFeature extends Feature {
                         if (item != null && item.getClass() == binding.media) photos++; else other++;
                     }
                     boolean camera = binding.camera(param.thisObject);
-                    lastPicker = new WeakReference<>(param.thisObject);
                     boolean prefer = DexKitOriginalPhotoFingerprint.preferInPicker(camera, photos, other);
                     selection.remember(selected, binding.video, prefer, nativeQuality);
                     if (prefer && nativeQuality != binding.originalCode) {
@@ -95,23 +97,34 @@ public final class OriginalPhotoFeature extends Feature {
             }));
             hooks.add(XpHooks.hookMethod(PICKER, binding.apply, (XpHooks.Before) param -> {
                 try {
-                    // Preserve each selected video's native input in a mixed picker.
-                    // Weak references release removed items without retaining host sessions.
-                    Integer nativeQuality = selection.videoQuality(param.thisObject);
-                    if (binding.video.isInstance(param.thisObject) && nativeQuality != null
-                            && ((Integer) param.args[0]) == binding.originalCode) {
-                        param.args[0] = nativeQuality;
+                    if (!(param.args[0] instanceof Integer)) return;
+                    int requested = (Integer) param.args[0];
+                    if (binding.video.isInstance(param.thisObject)) {
+                        // Preserve each selected video's native input in a mixed picker.
+                        // Weak references release removed items without retaining host sessions.
+                        Integer nativeQuality = selection.videoQuality(param.thisObject);
+                        if (nativeQuality != null && requested == binding.originalCode) {
+                            param.args[0] = nativeQuality;
+                        }
+                        return;
+                    }
+                    if (requested != binding.originalCode) {
+                        param.args[0] = binding.originalCode;
+                        SelfCheckRegistry.incrementHit(SEND, binding.apply.toString(),
+                                "native photo quality applied before send");
                     }
                 } catch (Throwable error) {
                     SelfCheckRegistry.markFailed(PICKER, "native video quality preservation", error);
                 }
             }));
-            hooks.add(XpHooks.hookConstructor(SEND, binding.outgoing, param -> {
+            hooks.add(XpHooks.hookMethod(SEND, binding.outgoingRun, (XpHooks.Before) param -> {
                 try {
-                    Object picker = lastPicker.get();
-                    if (picker == null || binding.camera(picker)) return;
-                    List<?> selected = (List<?>) binding.selection.get(picker);
-                    preferPhotos((List<?>) param.args[1], binding, SEND, true, selected);
+                    // The conversion copies this flag into the outgoing photo model. Apply
+                    // the native Original state to every media list it carries, matching the
+                    // upstream patch that rewrites the flag read.
+                    for (List<?> items : DexKitOriginalPhotoFingerprint.mediaLists(param.thisObject)) {
+                        preferPhotos(items, binding, SEND);
+                    }
                 } catch (Throwable error) {
                     SelfCheckRegistry.markFailed(SEND, "native outgoing photo quality", error);
                 }
@@ -126,14 +139,19 @@ public final class OriginalPhotoFeature extends Feature {
                     photos.putBoolean("bol_extra_photo_original", true);
                     photos.putBoolean("bol_extra_photo_hd", true);
                     List<?> items = photos.getParcelableArrayList("extra_share_multi_photo_from_media_item_list");
-                    if (items != null) preferPhotos(items, binding, SHARE, false, null);
-                    if (changed) SelfCheckRegistry.incrementHit(SHARE, binding.share.toString(), "external photo extras set to Original");
+                    if (items != null) preferPhotos(items, binding, SHARE);
+                    // Count the invocation, not only the flag flip: a share Zalo already had at
+                    // Original would otherwise leave the row looking like the hook never ran.
+                    SelfCheckRegistry.incrementHit(SHARE, binding.share.toString(), changed
+                            ? "external photo extras set to Original"
+                            : "external photo share carried Original extras");
                     param.args[0] = photos;
                 } catch (Throwable error) {
                     SelfCheckRegistry.markFailed(SHARE, "native photo share", error);
                 }
             }));
-            SelfCheckRegistry.markInstalled(SEND, "source=" + schema.source + " " + binding.outgoing, 4);
+            SelfCheckRegistry.markInstalled(SEND, "source=" + schema.source + " "
+                    + binding.outgoingRun, 5);
             SelfCheckRegistry.markInstalled(PICKER, binding.getter.toString(), 2);
             SelfCheckRegistry.markInstalled(SHARE, binding.share.toString(), 1);
         } catch (Throwable error) {
@@ -143,28 +161,72 @@ public final class OriginalPhotoFeature extends Feature {
     }
 
     private void preferPhotos(List<?> items, DexKitOriginalPhotoFingerprint.Binding binding,
-            String row, boolean requirePickerSelection, List<?> selected) throws Exception {
+            String row) throws Exception {
         if (items == null) return;
         for (Object item : items) {
-            // Type alone cannot distinguish camera photos. Outgoing conversion must
-            // also use the live non-camera picker selection; single-item callers
-            // can add their item after reading the quality getter.
-            if (item == null || item.getClass() != binding.media
-                    || (requirePickerSelection
-                    && !DexKitOriginalPhotoFingerprint.isSelectedPhoto(binding.media, item, selected))) continue;
+            if (item == null || item.getClass() != binding.media) continue;
             boolean wasOriginal = binding.flagOne.getBoolean(item) && binding.flagTwo.getBoolean(item);
-            Boolean previousPolicy = photoPolicy.get();
-            photoPolicy.set(true);
-            try {
-                binding.apply.invoke(item, binding.originalCode);
-            } finally {
-                if (previousPolicy == null) photoPolicy.remove(); else photoPolicy.set(previousPolicy);
-            }
+            binding.apply.invoke(item, binding.originalCode);
             if (!binding.flagOne.getBoolean(item) || !binding.flagTwo.getBoolean(item)) {
                 throw new IllegalStateException("native Original photo state was rejected");
             }
             if (!wasOriginal) SelfCheckRegistry.incrementHit(row, binding.apply.toString(), "native Original photo state applied before conversion");
         }
+    }
+
+    /**
+     * The policy class also owns the remembered-quality getters used to seed every picker.
+     * Force the photo-quality integer getters to Original so the picker opens on Original
+     * even before any item is selected. Only static int getters qualify; the boolean gates
+     * are hooked separately and no other shape is touched.
+     */
+    private List<XpHooks.Handle> installQualityDefaults(
+            DexKitOriginalPhotoFingerprint.Binding binding) {
+        List<XpHooks.Handle> hooks = new ArrayList<>();
+        for (Method method : binding.gate.getDeclaringClass().getDeclaredMethods()) {
+            if (!Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != Integer.TYPE) continue;
+            Class<?>[] parameters = method.getParameterTypes();
+            if (parameters.length != 0
+                    && !(parameters.length == 1 && parameters[0] == String.class)) continue;
+            method.setAccessible(true);
+            hooks.add(XpHooks.hookMethod(SEND, method, (XpHooks.After) param -> {
+                if (param.hasThrowable()) return;
+                param.setResult(binding.originalCode);
+                if (qualityDefaultReported.compareAndSet(false, true)) {
+                    SelfCheckRegistry.incrementHit(PICKER, method.toString(),
+                            "picker quality default set to Original");
+                }
+            }));
+        }
+        return hooks;
+    }
+
+    /** Enable Zalo's own original-photo picker entitlement without a server round trip. */
+    private XpHooks.Handle installConfigOverride(SymbolSchema.Active schema) throws Exception {
+        String ownerName = schema.string(DexKitRemoteConfigFingerprint.ANCHOR_READER_CLASS, "");
+        String methodName = schema.string(DexKitRemoteConfigFingerprint.ANCHOR_READER_METHOD, "");
+        if (ownerName.isEmpty() || methodName.isEmpty()) {
+            throw new NoSuchMethodException("original-photo config reader unavailable");
+        }
+        Class<?> owner = Class.forName(ownerName, false, classLoader);
+        Method reader = owner.getDeclaredMethod(methodName, String.class, Integer.TYPE);
+        if (reader.getReturnType() != Integer.TYPE || !Modifier.isStatic(reader.getModifiers())) {
+            throw new NoSuchMethodException(ownerName + "#" + methodName + " shape changed");
+        }
+        reader.setAccessible(true);
+        return XpHooks.hookMethod(SEND, reader, (XpHooks.After) param -> {
+            try {
+                if (param.hasThrowable() || param.args == null || param.args.length != 2
+                        || !(param.args[0] instanceof String)) return;
+                if (!DexKitRemoteConfigFingerprint.ALLOW_ORIGINAL_KEY.equals(param.args[0])) return;
+                param.setResult(1);
+                SelfCheckRegistry.incrementHit(SEND, ownerName + "#" + methodName,
+                        "original photo entitlement enabled");
+            } catch (Throwable error) {
+                SelfCheckRegistry.markFailed(SEND, "original photo entitlement", error);
+            }
+        });
     }
 
     private static boolean externalPhotoShare(Bundle bundle) {

@@ -34,6 +34,10 @@ public final class StatusPrivacyFeature extends Feature {
     private static final Map<String, Field> ACK_TYPE_FIELDS = new ConcurrentHashMap<>();
     private static final java.util.Set<String> ACK_TYPE_FIELD_MISSES =
             java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Map<String, java.lang.reflect.Method> TRANSPORT_COMPLETIONS =
+            new ConcurrentHashMap<>();
+    private static final java.util.Set<String> TRANSPORT_COMPLETION_MISSES =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     /** Last single-route ack, for the debug probe to re-read through the cached handle. */
     private static volatile WeakReference<Object> LAST_ACK = new WeakReference<>(null);
 
@@ -72,13 +76,33 @@ public final class StatusPrivacyFeature extends Feature {
         String batchMethod = schema.string("symbols.chat.send_seen_batch_method", "");
         String repositoryClass = schema.string("symbols.chat.message_repository_class", "");
         String directMethod = schema.string("symbols.chat.send_ack_method", "");
+        String transportClass = schema.string("symbols.chat.seen_transport_class", "");
+        String transportSeen = schema.string("symbols.chat.seen_transport_seen_method", "");
+        String transportMarker = schema.string("symbols.chat.seen_transport_marker_method", "");
         String target = "source=" + schema.source + " "
                 + managerClass + "#" + singleMethod + "/" + batchMethod
                 + " + " + repositoryClass + "#" + directMethod;
         runGuarded("seen-status block", FEATURE_SEEN, target, () -> {
             boolean hookedAny = false;
+            // Shared ACK transport: drops only read receipts; delivery ACKs pass.
+            if (!transportClass.isEmpty() && !transportSeen.isEmpty()) {
+                try {
+                    hookSeenTransport(transportClass, transportSeen, transportMarker);
+                    hookedAny = true;
+                    SelfCheckRegistry.markInstalled(FEATURE_SEEN + ".queued",
+                            transportClass + "#" + transportSeen + "/" + transportMarker, 2);
+                    SelfCheckRegistry.markDisabled(FEATURE_SEEN + ".direct",
+                            "shared ACK transport route in use");
+                } catch (Throwable throwable) {
+                    SelfCheckRegistry.markStale(FEATURE_SEEN + ".queued",
+                            transportClass + "#" + transportSeen,
+                            throwable.getClass().getSimpleName());
+                    log("seen transport route unavailable: "
+                            + throwable.getClass().getSimpleName());
+                }
+            }
             // Routes arm independently; a missing route remains visible as stale.
-            if (!managerClass.isEmpty() && !ackClass.isEmpty() && !typeField.isEmpty()) {
+            if (!hookedAny && !managerClass.isEmpty() && !ackClass.isEmpty() && !typeField.isEmpty()) {
                 try {
                     hookQueuedSeen(managerClass, ackClass, typeField, singleMethod, batchMethod);
                     hookedAny = true;
@@ -90,12 +114,12 @@ public final class StatusPrivacyFeature extends Feature {
                     log("queued seen route unavailable: "
                             + throwable.getClass().getSimpleName());
                 }
-            } else {
+            } else if (!hookedAny) {
                 SelfCheckRegistry.markStale(FEATURE_SEEN + ".queued", target,
                         "queued seen symbols unavailable");
             }
             // Direct acknowledgement route is independent of the queue.
-            if (!repositoryClass.isEmpty() && !directMethod.isEmpty()) {
+            if (!hookedAny && !repositoryClass.isEmpty() && !directMethod.isEmpty()) {
                 try {
                     hookDirectAck(repositoryClass, directMethod);
                     hookedAny = true;
@@ -112,6 +136,120 @@ public final class StatusPrivacyFeature extends Feature {
                 throw new IllegalStateException("no seen route resolvable");
             }
         });
+    }
+
+    private void hookSeenTransport(String transportClass, String seenMethod,
+                                   String markerMethod) throws Throwable {
+        Class<?> transport = XpReflect.findClass(transportClass, classLoader);
+        java.lang.reflect.Method seen = transportMethod(transport, seenMethod,
+                List.class, Boolean.TYPE, Integer.TYPE, Integer.TYPE);
+        java.lang.reflect.Method marker = markerMethod.isEmpty() ? null
+                : transportMethod(transport, markerMethod,
+                List.class, Boolean.TYPE, Boolean.TYPE, Boolean.TYPE);
+        XpHooks.hookMethod(FEATURE_SEEN, seen, (XpHooks.Before) param -> {
+            try {
+                if (param.args == null || param.args.length < 5
+                        || !(param.args[1] instanceof Boolean)
+                        || !(Boolean) param.args[1]
+                        || !(param.args[2] instanceof Number)
+                        || !StatusPrivacyAckFilter.isSeenTransportType(
+                        ((Number) param.args[2]).intValue())) {
+                    return;
+                }
+                completeTransport(param.args[4]);
+                param.setResult(null);
+                SelfCheckRegistry.incrementHit(FEATURE_SEEN,
+                        transportClass + "#" + seenMethod,
+                        "blocked shared-transport seen acknowledgement");
+                SelfCheckRegistry.incrementHit(FEATURE_SEEN + ".queued",
+                        transportClass + "#" + seenMethod, "blocked seen ACK");
+            } catch (Throwable error) {
+                SelfCheckRegistry.markFailed(FEATURE_SEEN + ".queued",
+                        "seen transport hook", error);
+            }
+        });
+        if (marker == null) return;
+        XpHooks.hookMethod(FEATURE_SEEN, marker, (XpHooks.Before) param -> {
+            try {
+                if (param.args == null || param.args.length < 2
+                        || !Boolean.TRUE.equals(param.args[1])) return;
+                param.args[1] = Boolean.FALSE;
+                SelfCheckRegistry.incrementHit(FEATURE_SEEN,
+                        transportClass + "#" + markerMethod,
+                        "cleared read-marker seen flag");
+                SelfCheckRegistry.incrementHit(FEATURE_SEEN + ".queued",
+                        transportClass + "#" + markerMethod, "cleared seen flag");
+            } catch (Throwable error) {
+                SelfCheckRegistry.markFailed(FEATURE_SEEN + ".queued",
+                        "read-marker hook", error);
+            }
+        });
+    }
+
+    /** Unique declared void method with the leading parameter shape; ambiguity fails closed. */
+    private static java.lang.reflect.Method transportMethod(Class<?> owner, String name,
+                                                            Class<?>... leading)
+            throws NoSuchMethodException {
+        java.lang.reflect.Method found = null;
+        for (java.lang.reflect.Method candidate : owner.getDeclaredMethods()) {
+            if (!name.equals(candidate.getName())
+                    || candidate.getReturnType() != Void.TYPE
+                    || candidate.getParameterTypes().length < leading.length) continue;
+            Class<?>[] parameters = candidate.getParameterTypes();
+            boolean matches = true;
+            for (int index = 0; index < leading.length; index++) {
+                if (parameters[index] != leading[index]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) continue;
+            if (found != null) {
+                throw new NoSuchMethodException("ambiguous " + owner.getName() + "#" + name);
+            }
+            found = candidate;
+        }
+        if (found == null) {
+            throw new NoSuchMethodException("missing " + owner.getName() + "#" + name);
+        }
+        found.setAccessible(true);
+        return found;
+    }
+
+    /**
+     * Completes a dropped receipt through the callback's interface method, so callers
+     * waiting on the transport do not stall. Unknown callback shapes are left alone.
+     */
+    private static void completeTransport(Object callback) throws Exception {
+        if (callback == null) return;
+        Class<?> type = callback.getClass();
+        String key = type.getName();
+        if (TRANSPORT_COMPLETION_MISSES.contains(key)) return;
+        java.lang.reflect.Method completion = TRANSPORT_COMPLETIONS.get(key);
+        if (completion == null) {
+            completion = completionMethod(type);
+            if (completion == null) return;
+            TRANSPORT_COMPLETIONS.put(key, completion);
+        }
+        completion.invoke(callback, new org.json.JSONObject());
+    }
+
+    private static java.lang.reflect.Method completionMethod(Class<?> type) {
+        java.lang.reflect.Method found = null;
+        for (Class<?> contract : type.getInterfaces()) {
+            for (java.lang.reflect.Method candidate : contract.getMethods()) {
+                if (candidate.getParameterCount() != 1
+                        || candidate.getParameterTypes()[0] != Object.class
+                        || candidate.getReturnType() != Void.TYPE) continue;
+                if (found != null && !found.equals(candidate)) {
+                    TRANSPORT_COMPLETION_MISSES.add(type.getName());
+                    return null;
+                }
+                found = candidate;
+            }
+        }
+        if (found == null) TRANSPORT_COMPLETION_MISSES.add(type.getName());
+        return found;
     }
 
     private void hookQueuedSeen(String managerClass, String ackClass, String typeField,

@@ -43,6 +43,16 @@ public final class StatusPrivacyAckFilterTest {
         assertFalse(StatusPrivacyAckFilter.shouldBlockDirectAck(false));
     }
 
+    @Test
+    public void sharedTransportDropsOnlyReadReceiptOpcodes() {
+        assertTrue(StatusPrivacyAckFilter.isSeenTransportType(203));
+        assertTrue(StatusPrivacyAckFilter.isSeenTransportType(107));
+        assertFalse(StatusPrivacyAckFilter.isSeenTransportType(102));
+        assertFalse(StatusPrivacyAckFilter.isSeenTransportType(202));
+        assertFalse(StatusPrivacyAckFilter.isSeenTransportType(10113));
+        assertFalse(StatusPrivacyAckFilter.isSeenTransportType(10213));
+    }
+
     private static final class Entry {
         final int type;
 

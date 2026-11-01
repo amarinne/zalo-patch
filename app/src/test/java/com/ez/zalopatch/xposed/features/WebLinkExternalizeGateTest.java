@@ -80,4 +80,35 @@ public final class WebLinkExternalizeGateTest {
         assertFalse(WebLinkExternalizeGate.isWebUrl("httpx://a"));
         assertFalse(WebLinkExternalizeGate.isWebUrl(null));
     }
+
+    @Test
+    public void explanationNamesEveryGateInputWithoutLeakingTheUrl() {
+        String external = WebLinkExternalizeGate.explain(
+                true, false, false, "https://example.com/private/path?token=secret");
+        assertEquals("source_link=1 mini_app=0 oa_h5=0 scheme=https zalo_owned=0 "
+                + "decision=EXTERNAL", external);
+        assertFalse(external.contains("example.com"));
+        assertFalse(external.contains("secret"));
+
+        assertEquals("source_link=1 mini_app=1 oa_h5=0 scheme=https zalo_owned=1 "
+                        + "decision=LEAVE_IN_APP",
+                WebLinkExternalizeGate.explain(true, true, false, "https://zalo.me/page"));
+        assertEquals("source_link=0 mini_app=0 oa_h5=1 scheme=intent zalo_owned=0 "
+                        + "decision=LEAVE_IN_APP",
+                WebLinkExternalizeGate.explain(false, false, true, "intent://example.com"));
+        assertEquals("source_link=1 mini_app=0 oa_h5=0 scheme=none zalo_owned=0 "
+                        + "decision=LEAVE_IN_APP",
+                WebLinkExternalizeGate.explain(true, false, false, null));
+    }
+
+    @Test
+    public void schemeIsCoarseAndBounded() {
+        assertEquals("https", WebLinkExternalizeGate.scheme(" HTTPS://Example.com "));
+        assertEquals("http", WebLinkExternalizeGate.scheme("http://a"));
+        assertEquals("javascript", WebLinkExternalizeGate.scheme("javascript:alert(1)"));
+        assertEquals("none", WebLinkExternalizeGate.scheme("no-scheme"));
+        assertEquals("none", WebLinkExternalizeGate.scheme(null));
+        assertEquals("abcdefghijklmnop",
+                WebLinkExternalizeGate.scheme("abcdefghijklmnopqrstuvwxyz://x"));
+    }
 }

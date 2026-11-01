@@ -31,6 +31,9 @@ public final class ZaloArtifactState {
     public static final String KEY_CATALOG_ERROR = "internal.zalo_catalog.error";
     public static final String KEY_CATALOG_CHECKED_AT = "internal.zalo_catalog.checked_at";
     public static final String KEY_CATALOG_MODULE_VERSION = "internal.zalo_catalog.module_version";
+    /** True while an unknown exact artifact has remap evidence waiting for upload. */
+    public static final String KEY_REMAP_UPLOAD_PENDING =
+            "internal.zalo_catalog.remap_upload_pending";
     /** The installed base APK is byte-identical to the one the profile was mapped from. */
     public static final String EVIDENCE_EXACT_APK = "exact_apk";
     /**
@@ -152,8 +155,19 @@ public final class ZaloArtifactState {
                     SymbolCatalogCache.clear(context);
                     catalogEntry = null;
                 }
+                if ("unknown".equals(catalogResult.status)) {
+                    SymbolResourceUploader.markPending(context);
+                    // Unknown artifacts automatically enable the bounded discovery feature. The
+                    // next normal Zalo process run records candidates; no report screen is needed.
+                    if (!instrumentationPresent) {
+                        DiagnosticsState.requestRuntimeDiscovery(context);
+                    }
+                }
                 catalogCheckedAt = now;
             }
+            // Uploads are deliberately sent by the module job, after the catalog miss. A Zalo
+            // process can only record evidence and request this job; it never performs network IO.
+            SymbolResourceUploader.uploadIfPending(context, identity);
             SymbolSchema.Active bundled = SymbolSchema.selectBundledForVersion(
                     context, identity.versionCode);
             SymbolSchema.Active remote = SymbolSchema.selectRemoteEntry(
@@ -221,6 +235,15 @@ public final class ZaloArtifactState {
             FrameworkConfig.refreshState(context);
             return new Result("failed", "", "", error, EVIDENCE_NONE);
         }
+    }
+
+    /** Called when the Zalo process finishes a requested trace. */
+    static void requestRemapUpload(Context context) {
+        if (context == null) return;
+        SharedPreferences preferences = TweakStore.preferences(context);
+        if (!"unknown".equals(preferences.getString(KEY_CATALOG_STATUS, "missing"))) return;
+        SymbolResourceUploader.markPending(context);
+        schedule(context);
     }
 
     /** Runs an explicit foreground compatibility check without deferring to JobScheduler. */

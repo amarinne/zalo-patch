@@ -131,7 +131,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertTrue(active.bundleValid);
         assertTrue(active.validation.contains("No exact bundled symbol profile"));
         assertEquals("260602901, 260701901, 260801903, 260802903, 261001903, 261001905, "
-                        + "261002901, 261002903",
+                        + "261002901, 261002903, 261101901",
                 active.supportedVersionCodes);
     }
 
@@ -538,9 +538,20 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
             if (Tweaks.KEY_PREFER_ORIGINAL_PHOTO.equals(item.key)
                     && active.string(DexKitOriginalPhotoFingerprint.PICKER, "").isEmpty()) {
                 assertMissingAnchors(active, DexKitOriginalPhotoFingerprint.ANCHORS);
-                assertEquals(DexKitOriginalPhotoFingerprint.MEDIA_ITEM
-                        + "#<apply quality>(int) + " + DexKitOriginalPhotoFingerprint.SHARE_VIEW
+                assertEquals("<photo picker>#<quality>() + "
+                        + DexKitOriginalPhotoFingerprint.MEDIA_ITEM
+                        + "#<apply quality>(int) + <photo conversion>#<convert>() + "
+                        + DexKitOriginalPhotoFingerprint.SHARE_VIEW
                         + "#<photo share>(Bundle)", info.path);
+                continue;
+            }
+            // A profile that maps the Zinstant view classes but leaves the bind methods to the
+            // runtime family must display both placeholders instead of a half-resolved identity.
+            if ((Tweaks.KEY_HIDE_MESSAGE_ADS.equals(item.key)
+                    || Tweaks.KEY_HIDE_FEED_ADS.equals(item.key))
+                    && active.string("symbols.zinstant.ad_bind_method", "").isEmpty()) {
+                assertEquals("", active.string("symbols.zinstant.feed_bind_method", ""));
+                assertTrue(info.path.contains("#<bind>()"));
                 continue;
             }
             if (Tweaks.KEY_HIDE_STORY_ADS.equals(item.key)

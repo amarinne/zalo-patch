@@ -45,11 +45,11 @@ public final class DexKitOriginalPhotoFingerprintTest {
                 Collections.emptyList(), Collections.emptyList(), Arrays.asList("photo.Policy#gate", "global.Billing#entitled")), "photo.Policy", "gate"));
     }
 
-    @Test public void cameraAndVideoOnlySelectionsKeepNativeQuality() {
-        assertFalse(DexKitOriginalPhotoFingerprint.preferInPicker(false, 0, 0));
+    @Test public void pickerPrefersOriginalUnlessCameraIsOpen() {
+        assertTrue(DexKitOriginalPhotoFingerprint.preferInPicker(false, 0, 0));
         assertTrue(DexKitOriginalPhotoFingerprint.preferInPicker(false, 2, 0));
         assertTrue(DexKitOriginalPhotoFingerprint.preferInPicker(false, 1, 1));
-        assertFalse(DexKitOriginalPhotoFingerprint.preferInPicker(false, 0, 1));
+        assertTrue(DexKitOriginalPhotoFingerprint.preferInPicker(false, 0, 1));
         assertFalse(DexKitOriginalPhotoFingerprint.preferInPicker(true, 2, 0));
         assertFalse(DexKitOriginalPhotoFingerprint.preferInPicker(true, 0, 0));
     }
@@ -155,23 +155,55 @@ public final class DexKitOriginalPhotoFingerprintTest {
         catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("ambiguous")); }
     }
 
-    private static class Outgoing implements Runnable {
-        Outgoing(Object dispatcher, ArrayList<?> photos, int source, Object receiver, int mode) { }
-        Outgoing(int source, java.util.List<?> unrelated, int mode) { }
-        @Override public void run() { }
-    }
-    private static class AmbiguousOutgoing implements Runnable {
-        AmbiguousOutgoing(Object dispatcher, ArrayList<?> photos, int source, Object receiver, int mode) { }
-        AmbiguousOutgoing(String dispatcher, ArrayList<?> photos, int source, Object receiver, int mode) { }
-        @Override public void run() { }
-    }
-    private static class Unrelated {
-        Unrelated(Object dispatcher, ArrayList<?> photos, int source, Object receiver, int mode) { }
+    private static class Conversion {
+        // The host stores the media list in a synthetic Object field, not a List field.
+        private final Object photos = new java.util.ArrayList<>();
+        private static final java.util.ArrayList<Object> ignored = new java.util.ArrayList<>();
+        private final Object other = new Object();
     }
 
-    @Test public void outgoingBoundaryRequiresUniqueExplicitPhotoListConstructor() {
-        assertNotNull(DexKitOriginalPhotoFingerprint.outgoingConstructor(Outgoing.class));
-        assertNull(DexKitOriginalPhotoFingerprint.outgoingConstructor(AmbiguousOutgoing.class));
-        assertNull(DexKitOriginalPhotoFingerprint.outgoingConstructor(Unrelated.class));
+    @Test public void outgoingNeedsBothNativeFlagsAndTheRunnableEntryPoint() {
+        java.util.List<String> both = Arrays.asList(
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#p",
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#q");
+        DexKitOriginalPhotoFingerprint.MethodShape conversion = method("conv.Run", "run", "void",
+                false, Collections.emptyList(), both, Collections.emptyList());
+        assertTrue(DexKitOriginalPhotoFingerprint.isOutgoing(conversion,
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "run", "void",
+                        false, Collections.emptyList(),
+                        Collections.singletonList(DexKitOriginalPhotoFingerprint.MEDIA_ITEM + "#p"),
+                        Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "send", "void",
+                        false, Collections.emptyList(), both, Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "run", "void",
+                        true, Collections.emptyList(), both, Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "run", "int",
+                        false, Collections.emptyList(), both, Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "run", "void",
+                        false, Collections.singletonList("int"), both, Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+        assertFalse(DexKitOriginalPhotoFingerprint.isOutgoing(method("conv.Run", "run", "void",
+                        false, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()),
+                DexKitOriginalPhotoFingerprint.MEDIA_ITEM, "p", "q"));
+    }
+
+    @Test public void outgoingMethodAnchorSurvivesCacheVocabulary() {
+        assertNotNull(DexKitAnchors.find(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD));
+        assertEquals(DexKitAnchors.Kind.METHOD,
+                DexKitAnchors.find(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD).kind);
+    }
+
+    @Test public void mediaListsReadsOnlyLiveListFields() throws Exception {
+        Conversion conversion = new Conversion();
+        java.util.List<java.util.List<?>> lists =
+                DexKitOriginalPhotoFingerprint.mediaLists(conversion);
+        assertEquals(1, lists.size());
+        assertSame(conversion.photos, lists.get(0));
+        assertTrue(DexKitOriginalPhotoFingerprint.mediaLists(null).isEmpty());
     }
 }
