@@ -23,8 +23,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>Semantics preserved from the legacy contract:
  *
  * <ul>
- *   <li>{@code setResult} inside {@link Before} skips the original call (early return);
- *       {@link After} still runs, matching {@code XC_MethodHook} behavior.</li>
+ *   <li>{@code setResult} or {@code setThrowable} inside {@link Before} skips the original
+ *       call (early return); {@link After} still runs, matching {@code XC_MethodHook}
+ *       behavior.</li>
  *   <li>{@code setResult} inside {@link After} replaces the returned value and clears a
  *       pending throwable.</li>
  *   <li>A callback that throws does not break the host call: the failure is logged and
@@ -86,11 +87,12 @@ public final class XpHooks {
         public void unhook() {
             XposedInterface.HookHandle handle = raw;
             if (handle != null) {
+                raw = null;
+                HANDLES.remove(handle);
                 try {
                     handle.unhook();
                 } catch (Throwable ignored) {
                 }
-                raw = null;
             }
         }
     }
@@ -165,7 +167,7 @@ public final class XpHooks {
                     param.throwable = null;
                 }
             }
-            if (!param.resultReady) {
+            if (!param.resultReady && param.throwable == null) {
                 try {
                     param.result = chain.proceed(param.args);
                 } catch (Throwable callFailure) {
@@ -217,14 +219,9 @@ public final class XpHooks {
             String owner, Executable executable, Before before, After after) {
         XposedInterface framework = requireApi();
         Adapter adapter = new Adapter(owner, before, after);
-        XposedInterface.HookHandle raw;
-        try {
-            raw = framework.hook(executable)
-                    .setId(hookId(owner, executable))
-                    .intercept(adapter);
-        } catch (RuntimeException installFailure) {
-            throw installFailure;
-        }
+        XposedInterface.HookHandle raw = framework.hook(executable)
+                .setId(hookId(owner, executable))
+                .intercept(adapter);
         HANDLES.add(raw);
         return new Handle(raw);
     }
@@ -263,6 +260,9 @@ public final class XpHooks {
                 method.setAccessible(true);
                 installed.add(install(owner, method, before, after));
             } catch (Throwable installFailure) {
+                // All-or-nothing, like hookAllConstructors: callers treat the throw as
+                // "feature not installed" and never see the partial list to unhook.
+                for (Handle handle : installed) handle.unhook();
                 throw new IllegalStateException(
                         "Failed to hook " + clazz.getName() + "#" + name,
                         installFailure);
@@ -379,8 +379,6 @@ public final class XpHooks {
         }
     }
 
-    /** Removes every hook installed through this adapter in the current generation. */
-
     /**
      * Invokes the original method bypassing every hook on it (Origin invoker).
      * For re-entrant calls the module makes itself, where the legacy code used a
@@ -399,6 +397,7 @@ public final class XpHooks {
         }
     }
 
+    /** Removes every hook installed through this adapter in the current generation. */
     public static void unhookAll() {
         for (XposedInterface.HookHandle raw : HANDLES) {
             try {
