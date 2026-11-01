@@ -22,11 +22,11 @@
 - Rooted device with Android 8.0 (API 26) or newer.
 - LSPosed or another framework that supports LibXposed API 102.
 - Zalo selected in the module scope.
-- Zalo 26.11.01 (`versionCode 261101901`), 26.10.02 (`261002901` or `261002903`) and 26.10.01 (`261001903` or `261001905`). Earlier supported versions appear in the compatibility catalog.
+- [Supported Zalo version](https://catalog.eza.dpdns.org/)
 
 Saving call recordings requires Android 10 or newer.
 
-For best experience, do not update Zalo.
+Patched and re-signed builds work when their version code is listed.
 
 ## Settings
 
