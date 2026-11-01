@@ -109,8 +109,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 350
-        versionName = "0.4.346"
+        versionCode = 351
+        versionName = "0.4.347"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -169,6 +169,10 @@ android {
             resources.srcDir(if (lspatch) "src/lspatch/resources" else "src/modern/resources")
             assets.srcDir(if (lspatch) "src/lspatch/assets" else "src/modern/assets")
             manifest.srcFile(if (lspatch) "src/lspatch/AndroidManifest.xml" else "src/main/AndroidManifest.xml")
+        }
+        if (!lspatch) {
+            // The API 102 hook adapter is only injectable on the LibXposed build.
+            getByName("test").java.srcDir("src/testModern/java")
         }
     }
 }
@@ -318,6 +322,7 @@ dependencies {
         testRuntimeOnly("de.robv.android.xposed:api:82")
     } else {
         compileOnly("io.github.libxposed:api:102.0.0")
+        testCompileOnly("io.github.libxposed:api:102.0.0")
         testRuntimeOnly("io.github.libxposed:api:102.0.0")
     }
     implementation("io.github.libxposed:service:102.0.0")

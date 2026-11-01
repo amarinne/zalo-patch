@@ -66,7 +66,7 @@ public final class XpHooks {
         }
     }
 
-    /** Before-callback: runs before the original call; {@code setResult} skips it. */
+    /** Before-callback: runs before the original call; {@code setResult} or {@code setThrowable} skips it. */
     public interface Before {
         void before(HookParam param) throws Throwable;
     }
