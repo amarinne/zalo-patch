@@ -37,11 +37,12 @@ public final class XpHooks {
         public void unhook() {
             XC_MethodHook.Unhook handle = raw;
             if (handle != null) {
+                raw = null;
+                HANDLES.remove(handle);
                 try {
                     handle.unhook();
                 } catch (Throwable ignored) {
                 }
-                raw = null;
             }
         }
     }
@@ -163,6 +164,9 @@ public final class XpHooks {
                 method.setAccessible(true);
                 installed.add(install(owner, method, before, after));
             } catch (Throwable installFailure) {
+                // All-or-nothing, like hookAllConstructors: callers treat the throw as
+                // "feature not installed" and never see the partial list to unhook.
+                for (Handle handle : installed) handle.unhook();
                 throw new IllegalStateException(
                         "Failed to hook " + clazz.getName() + "#" + name,
                         installFailure);
