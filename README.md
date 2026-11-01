@@ -8,14 +8,35 @@
 
 ## Features
 
-- Clean up navigation, inbox, chat and Me-screen elements.
-- Send selected photos at Original quality, including shares from other apps.
-- Add a native Unicode emoji picker to the reaction bar.
-- Filter promotional notifications.
-- Block analytics and advertising services.
-- Local notification history.
-- Call audio recording.
-- More frequent scheduled message backups while preserving Zalo's native backup guards.
+All tweaks default to off. Changes apply after Restart Zalo.
+
+<details>
+<summary><b>Show the tweak catalog</b></summary>
+
+| Tweak | What it does |
+| --- | --- |
+| Navigation — Tab bar | Hide the Discovery and Newsfeed tabs, and keep the Group tab where Zalo shows it. Services behind hidden tabs keep running. |
+| Navigation — Start in Messages | Opens Messages on launch. Later tab choices stay native. |
+| Me — Me rows | Hides QR Wallet, zCloud, zStyle and zBusiness. |
+| Inbox — Media Box and zCloud banner | Removes the Media Box row and collapses the zCloud banner in Messages. |
+| Inbox — Inbox chips | Filters the conversation list with All, Chats, Groups, OA and Strangers chips, plus a default filter after restart. |
+| Chat — Original-quality photos | Sends picker photos and supported shares from other apps at full resolution. Camera photos and videos keep Zalo's quality. |
+| Chat — Emoji reactions | Adds a native Unicode emoji picker to the reaction row. |
+| Chat — Hide reaction row | Removes the reaction picker from the long-press menu. |
+| Chat — Seen and typing status | Stops sending read and typing receipts. Incoming receipts are unaffected. |
+| Chat — Links | Opens chat and feed links in your browser. Mini apps and official-account pages stay in Zalo. |
+| Chat — Story views | Watches stories without appearing in the viewer list. |
+| Calls — Call recording | Saves one-to-one calls as audio-only M4A files in shared storage. Group calls are not recorded. |
+| Calls — Recording notifications | Shows recording start and save status. |
+| Notifications — Promo filter | Blocks promotional notifications. Call and backup notifications always pass. Chat messages inside Zalo are untouched. |
+| Notifications — History | Keeps an opt-in local copy with a retention limit, export and clear. |
+| Ads — Ad slots | Hides message, feed, story and video ads. |
+| Tracking — Analytics records | Stops event, screen, session and view analytics writes, with one master switch. |
+| Tracking — Tracking identifiers | Blocks Crashlytics logs and measurement binds, and returns an all-zero Advertising ID. |
+| Backup — Backup interval | Lowers the minimum message-backup interval to 1, 3, 6 or 12 hours. Zalo's server, battery, network and retry guards still decide when a backup runs. |
+| Security — App-lock grace period | Extends Zalo's app-lock timeout up to one hour when a passcode is set. |
+
+</details>
 
 ## Requirements
 
