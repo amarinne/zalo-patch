@@ -23,17 +23,25 @@ final class DiagnosticCaptureManager {
         DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         DiagnosticDraftStore.clear(context);
         DiagnosticRootProcessRunner runner = new DiagnosticRootProcessRunner();
-        RootAccess.State rootState = RootAccess.getOrProbe(context);
-        boolean debugLoggingManaged = rootState == RootAccess.State.GRANTED;
+        boolean scopedTarget = requiresScopedCapture(context);
+        RootAccess.State rootState = scopedTarget
+                ? (RootAccess.hasFreshCache(context)
+                ? RootAccess.cached(context) : RootAccess.State.ABSENT)
+                : RootAccess.getOrProbe(context);
+        boolean debugLoggingManaged = rootState == RootAccess.State.GRANTED && !scopedTarget;
         Session session = new Session(
                 DiagnosticReportContract.newReportId(), category, description,
                 System.currentTimeMillis(), SystemClock.elapsedRealtime(),
                 debugLoggingManaged && HookConfig.isDebugEnabled(), rootState,
-                debugLoggingManaged);
+                debugLoggingManaged, HostPackages.transportHost(context), scopedTarget);
         if (!writeSession(context, session)) {
             return StartResult.failure(StartFailure.STATE_WRITE_FAILED);
         }
-        scheduleTimeout(context, session.startedAtElapsedMs);
+        // The timeout alarm is a single module-wide broadcast that resolves the original scope.
+        // A selected clone capture is metadata-only, so it must not replace or cancel that alarm.
+        if (!session.scopedTarget) {
+            scheduleTimeout(context, session.startedAtElapsedMs);
+        }
         if (debugLoggingManaged && !setDebugLogging(runner, true)) {
             if (setDebugLogging(runner, session.previousDebugLogging)) {
                 clearSession(context);
@@ -42,7 +50,7 @@ final class DiagnosticCaptureManager {
             }
             return StartResult.failure(StartFailure.RESTORE_FAILED);
         }
-        if ("compatibility".equals(category)
+        if (!scopedTarget && "compatibility".equals(category)
                 && !SymbolSchema.active(context).valid
                 && !DiagnosticsState.requestRuntimeDiscovery(context)) {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
@@ -56,6 +64,13 @@ final class DiagnosticCaptureManager {
         return StartResult.success(session);
     }
 
+    /** Root capture commands filter the canonical install; a selected clone is unsupported. */
+    static boolean requiresScopedCapture(Context context) {
+        if (context == null) return false;
+        return !HostPackages.scopeSuffix(context).isEmpty()
+                || !HostPackages.ZALO.equals(HostPackages.transportHost(context));
+    }
+
     static FinishedCapture finish(Context context) {
         Session session = readSession(context);
         if (session == null || expired(session, SystemClock.elapsedRealtime())) {
@@ -63,6 +78,21 @@ final class DiagnosticCaptureManager {
             return null;
         }
         DiagnosticRootProcessRunner runner = new DiagnosticRootProcessRunner();
+        if (session.scopedTarget) {
+            // Never substitute canonical process/log evidence for a selected clone. The metadata
+            // report remains available and explicitly records that root capture was unavailable.
+            if (session.debugLoggingManaged
+                    && !setDebugLogging(runner, session.previousDebugLogging)) {
+                return null;
+            }
+            clearSession(context);
+            return new FinishedCapture(session, System.currentTimeMillis(),
+                    new DiagnosticCaptureCollector.CapturedData(
+                            "unavailable_target_scope", session.rootState.reportValue(),
+                            "", "", "",
+                            java.util.Collections.singletonList("root_capture_target_scope"),
+                            java.util.Collections.emptyMap()));
+        }
         DiagnosticCaptureCollector.CapturedData data =
                 new DiagnosticCaptureCollector(runner).collect(
                         session.startedAtWallMs, session.rootState);
@@ -81,9 +111,12 @@ final class DiagnosticCaptureManager {
 
     static boolean cancel(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // A first capture in a clone scope has no stored host yet, so decide from the context as
+        // well: the module-wide timeout alarm belongs to the original and must survive.
+        boolean scopedTarget = requiresScopedCapture(context) || scopedTarget(prefs);
         if (!prefs.getBoolean(KEY_ACTIVE, false)) {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
-            cancelTimeout(context);
+            if (!scopedTarget) cancelTimeout(context);
             return true;
         }
         boolean previous = prefs.getBoolean(KEY_PREVIOUS_DEBUG, false);
@@ -93,7 +126,7 @@ final class DiagnosticCaptureManager {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         }
         clearSession(context);
-        cancelTimeout(context);
+        if (!scopedTarget) cancelTimeout(context);
         DiagnosticDraftStore.clear(context);
         return true;
     }
@@ -101,6 +134,7 @@ final class DiagnosticCaptureManager {
     static boolean expireIfNeeded(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (!prefs.getBoolean(KEY_ACTIVE, false)) return false;
+        boolean scopedTarget = requiresScopedCapture(context) || scopedTarget(prefs);
         Session session = readSession(context);
         if (session != null && !expired(session, SystemClock.elapsedRealtime())) return false;
         boolean previous = prefs.getBoolean(KEY_PREVIOUS_DEBUG, false);
@@ -110,7 +144,7 @@ final class DiagnosticCaptureManager {
             DiagnosticsState.clearRuntimeDiscoveryRequest(context);
         }
         clearSession(context);
-        cancelTimeout(context);
+        if (!scopedTarget) cancelTimeout(context);
         DiagnosticDraftStore.clear(context);
         return true;
     }
@@ -160,6 +194,7 @@ final class DiagnosticCaptureManager {
             return null;
         }
         boolean managed = debugManaged(prefs);
+        String hostPackage = prefs.getString(KEY_HOST_PACKAGE, HostPackages.ZALO);
         return new Session(reportId, category, description,
                 prefs.getLong(KEY_STARTED_WALL, -1L),
                 prefs.getLong(KEY_STARTED_ELAPSED, -1L),
@@ -167,7 +202,7 @@ final class DiagnosticCaptureManager {
                 prefs.contains(KEY_ROOT_STATE)
                         ? parseRootState(prefs.getString(KEY_ROOT_STATE, ""))
                         : managed ? RootAccess.State.GRANTED : RootAccess.State.ABSENT,
-                managed);
+                managed, hostPackage, !HostPackages.ZALO.equals(hostPackage));
     }
 
     private static boolean writeSession(Context context, Session session) {
@@ -181,6 +216,7 @@ final class DiagnosticCaptureManager {
                 .putBoolean(KEY_PREVIOUS_DEBUG, session.previousDebugLogging)
                 .putString(KEY_ROOT_STATE, session.rootState.name())
                 .putBoolean(KEY_DEBUG_MANAGED, session.debugLoggingManaged)
+                .putString(KEY_HOST_PACKAGE, session.hostPackage)
                 .commit();
     }
 
@@ -248,10 +284,13 @@ final class DiagnosticCaptureManager {
         final boolean previousDebugLogging;
         final RootAccess.State rootState;
         final boolean debugLoggingManaged;
+        final String hostPackage;
+        final boolean scopedTarget;
 
         Session(String reportId, String category, String description, long startedAtWallMs,
                 long startedAtElapsedMs, boolean previousDebugLogging,
-                RootAccess.State rootState, boolean debugLoggingManaged) {
+                RootAccess.State rootState, boolean debugLoggingManaged, String hostPackage,
+                boolean scopedTarget) {
             this.reportId = reportId;
             this.category = category;
             this.description = description;
@@ -260,6 +299,8 @@ final class DiagnosticCaptureManager {
             this.previousDebugLogging = previousDebugLogging;
             this.rootState = rootState == null ? RootAccess.State.ABSENT : rootState;
             this.debugLoggingManaged = debugLoggingManaged;
+            this.hostPackage = hostPackage == null ? HostPackages.ZALO : hostPackage;
+            this.scopedTarget = scopedTarget;
         }
     }
 
@@ -285,6 +326,7 @@ final class DiagnosticCaptureManager {
     private static final String KEY_PREVIOUS_DEBUG = "previous_debug";
     private static final String KEY_ROOT_STATE = "root_state";
     private static final String KEY_DEBUG_MANAGED = "debug_managed";
+    private static final String KEY_HOST_PACKAGE = "host_package";
 
     private static RootAccess.State parseRootState(String value) {
         try {
@@ -298,5 +340,9 @@ final class DiagnosticCaptureManager {
         // Sessions created before capability-aware capture always required and managed root.
         return !prefs.contains(KEY_DEBUG_MANAGED)
                 || prefs.getBoolean(KEY_DEBUG_MANAGED, false);
+    }
+
+    private static boolean scopedTarget(SharedPreferences prefs) {
+        return !HostPackages.ZALO.equals(prefs.getString(KEY_HOST_PACKAGE, HostPackages.ZALO));
     }
 }

@@ -732,6 +732,81 @@ public final class SettingsUiSmokeTest
         }
     }
 
+    public void testDashboardKeepsTweaksSearchAndCompactStatusBeforeOneRestartAction() {
+        StatusActivity activity = getActivity();
+        StatusActivity.DashboardFragment fragment = new StatusActivity.DashboardFragment();
+        open(activity, fragment);
+
+        Preference search = fragment.findPreference(StatusActivity.INTERNAL_SEARCH);
+        assertNotNull(search);
+        assertEquals(activity.getString(R.string.zp_search_title),
+                String.valueOf(search.getTitle()));
+        assertNotNull(search.getOnPreferenceClickListener());
+        assertEquals(R.layout.zp_preference_search_entry, search.getLayoutResource());
+        assertFalse(search instanceof ZpStyledPreference);
+
+        Preference identity = fragment.findPreference(StatusActivity.INTERNAL_IDENTITY);
+        assertNotNull(identity);
+        assertFalse(identity.isSelectable());
+        assertTrue(String.valueOf(identity.getTitle()).startsWith("Zalo Patch "));
+
+        Preference runtime = fragment.findPreference(StatusActivity.INTERNAL_RUNTIME_STATUS);
+        assertNotNull(runtime);
+        assertEquals(activity.getString(R.string.zp_runtime_status_title),
+                String.valueOf(runtime.getTitle()));
+        assertNotNull(runtime.getOnPreferenceClickListener());
+
+        assertNotNull(fragment.findPreference(StatusActivity.INTERNAL_RESTART));
+        assertNull(fragment.findPreference(StatusActivity.INTERNAL_ROOT_ACCESS));
+        assertNull(fragment.findPreference("internal.apply_settings"));
+    }
+
+    public void testDashboardSearchOpensReadyToTypeAndKeepsFocusWhileFiltering() {
+        StatusActivity activity = getActivity();
+        StatusActivity.DashboardFragment dashboard = new StatusActivity.DashboardFragment();
+        open(activity, dashboard);
+        Preference search = dashboard.findPreference(StatusActivity.INTERNAL_SEARCH);
+        getInstrumentation().runOnMainSync(() -> search.performClick());
+        getInstrumentation().waitForIdleSync();
+
+        boolean[] ready = {false};
+        long deadline = android.os.SystemClock.uptimeMillis() + 5000;
+        while (!ready[0] && android.os.SystemClock.uptimeMillis() < deadline) {
+            getInstrumentation().runOnMainSync(() -> {
+                android.widget.EditText input = activity.findViewById(R.id.zp_search_input);
+                androidx.core.view.WindowInsetsCompat insets = input == null ? null
+                        : androidx.core.view.ViewCompat.getRootWindowInsets(input);
+                ready[0] = input != null && input.hasFocus() && insets != null
+                        && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+            });
+            if (!ready[0]) android.os.SystemClock.sleep(50);
+        }
+        assertTrue("One tap must focus search and show the keyboard", ready[0]);
+        getInstrumentation().runOnMainSync(() -> {
+            StatusActivity.SearchFragment page = (StatusActivity.SearchFragment) current(activity);
+            android.widget.EditText input = activity.findViewById(R.id.zp_search_input);
+            input.setText("zzzznonexistenttweak");
+            assertNull(page.findPreference("search." + Tweaks.KEY_HIDE_DISCOVERY_TAB));
+            assertTrue(input.hasFocus());
+            input.setText("");
+            assertNotNull(page.findPreference("search." + Tweaks.KEY_HIDE_DISCOVERY_TAB));
+            assertTrue(input.hasFocus());
+        });
+    }
+
+    public void testSearchPageBuildsTweakDirectoryIncludingSectionBuiltControls() {
+        StatusActivity activity = getActivity();
+        StatusActivity.SearchFragment fragment = new StatusActivity.SearchFragment();
+        open(activity, fragment);
+
+        assertNotNull(fragment.findPreference("search." + Tweaks.KEY_HIDE_DISCOVERY_TAB));
+        assertNotNull(fragment.findPreference("search." + Tweaks.KEY_DEFAULT_INBOX_FILTER));
+        assertNotNull(fragment.findPreference("search." + Tweaks.KEY_BACKUP_PUSH_INTERVAL));
+        assertNotNull(fragment.findPreference("search." + Tweaks.KEY_PASSCODE_GRACE_MS));
+        assertNotNull(fragment.findPreference(
+                "search." + Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION));
+    }
+
     public void testDashboardOffersAppLanguageAndDeveloperToolsOffersHookDetailToggle() {
         StatusActivity activity = getActivity();
         String originalDisplayMode = UiSettings.displayMode(activity);

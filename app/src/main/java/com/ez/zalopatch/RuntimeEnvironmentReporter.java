@@ -15,7 +15,6 @@ import com.ez.zalopatch.xposed.core.XpHooks;
 
 /** Hook-process detector and bounded transport for runtime capability evidence. */
 public final class RuntimeEnvironmentReporter {
-    private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final String[] LSPATCH_CLASSES = {
             "org.lsposed.lspatch.loader.LSPApplication",
             "org.lsposed.lspatch.metaloader.LSPAppComponentFactoryStub",
@@ -38,7 +37,7 @@ public final class RuntimeEnvironmentReporter {
     }
 
     public static void report(Context context, RuntimeEnvironment.ResourceHooks resourceHooks) {
-        if (context == null || !TARGET_PACKAGE.equals(context.getPackageName())) return;
+        if (context == null || !HostPackages.canLoad(context.getPackageName(), context.getClassLoader())) return;
         RuntimeEnvironment.Framework framework = RuntimeEnvironment.detect(
                 hasLspatchMarker(context), hasAnyClass(LSPOSED_CLASSES, context),
                 xposedApiVersion(), runtimeClassLoaderEvidence(context));
@@ -67,7 +66,7 @@ public final class RuntimeEnvironmentReporter {
     private static boolean hasLspatchMarker(Context context) {
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(
-                    TARGET_PACKAGE, PackageManager.GET_PROVIDERS);
+                    HostPackages.target(context), PackageManager.GET_PROVIDERS);
             if (info.providers != null) {
                 for (ProviderInfo provider : info.providers) {
                     if (provider.authority != null

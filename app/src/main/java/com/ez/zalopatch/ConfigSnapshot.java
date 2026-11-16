@@ -12,6 +12,25 @@ final class ConfigSnapshot {
     static final String GROUP = "hook_config_v1";
     static final String KEY = "internal.config_snapshot";
     static final String LEGACY_KEY = "internal.settings_snapshot";
+
+    /**
+     * The original keeps the historical remote group. A clone gets one deterministic group from
+     * its existing package scope, so a publication for one instance is invisible to another.
+     * The key inside the group stays unchanged.
+     */
+    static String remoteGroup(String hostPackage) {
+        String scope = HostPackages.scopeSuffix(hostPackage);
+        return scope.isEmpty() ? GROUP : GROUP + "." + scope;
+    }
+
+    /**
+     * A clone may only consume its own provider publication. A valid original/module snapshot
+     * must never be accepted as a fallback for a clone, even when the clone's copy is missing.
+     */
+    static String providerSnapshotFor(String hostPackage, String moduleEncoded, String targetEncoded) {
+        boolean original = hostPackage == null || HostPackages.ZALO.equals(hostPackage);
+        return original && moduleEncoded != null ? moduleEncoded : targetEncoded;
+    }
     private static final String RULES_DIGEST = "internal.rules_sha256";
     static final int MAX_BYTES = 256 * 1024;
     final Map<String, String> values;

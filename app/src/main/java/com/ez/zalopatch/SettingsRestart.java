@@ -28,10 +28,30 @@ public final class SettingsRestart extends ViewModel {
     private final Handler main = new Handler(Looper.getMainLooper());
     private long operation;
     private Context application;
+    /** Captured at start; selection changes never rewrite an in-flight package target. */
+    private ZaloRestart.InstanceTarget scopedTarget;
 
     void start(Context context) {
         if (state.getValue().phase != Phase.IDLE) return;
-        application = context.getApplicationContext();
+        begin(context, null);
+    }
+
+    /** Package-aware same-user action for a selected registered target. */
+    void start(Context context, String packageName) {
+        if (state.getValue().phase != Phase.IDLE) return;
+        ZaloRestart.InstanceTarget captured = ZaloRestart.captureTarget(context, packageName);
+        if (captured == null) {
+            scopedTarget = null;
+            state.setValue(new State(Phase.DONE, null, ZaloRestart.Result.FAILED));
+            return;
+        }
+        begin(context, captured);
+    }
+
+    private void begin(Context context, ZaloRestart.InstanceTarget captured) {
+        Context app = context.getApplicationContext();
+        application = app == null ? context : app;
+        scopedTarget = captured;
         long token = ++operation;
         state.setValue(new State(Phase.ROOT, null, null));
         if (RootAccess.cached(application) == RootAccess.State.GRANTED) rootReady(token, RootAccess.State.GRANTED);
@@ -42,10 +62,20 @@ public final class SettingsRestart extends ViewModel {
         if (token != operation || state.getValue().phase != Phase.ROOT) return;
         if (root != RootAccess.State.GRANTED) {
             state.setValue(new State(Phase.RESTART, null, null));
+            Context manualContext = application;
+            ZaloRestart.InstanceTarget captured = scopedTarget;
             new Thread(() -> {
-                boolean published = FrameworkConfig.apply(application);
+                boolean published = captured == null
+                        ? FrameworkConfig.apply(manualContext)
+                        : captured.valid() && FrameworkConfig.apply(captured.context());
                 main.post(() -> done(token, published ? ZaloRestart.Result.MANUAL : ZaloRestart.Result.FAILED));
             }, "settings-manual-restart").start();
+            return;
+        }
+        if (scopedTarget != null) {
+            // A selected target is restarted directly: a stopped clone has no pid to probe, and
+            // probe failure must never fall back to the canonical package.
+            run(token, null);
             return;
         }
         state.setValue(new State(Phase.PROBE, null, null));
@@ -63,25 +93,44 @@ public final class SettingsRestart extends ViewModel {
     }
 
     void select(ZaloRestart.Target target) {
+        if (scopedTarget != null) return;
         if (state.getValue().phase == Phase.SELECT) run(operation, target);
     }
 
     void cancelSelection() {
-        if (state.getValue().phase == Phase.SELECT) state.setValue(new State(Phase.IDLE, null, null));
+        if (state.getValue().phase == Phase.SELECT) {
+            scopedTarget = null;
+            state.setValue(new State(Phase.IDLE, null, null));
+        }
     }
 
     void consumeResult() {
-        if (state.getValue().phase == Phase.DONE) state.setValue(new State(Phase.IDLE, null, null));
+        if (state.getValue().phase == Phase.DONE) {
+            scopedTarget = null;
+            state.setValue(new State(Phase.IDLE, null, null));
+        }
     }
 
     private void run(long token, ZaloRestart.Target target) {
         state.setValue(new State(Phase.RESTART, null, null));
-        ZaloRestart.run(application, target, result -> done(token, result));
+        ZaloRestart.InstanceTarget captured = scopedTarget;
+        if (captured != null) {
+            ZaloRestart.runScoped(captured, result -> done(token, result));
+        } else {
+            ZaloRestart.run(application, target, result -> done(token, result));
+        }
     }
 
     private void done(long token, ZaloRestart.Result result) {
         if (token == operation && state.getValue().phase == Phase.RESTART) {
             state.setValue(new State(Phase.DONE, null, result));
         }
+    }
+
+    @Override protected void onCleared() {
+        operation++;
+        main.removeCallbacksAndMessages(null);
+        application = null;
+        scopedTarget = null;
     }
 }

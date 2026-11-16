@@ -105,6 +105,37 @@ public final class DexKitWebviewFingerprint {
     }
 
     /**
+     * Evaluates the companion anchor from the stable view's {@code Companion} field type:
+     * the field is the version-independent link (261102901 {@code e3w}, 261101901
+     * {@code etv}), and the companion must own exactly one dispatch-shaped method.
+     */
+    public static FingerprintResolver.Resolution evaluateCompanionField(String companion,
+            List<MethodHit> hits, String expectedApkSha256, String actualApkSha256,
+            boolean retainedVersion) {
+        if (companion == null || companion.isEmpty()) {
+            return new FingerprintResolver.Resolution(ANCHOR_COMPANION, "", 0, 0,
+                    "no_companion_field");
+        }
+        if (OWNER_WEB_VIEW.equals(companion)) {
+            return new FingerprintResolver.Resolution(ANCHOR_COMPANION, "", 0, 0,
+                    "companion_self");
+        }
+        int dispatchShaped = 0;
+        for (MethodHit hit : hits == null ? new ArrayList<MethodHit>() : hits) {
+            if (hit != null && companion.equals(hit.className) && isDispatchShape(hit)) {
+                dispatchShaped++;
+            }
+        }
+        if (dispatchShaped != 1) {
+            return new FingerprintResolver.Resolution(ANCHOR_COMPANION, "", 0, 0,
+                    dispatchShaped == 0 ? "no_dispatch_on_companion"
+                            : "ambiguous_dispatch_on_companion");
+        }
+        return new FingerprintResolver.Resolution(ANCHOR_COMPANION, companion, 0, 0,
+                "resolved");
+    }
+
+    /**
      * Evaluates the companion anchor: groups dispatch-shaped hits by owner package
      * class, keeps owners with exactly one such method, and requires exactly one
      * owner globally. Returns the winning owner as the symbol, or an unavailable

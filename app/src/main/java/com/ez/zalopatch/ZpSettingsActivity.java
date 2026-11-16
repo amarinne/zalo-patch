@@ -34,17 +34,34 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     private boolean restartBlocking;
     private SettingsRestart restart;
     private androidx.appcompat.app.AlertDialog targetDialog;
+    private SharedPreferences observedChanges;
+    private SharedPreferences observedSettings;
+    private boolean listenersBound;
     private final SharedPreferences.OnSharedPreferenceChangeListener changeListener =
             (preferences, key) -> {
-                if (preferences == SettingsChanges.preferences(this) || SettingsStore.GENERATION.equals(key)
+                if (preferences == observedChanges || SettingsStore.GENERATION.equals(key)
                         || ConfigSnapshot.KEY.equals(key)) refreshApplyBar(true);
             };
+
+    /** Selected scoped settings context. The activity itself stays module-wide for locale/theme. */
+    Context settingsContext() {
+        return getApplicationContext();
+    }
+
+    /** Package whose settings and restart the actions address. */
+    String selectedPackageName() {
+        return HostPackages.ZALO;
+    }
+
+    final Context moduleContext() {
+        return getApplicationContext();
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        ZaloArtifactState.schedule(this);
-        TweakStore.initialize(this);
+        ZaloArtifactState.schedule(settingsContext());
+        TweakStore.initialize(settingsContext());
         setContentView(R.layout.zp_settings_activity);
         setSupportActionBar((MaterialToolbar) findViewById(R.id.zp_toolbar));
         applyBar = findViewById(R.id.zp_apply_bar);
@@ -73,16 +90,36 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
-        SettingsChanges.preferences(this).registerOnSharedPreferenceChangeListener(changeListener);
-        TweakStore.preferences(this).registerOnSharedPreferenceChangeListener(changeListener);
+        bindSettingsPreferences();
         refreshApplyBar(false);
     }
 
     @Override
     protected void onStop() {
-        SettingsChanges.preferences(this).unregisterOnSharedPreferenceChangeListener(changeListener);
-        TweakStore.preferences(this).unregisterOnSharedPreferenceChangeListener(changeListener);
+        unbindSettingsPreferences();
         super.onStop();
+    }
+
+    final void bindSettingsPreferences() {
+        if (listenersBound) return;
+        observedChanges = SettingsChanges.preferences(settingsContext());
+        observedSettings = TweakStore.preferences(settingsContext());
+        observedChanges.registerOnSharedPreferenceChangeListener(changeListener);
+        observedSettings.registerOnSharedPreferenceChangeListener(changeListener);
+        listenersBound = true;
+    }
+
+    final void unbindSettingsPreferences() {
+        if (!listenersBound) return;
+        if (observedChanges != null) {
+            observedChanges.unregisterOnSharedPreferenceChangeListener(changeListener);
+        }
+        if (observedSettings != null) {
+            observedSettings.unregisterOnSharedPreferenceChangeListener(changeListener);
+        }
+        observedChanges = null;
+        observedSettings = null;
+        listenersBound = false;
     }
 
     @Override
@@ -98,9 +135,10 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         if (applyBar == null) {
             return;
         }
-        int count = SettingsChanges.pendingCount(this);
-        boolean prepare = SettingsChanges.active(this) == null
-                || SettingsChanges.active(this).moduleVersion != BuildConfig.VERSION_CODE;
+        Context target = settingsContext();
+        int count = SettingsChanges.pendingCount(target);
+        boolean prepare = SettingsChanges.active(target) == null
+                || SettingsChanges.active(target).moduleVersion != BuildConfig.VERSION_CODE;
         applyMessage.setText(prepare ? getString(R.string.zp_config_prepare_required)
                 : getResources().getQuantityString(R.plurals.zp_pending_changes, count, count));
         applyButton.setEnabled(!restartInFlight);
@@ -139,8 +177,14 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
         restartOrOpenZaloAppInfo();
     }
 
+    final boolean restartInFlight() {
+        return restartInFlight;
+    }
+
     protected final void restartOrOpenZaloAppInfo() {
-        if (!isFinishing() && !isDestroyed()) restart.start(this);
+        if (!isFinishing() && !isDestroyed()) {
+            restart.start(moduleContext(), selectedPackageName());
+        }
     }
 
     private void renderRestart(SettingsRestart.State state) {
@@ -265,9 +309,13 @@ abstract class ZpSettingsActivity extends AppCompatActivity {
     }
 
     protected final void openZaloAppInfo() {
+        openAppInfo(selectedPackageName());
+    }
+
+    protected final void openAppInfo(String packageName) {
         try {
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:com.zing.zalo")));
+                    Uri.parse("package:" + packageName)));
         } catch (RuntimeException exception) {
             Toast.makeText(this, R.string.zp_open_zalo_app_info_failed,
                     Toast.LENGTH_SHORT).show();

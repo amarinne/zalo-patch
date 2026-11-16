@@ -3,6 +3,7 @@ package com.ez.zalopatch;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Locale;
 
@@ -32,7 +33,9 @@ public final class DexKitCache {
      * Revision 7 replaces the photo-conversion constructor anchor with its runnable method.
      */
     public static final int RESOLVER_FORMAT = 7;
-    public static final int MAX_ENTRY_BYTES = 8 * 1024;
+    // Full-family descriptors and retry states exceed the former 8 KiB pilot limit.
+    // Keep reads bounded within the 256 KiB framework snapshot transport.
+    public static final int MAX_ENTRY_BYTES = 32 * 1024;
     static final int MAX_REASON_BYTES = 256;
 
     private DexKitCache() {
@@ -158,6 +161,24 @@ public final class DexKitCache {
                 replaced, entry.families);
     }
 
+    /**
+     * Re-stamps an entry with the running module identity. A scan reuses the previous
+     * entry as its base, which carries the previous module's version; the installed-module
+     * check rejects that on save, so a module upgrade could never re-baseline the cache
+     * while the pilot family stayed healthy.
+     */
+    public static Entry restamp(Entry entry, int moduleVersion, int queryRevision,
+                                int resolverFormat) {
+        if (entry == null) {
+            return null;
+        }
+        return new Entry(entry.versionCode, entry.codeDigest, entry.lastUpdateTime,
+                entry.apkSize, queryRevision, resolverFormat, moduleVersion,
+                entry.adBind, entry.feedBind, entry.negative, entry.reason, entry.matchAd,
+                entry.matchFeed, entry.scanDurationMs, entry.scannedAt, entry.partialAttempts,
+                entry.extended, entry.families);
+    }
+
     public static boolean isMethodName(String value) {
         return value != null && !value.isEmpty() && value.length() <= 128
                 && value.matches("[A-Za-z_$][A-Za-z0-9_$]*");
@@ -194,7 +215,8 @@ public final class DexKitCache {
     }
 
     public static Entry parse(String json) throws JSONException {
-        if (json == null || json.isEmpty() || json.length() > MAX_ENTRY_BYTES) {
+        if (json == null || json.isEmpty() || json.length() > MAX_ENTRY_BYTES
+                || json.getBytes(StandardCharsets.UTF_8).length > MAX_ENTRY_BYTES) {
             throw new JSONException("dexkit cache entry missing or oversized");
         }
         JSONObject root = new JSONObject(json);

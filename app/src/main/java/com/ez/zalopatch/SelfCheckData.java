@@ -12,13 +12,32 @@ import java.util.Map;
 
 final class SelfCheckData {
     static final Uri URI = Uri.parse("content://com.ez.zalopatch.config/self_check");
+    static final String HOST_PACKAGE = "host_package";
 
     private SelfCheckData() {
     }
 
+    /**
+     * The provider resolves its own module UID to the original, so a selected clone must be named
+     * explicitly in the query. The original keeps its exact URI with no selector.
+     */
+    static String providerHost(Context context) {
+        if (context == null) return "";
+        String target = HostPackages.transportHost(context);
+        return HostPackages.ZALO.equals(target) ? "" : target;
+    }
+
+    static Uri providerUri(Context context) {
+        Uri.Builder builder = URI.buildUpon();
+        String host = providerHost(context);
+        if (!host.isEmpty()) builder.appendQueryParameter(HOST_PACKAGE, host);
+        return builder.build();
+    }
+
     static List<Row> load(Context context) {
         ArrayList<Row> rows = new ArrayList<>();
-        Cursor cursor = context.getContentResolver().query(URI, null, null, null, null);
+        Cursor cursor = context.getContentResolver().query(
+                providerUri(context), null, null, null, null);
         if (cursor == null) {
             return rows;
         }

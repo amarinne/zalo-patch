@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /** JVM tests for the DexKit pilot cache binding, codec, and invalidation rules. */
@@ -76,6 +77,29 @@ public final class DexKitCacheTest {
     }
 
     @Test
+    public void completeFamilyVocabularyFitsThePersistentCache() throws Exception {
+        java.util.Map<String, String> anchors = new java.util.LinkedHashMap<>();
+        for (DexKitAnchors.Anchor anchor : DexKitAnchors.all()) {
+            String descriptor = anchor.kind == DexKitAnchors.Kind.CLASS
+                    || anchor.kind == DexKitAnchors.Kind.CLASS_LIST
+                    ? "com.zing.zalo.fixture.RenamedOwner" : "renamedMember";
+            anchors.put(anchor.path, descriptor);
+        }
+        java.util.Map<String, DexKitFamilyRetry.State> families = new java.util.LinkedHashMap<>();
+        for (String family : DexKitFamilyRetry.FAMILIES) {
+            families.put(family, new DexKitFamilyRetry.State("resolved", 1));
+        }
+        DexKitCache.Entry original = DexKitFamilyRetry.withStates(
+                DexKitCache.replaceExtended(positive(), anchors), families);
+        String json = DexKitCache.serialize(original);
+        assertTrue("fixture must cross the former pilot-only limit", json.length() > 8 * 1024);
+        DexKitCache.Entry parsed = DexKitCache.parse(json);
+        assertEquals(anchors, parsed.extended);
+        assertEquals(families.keySet(), parsed.families.keySet());
+        assertEquals(json, DexKitCache.serialize(parsed));
+    }
+
+    @Test
     public void codecRejectsUnknownKeysOversizeAndBadBindings() {
         try {
             DexKitCache.parse("{\"version_code\":1}");
@@ -134,6 +158,24 @@ public final class DexKitCacheTest {
                 replaced.extended.containsKey("symbols.webview.companion_class"));
         assertTrue(binds(replaced));
         assertEquals(entry.adBind, replaced.adBind);
+    }
+
+    @Test
+    public void restampRebaselinesAModuleUpgradeAndKeepsTheResult() {
+        // A scan reuses the previous entry as its base, so an upgraded module would keep
+        // reporting the old module version and the installed-module check would reject
+        // every save. Restamping must move only the module identity.
+        DexKitCache.Entry entry = positive();
+        DexKitCache.Entry stamped = DexKitCache.restamp(entry, MODULE + 1,
+                DexKitZinstantFingerprint.QUERY_REVISION, DexKitCache.RESOLVER_FORMAT);
+        assertEquals(MODULE + 1, stamped.moduleVersion);
+        assertEquals(entry.versionCode, stamped.versionCode);
+        assertEquals(entry.codeDigest, stamped.codeDigest);
+        assertEquals(entry.apkSize, stamped.apkSize);
+        assertEquals(entry.adBind, stamped.adBind);
+        assertEquals(entry.matchAd, stamped.matchAd);
+        assertTrue(stamped.extended.containsKey("symbols.webview.companion_class"));
+        assertNull(DexKitCache.restamp(null, MODULE, 27, 7));
     }
 
     @Test

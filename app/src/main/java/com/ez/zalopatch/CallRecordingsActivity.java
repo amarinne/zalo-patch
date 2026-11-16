@@ -80,7 +80,7 @@ public final class CallRecordingsActivity {
         private void refreshAsync() {
             if (loading || !isAdded()) return;
             loading = true;
-            android.content.Context context = requireContext().getApplicationContext();
+            android.content.Context context = targetContext().getApplicationContext();
             new Thread(() -> {
                 CallRecordingStore.recover(context);
                 List<CallRecordingStore.Entry> entries = CallRecordingStore.list(context);
@@ -111,7 +111,7 @@ public final class CallRecordingsActivity {
         }
 
         private void retryConversion(CallRecordingStore.Entry entry) {
-            android.content.Context context = requireContext().getApplicationContext();
+            android.content.Context context = targetContext().getApplicationContext();
             new Thread(() -> {
                 boolean queued = CallRecordingStore.retry(context, entry);
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -135,7 +135,7 @@ public final class CallRecordingsActivity {
                             : R.string.zp_call_recording_delete_title)
                     .setNegativeButton(R.string.zp_cancel, null)
                     .setPositiveButton(R.string.zp_delete, (dialog, which) -> {
-                        if (!CallRecordingStore.delete(requireContext(), entry)) {
+                        if (!CallRecordingStore.delete(targetContext(), entry)) {
                             Toast.makeText(requireContext(),
                                     R.string.zp_call_recording_delete_failed,
                                     Toast.LENGTH_SHORT).show();
@@ -147,6 +147,10 @@ public final class CallRecordingsActivity {
                 builder.setMessage(R.string.zp_call_recording_delete_message);
             }
             builder.show();
+        }
+
+        private android.content.Context targetContext() {
+            return ((StatusActivity) requireActivity()).settingsContext();
         }
     }
 

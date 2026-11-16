@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 
 import com.ez.zalopatch.BuildConfig;
+import com.ez.zalopatch.HostPackages;
 import com.ez.zalopatch.DexKitCache;
 import com.ez.zalopatch.DexKitMirror;
 import com.ez.zalopatch.DexKitPilotPolicy;
@@ -49,7 +50,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class DexKitZinstantResolver {
     static final String FEATURE_CACHE = "dexkit_cache";
     static final String FEATURE_SCAN = "dexkit_scan";
-    private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final Uri PROVIDER = Uri.parse("content://com.ez.zalopatch.config");
     private static final Uri CACHE_URI = Uri.parse("content://com.ez.zalopatch.config/dexkit_cache");
     private static final AtomicBoolean SCAN_RUNNING = new AtomicBoolean(false);
@@ -456,6 +456,12 @@ final class DexKitZinstantResolver {
         if (provider != null) {
             return provider;
         }
+        if (HostPackages.renamed(context)) {
+            Bundle unavailable = new Bundle();
+            unavailable.putBoolean("allowed", false);
+            unavailable.putString("reason", "Clone provider unavailable");
+            return unavailable;
+        }
         DexKitMirror.Claim claim = DexKitMirror.claimFromMirror(
                 DexKitMirror.readBudget(), mirrorScope(host), System.currentTimeMillis());
         Bundle mirror = new Bundle();
@@ -539,7 +545,7 @@ final class DexKitZinstantResolver {
 
     static HostIdentity hostIdentity(Context context) {
         try {
-            PackageInfo info = context.getPackageManager().getPackageInfo(TARGET_PACKAGE, 0);
+            PackageInfo info = context.getPackageManager().getPackageInfo(HostPackages.target(context), 0);
             ApplicationInfo application = info.applicationInfo;
             if (application == null || application.sourceDir == null) {
                 return null;
@@ -562,6 +568,7 @@ final class DexKitZinstantResolver {
      * module provider, observed on HyperOS / Android 16).
      */
     static CacheRead readCache(Context context, HostIdentity host) {
+        if (HostPackages.renamed(context)) return readProviderCache(context);
         if (HookConfig.hasAuthoritativeSnapshot()) return readMirrorCache(host);
         CacheRead provider = readProviderCache(context);
         if (provider != null) {

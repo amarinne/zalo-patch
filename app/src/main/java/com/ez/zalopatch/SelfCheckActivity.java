@@ -34,9 +34,10 @@ public final class SelfCheckActivity {
 
         private void buildScreen() {
             Context context = requireContext();
+            Context target = targetContext();
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
 
-            SymbolSchema.Active schema = SymbolSchema.active(context);
+            SymbolSchema.Active schema = SymbolSchema.active(target);
             screen.addPreference(PreferenceUi.info(context,
                     getString(R.string.zp_about_version, BuildConfig.VERSION_NAME),
                     getString(R.string.zp_about_meta, BuildConfig.VERSION_CODE,
@@ -66,7 +67,8 @@ public final class SelfCheckActivity {
             if (metrics == null) {
                 return;
             }
-            RuntimeEnvironment.Snapshot environment = RuntimeEnvironment.current(requireContext());
+            Context target = targetContext();
+            RuntimeEnvironment.Snapshot environment = RuntimeEnvironment.current(target);
             if (!environment.reported) {
                 runtimeEnvironment.value(getString(R.string.zp_runtime_environment_pending));
             } else {
@@ -80,7 +82,7 @@ public final class SelfCheckActivity {
                                 environment.resourceHooks))));
             }
             runtimeEnvironment.refreshStyle();
-            List<SelfCheckData.Row> rows = SelfCheckData.load(requireContext());
+            List<SelfCheckData.Row> rows = SelfCheckData.load(target);
             SelfCheckData.Counts counts = SelfCheckData.counts(rows);
             String runtime = rows.isEmpty()
                     ? getString(R.string.zp_self_check_empty_summary)
@@ -160,6 +162,10 @@ public final class SelfCheckActivity {
                     .setMessage(row.debugDetails(requireContext()))
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
+        }
+
+        private Context targetContext() {
+            return ((StatusActivity) requireActivity()).settingsContext();
         }
     }
 }

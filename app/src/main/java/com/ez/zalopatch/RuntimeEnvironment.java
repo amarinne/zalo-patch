@@ -66,7 +66,14 @@ public final class RuntimeEnvironment {
     }
 
     public static Snapshot current(Context context) {
-        long installedVersion = SymbolSchema.installedZaloVersionCode(context);
+        return current(context, SymbolSchema.installedZaloVersionCode(context));
+    }
+
+    /**
+     * Reads the record only when it belongs to the same module/Zalo pair as this target. A clone
+     * version move or an original record in another scope is Not checked, never reused.
+     */
+    static Snapshot current(Context context, long installedVersion) {
         SharedPreferences prefs = preferences(context);
         if (!prefs.getBoolean(KEY_REPORTED, false)
                 || prefs.getInt(KEY_MODULE_VERSION, -1) != BuildConfig.VERSION_CODE

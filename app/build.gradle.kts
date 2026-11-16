@@ -97,6 +97,13 @@ val lspatch = providers.gradleProperty("lspatch").map { it.toBooleanStrict() }.o
 
 android {
     namespace = "com.ez.zalopatch"
+    ndkVersion = "28.0.13004108"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
     // Service 102 requires Android 37 headers; runtime minimum and target stay unchanged.
     compileSdk = 37
     useLibrary("android.test.base")
@@ -109,8 +116,8 @@ android {
         // supported by the legacy API 82 entry ends with this migration.
         minSdk = 26
         targetSdk = 34
-        versionCode = 351
-        versionName = "0.4.347"
+        versionCode = 384
+        versionName = "0.5.0"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         buildConfigField("String", "DIAGNOSTIC_INTAKE_URL", "\"$diagnosticIntakeUri\"")
         buildConfigField("String", "SYMBOL_CATALOG_URL", "\"$symbolCatalogUri\"")
@@ -122,6 +129,7 @@ android {
             "com.ez.zalopatch.SymbolSchemaProfileTest",
             "com.ez.zalopatch.DiagnosticReportingTest",
             "com.ez.zalopatch.SettingsUiSmokeTest",
+            "com.ez.zalopatch.InstanceUiTest",
             "com.ez.zalopatch.TweakHookInfoCoverageTest"
         ).joinToString(",")
     }

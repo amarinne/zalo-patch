@@ -18,6 +18,7 @@ import com.ez.zalopatch.HookConfig;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.Tweaks;
 import com.ez.zalopatch.ZaloContactResolver;
+import com.ez.zalopatch.ZrtcRecorderGuard;
 import com.ez.zalopatch.xposed.core.Feature;
 import com.ez.zalopatch.xposed.core.SelfCheckRegistry;
 
@@ -132,6 +133,8 @@ public final class CallRecordingFeature extends Feature {
      * native recorder state and temp files cannot transfer generations safely.
      */
     public static boolean blocksHotReload() {
+        // Native constructor hooks belong to the process and cannot move to a new loader.
+        if (ZrtcRecorderGuard.loaded()) return true;
         if (FINALIZER_ACTIVE.get() > 0) {
             return true;
         }
@@ -178,6 +181,7 @@ public final class CallRecordingFeature extends Feature {
             return;
         }
 
+        ZrtcRecorderGuard.load();
         Class<?> peerClass = XpReflect.findClassIfExists(PEER_JNI, classLoader);
         if (peerClass == null) {
             markStale("PeerJNI missing");
@@ -210,6 +214,11 @@ public final class CallRecordingFeature extends Feature {
                 "PeerJNI callback and ZmInCallActivity audio lifecycle", hooks);
         SelfCheckRegistry.markInstalled(FEATURE_NATIVE,
                 "PeerJNI#zrtc_peer_start_record_audio", 1);
+        int guard = ZrtcRecorderGuard.status();
+        SelfCheckRegistry.markStatus(FEATURE_NATIVE,
+                guard < 0 ? "failed" : "installed_no_hits",
+                "PeerJNI#zrtc_peer_start_record_audio", "constructor_guard=" + guard,
+                guard < 0 ? "Native recorder initialization guard unavailable" : "");
         SelfCheckRegistry.markInstalled(FEATURE_TRANSFER,
                 "CallRecordingImportReceiver private WAV copy", 1);
         SelfCheckRegistry.markInstalled(FEATURE_STORAGE,
@@ -684,17 +693,21 @@ public final class CallRecordingFeature extends Feature {
             if (activityClass == null || !Activity.class.isAssignableFrom(activityClass)) {
                 continue;
             }
-            // Terminal fallback only, with no obfuscated letters: when the call UI is
-            // destroyed, stop any started session. The connected edge comes from
-            // onCallAudioState==32 and the audio-stream registrations (T1c); the
-            // retired U1/K2/n trigger misread a RelativeLayout on 26.09.01.
+            // Android can trim or replace the call activity while its peer stays connected.
+            // Treat UI destruction as a terminal fallback only after the native peer ends.
             count += XpHooks.hookAllMethods(FEATURE_HOOKS, activityClass, "onDestroy",
                     new XpHooks.Before() {
                 @Override
                 public void before(XpHooks.HookParam param) {
                     for (Session session : SESSIONS_BY_PEER.values()) {
-                        if (session.started) {
+                        if (!session.started) continue;
+                        if (CallRecordingLifecycle.shouldStopAfterActivityDestroy(isPeerActive(session))) {
                             stop(session, "activity_destroy");
+                        } else {
+                            recordEvent("ui_destroy:peer_active");
+                            SelfCheckRegistry.incrementHit(FEATURE_HOOKS,
+                                    activityClass.getName() + "#onDestroy",
+                                    "recording=preserved peer_active=true events=" + eventTrace());
                         }
                     }
                 }
@@ -752,6 +765,12 @@ public final class CallRecordingFeature extends Feature {
                             session.startedAt, session.direction);
                 }
                 try {
+                    String guardError = ZrtcRecorderGuard.prepare();
+                    if (guardError != null) {
+                        SelfCheckRegistry.markStatus(FEATURE_NATIVE, "failed",
+                                "ZRTC recorder initialization", "trigger=" + trigger, guardError);
+                        return;
+                    }
                     File directory = new File(application.getCacheDir(), TEMP_DIRECTORY);
                     if (!directory.exists() && !directory.mkdirs()) {
                         throw new IllegalStateException("Could not create temporary recording directory");
@@ -773,6 +792,7 @@ public final class CallRecordingFeature extends Feature {
                             "PeerJNI#zrtc_peer_start_record_audio",
                             "start direction=" + session.direction + " trigger=" + trigger
                                     + " media=audio_only attempt=" + attempt
+                                    + " guarded=" + ZrtcRecorderGuard.constructions()
                                     + " peer=" + peerTag(session.peerHandle)
                                     + " events=" + eventTrace());
                     scheduleCaptureProbe(session, attempt);

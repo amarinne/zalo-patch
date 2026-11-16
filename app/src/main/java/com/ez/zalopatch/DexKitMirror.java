@@ -95,7 +95,7 @@ public final class DexKitMirror {
 
             @Override
             public boolean write(String key, String value) {
-                return SettingsPropertyMirror.writeBlob(key, value);
+                return SettingsPropertyMirror.writeBlob(HookConfig.hostPackage(), key, value);
             }
         });
     }
@@ -161,6 +161,8 @@ public final class DexKitMirror {
      * scope still matches; a host, query, or module change is a fresh budget.
      */
     static void sync(Context context) {
+        // Clone caches travel through their UID-scoped provider, never the primary app's mirror.
+        if (HostPackages.renamed(context)) return;
         FrameworkConfig.refreshState(context);
     }
 
@@ -182,10 +184,11 @@ public final class DexKitMirror {
             return;
         }
         try {
+            String hostPackage = HostPackages.transportHost(context);
             DexKitCache.Entry entry = DexKitStore.load(context);
             // Mirror absence too: a cleared cache must not leave a stale entry for the
             // hook process that reads the property mirror instead of the provider.
-            if (!SettingsPropertyMirror.writeBlob(MIRROR_CACHE_KEY,
+            if (!SettingsPropertyMirror.writeBlob(hostPackage, MIRROR_CACHE_KEY,
                     entry == null ? "" : DexKitCache.serialize(entry))) {
                 Log.i("ZaloPatch", "DexKit mirror cache write failed");
             }
@@ -195,7 +198,7 @@ public final class DexKitMirror {
                     preferences.getInt(DexKitStore.KEY_SCAN_FAILURES, 0),
                     preferences.getLong(DexKitStore.KEY_SCAN_LAST_ATTEMPT_MS, 0L),
                     currentScope(context));
-            SettingsPropertyMirror.writeBlob(MIRROR_BUDGET_KEY, encodeBudget(budget));
+            SettingsPropertyMirror.writeBlob(hostPackage, MIRROR_BUDGET_KEY, encodeBudget(budget));
         } catch (Throwable throwable) {
             Log.i("ZaloPatch", "DexKit mirror sync failed "
                     + throwable.getClass().getSimpleName());
@@ -207,7 +210,8 @@ public final class DexKitMirror {
         try {
             ConfigSnapshot snapshot = ConfigSnapshot.decode(TweakStore.preferences(context)
                     .getString(ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
-            String json = snapshot == null ? SettingsPropertyMirror.readBlob(MIRROR_CACHE_KEY)
+            String json = snapshot == null
+                    ? SettingsPropertyMirror.readBlob(HostPackages.transportHost(context), MIRROR_CACHE_KEY)
                     : snapshot.values.get(MIRROR_CACHE_KEY);
             return json == null || json.isEmpty();
         } catch (Throwable ignored) {

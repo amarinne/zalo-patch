@@ -1,11 +1,13 @@
 package com.ez.zalopatch.xposed.core;
 
 import com.ez.zalopatch.DexKitCallFingerprint;
+import com.ez.zalopatch.DexKitMiniChatFingerprint;
 import com.ez.zalopatch.DexKitAdtimaFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
 import com.ez.zalopatch.DexKitStoryFingerprint;
 import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
 import com.ez.zalopatch.DexKitReactionSendFingerprint;
+import com.ez.zalopatch.DexKitRecallFingerprint;
 import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.SymbolSchema;
 import com.ez.zalopatch.xposed.features.CallRecordingLifecycle;
@@ -174,6 +176,21 @@ final class SymbolPreflight {
         } catch (Throwable throwable) {
             result.reactionSendErrors.add(familyError("reaction_send", throwable));
         }
+        try {
+            result.recall = checkRecall(schema, classLoader, result.recallErrors);
+        } catch (Throwable throwable) {
+            result.recallErrors.add(familyError("recall", throwable));
+        }
+        try {
+            java.util.Map<String, String> descriptors = new java.util.LinkedHashMap<>();
+            for (String path : DexKitMiniChatFingerprint.paths()) {
+                descriptors.put(path, schema.string(path, ""));
+            }
+            DexKitMiniChatFingerprint.bind(descriptors, classLoader);
+            result.miniChat = true;
+        } catch (Throwable error) {
+            result.miniChatErrors.add(familyError("mini_chat", error));
+        }
         for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
                 : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
             List<String> errors = result.videoAdsErrors.get(route);
@@ -203,6 +220,102 @@ final class SymbolPreflight {
     private static String familyError(String family, Throwable throwable) {
         return family + ": " + throwable.getClass().getSimpleName()
                 + (throwable.getMessage() == null ? "" : " " + throwable.getMessage());
+    }
+
+    /**
+     * The recall tombstone route. Every descriptor is mandatory: a partial route would
+     * arm a hook that cannot distinguish a supported recall from an unrelated update or a
+     * delete control that reaches the same coordinator.
+     */
+    static boolean checkRecall(SymbolSchema.Active schema, ClassLoader loader,
+                               List<String> errors) {
+        String prefix = DexKitRecallFingerprint.PREFIX;
+        Class<?> writer = loadClass(schema.string(prefix + "writer_class", ""), loader, errors);
+        Class<?> model = loadClass(schema.string(prefix + "model_class", ""), loader, errors);
+        Class<?> undo = loadClass(schema.string(prefix + "undo_class", ""), loader, errors);
+        Class<?> record = loadClass(schema.string(prefix + "record_class", ""), loader, errors);
+        Class<?> coordinator = loadClass(
+                schema.string(prefix + "coordinator_class", ""), loader, errors);
+        Class<?> undoHandler = loadClass(
+                schema.string(prefix + "undo_handler_class", ""), loader, errors);
+        Class<?> id = loadClass(DexKitRecallFingerprint.MESSAGE_ID, loader, errors);
+        Class<?> api = loadClass(DexKitRecallFingerprint.API_CODE, loader, errors);
+        if (!errors.isEmpty()) {
+            return false;
+        }
+        recallMethod(writer, schema.string(prefix + "writer_method", ""), Void.TYPE, errors,
+                model, Boolean.TYPE, undo);
+        recallMethod(writer, schema.string(prefix + "update_method", ""), api, errors,
+                record, id, Boolean.TYPE);
+        recallMethod(coordinator, schema.string(prefix + "coordinator_method", ""), Void.TYPE,
+                errors, Object.class);
+        recallMethod(coordinator, schema.string(prefix + "preview_method", ""), Void.TYPE,
+                errors, id, Boolean.TYPE, undo, Boolean.TYPE);
+        recallMethod(undoHandler, schema.string(prefix + "undo_handler_method", ""), Void.TYPE,
+                errors, model);
+        recallMethod(id, schema.string(prefix + "identity_json_method", ""), String.class, errors);
+        recallField(model, schema.string(prefix + "identity_field", ""), id, errors);
+        recallField(model, schema.string(prefix + "text_field", ""), String.class, errors);
+        recallField(model, schema.string(prefix + "type_field", ""), Integer.TYPE, errors);
+        recallField(model, schema.string(prefix + "sender_field", ""), String.class, errors);
+        recallField(id, schema.string(prefix + "owner_field", ""), String.class, errors);
+        recallAccountField(loader, errors);
+        return errors.isEmpty();
+    }
+
+    /**
+     * The hook compares the message sender with Zalo's stable runtime account id. The
+     * class is a kept engine boundary, not an obfuscated letter; the field is still
+     * shape-checked and the feature fails closed when it is empty.
+     */
+    private static void recallAccountField(ClassLoader loader, List<String> errors) {
+        try {
+            Class<?> utility = Class.forName("com.zing.zalocore.CoreUtility", false, loader);
+            Field field = utility.getDeclaredField("i");
+            if (!Modifier.isStatic(field.getModifiers()) || field.getType() != String.class) {
+                errors.add("recall account reader changed");
+            }
+        } catch (Throwable throwable) {
+            errors.add("recall account reader missing");
+        }
+    }
+
+    private static Class<?> loadClass(String name, ClassLoader loader, List<String> errors) {
+        try {
+            if (name == null || name.isEmpty()) {
+                errors.add("recall class missing");
+                return null;
+            }
+            return Class.forName(name, false, loader);
+        } catch (Throwable throwable) {
+            errors.add("recall class missing");
+            return null;
+        }
+    }
+
+    private static void recallField(Class<?> owner, String name, Class<?> type,
+                                    List<String> errors) {
+        try {
+            Field field = owner.getDeclaredField(name);
+            if (Modifier.isStatic(field.getModifiers()) || field.getType() != type) {
+                errors.add("recall field shape changed");
+            }
+        } catch (Throwable throwable) {
+            errors.add("recall field missing");
+        }
+    }
+
+    private static void recallMethod(Class<?> owner, String name, Class<?> result,
+                                     List<String> errors, Class<?>... params) {
+        try {
+            Method method = owner.getDeclaredMethod(name, params);
+            if (Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != result) {
+                errors.add("recall method shape changed");
+            }
+        } catch (Throwable throwable) {
+            errors.add("recall method missing");
+        }
     }
 
     /**
@@ -695,7 +808,11 @@ final class SymbolPreflight {
                 }
             }
         }
-        load(schema.string("symbols.inbox.biz_box_item_class", ""), loader, errors);
+        // Advisory only: no feature reads the biz-box item class (category filtering uses
+        // the conversation marker), so a renamed item class must not mark rows stale.
+        tryLoad(schema.string("symbols.inbox.biz_box_item_class", ""), loader);
+        // Media Box is advisory. Its layout route needs no item class, and the
+        // row-level sentinel guard rejects a reused class without failing inbox rows.
         // Optional: Strangers opens Zalo's native screen, so its box class is not required.
         tryLoad(schema.string("symbols.inbox.stranger_box_item_class", ""), loader);
         return errors.isEmpty();
@@ -1394,6 +1511,8 @@ final class SymbolPreflight {
         boolean adtima;
         boolean storyAds;
         boolean reactionSend;
+        boolean recall;
+        boolean miniChat;
         final List<String> inboxMediaErrors = new ArrayList<>();
         final List<String> inboxCategoryErrors = new ArrayList<>();
         final List<String> meErrors = new ArrayList<>();
@@ -1417,6 +1536,8 @@ final class SymbolPreflight {
         final List<String> adtimaErrors = new ArrayList<>();
         final List<String> storyAdsErrors = new ArrayList<>();
         final List<String> reactionSendErrors = new ArrayList<>();
+        final List<String> recallErrors = new ArrayList<>();
+        final List<String> miniChatErrors = new ArrayList<>();
 
         String reason(List<String> errors) {
             return errors.isEmpty() ? "structural preflight failed" : String.join("; ", errors);
@@ -1448,12 +1569,14 @@ final class SymbolPreflight {
             if (adtima) count++;
             if (storyAds) count++;
             if (reactionSend) count++;
+            if (recall) count++;
+            if (miniChat) count++;
             for (Boolean resolved : videoAds.values()) if (Boolean.TRUE.equals(resolved)) count++;
             return count;
         }
 
         int total() {
-            return 23 + com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values().length;
+            return 25 + com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values().length;
         }
 
         /** Per-family outcome, for a probe row that has to be read without the source at hand. */
@@ -1482,6 +1605,8 @@ final class SymbolPreflight {
             append(value, "adtima", adtima);
             append(value, "story_ads", storyAds);
             append(value, "reaction_send", reactionSend);
+            append(value, "recall", recall);
+            append(value, "mini_chat", miniChat);
             for (com.ez.zalopatch.DexKitVideoAdsFingerprint.Route route
                     : com.ez.zalopatch.DexKitVideoAdsFingerprint.Route.values()) {
                 append(value, route.family(), Boolean.TRUE.equals(videoAds.get(route)));

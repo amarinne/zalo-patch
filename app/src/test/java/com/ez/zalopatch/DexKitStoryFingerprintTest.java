@@ -14,19 +14,20 @@ public final class DexKitStoryFingerprintTest {
 
     private static DexKitStoryFingerprint.MethodHit hit(String owner, String method,
             List<String> parameters, String returnType, boolean isStatic, int command,
-            boolean storyId, boolean parsesStoryId, boolean writesPayload) {
+            boolean parsesStoryId, boolean writesPayload) {
         return new DexKitStoryFingerprint.MethodHit(owner, method, returnType, parameters,
-                isStatic, command, storyId, parsesStoryId, writesPayload);
+                isStatic, command, parsesStoryId, writesPayload);
     }
 
     private static DexKitStoryFingerprint.MethodHit ordinary() {
-        // Exact 261001905 APK: command 1343, storyId, Long.parseLong, payload write.
-        return hit("ap.b", "r", SEEN, "void", false, 1343, true, true, true);
+        // Exact 261102901 APK: command 1343, Long.parseLong, payload write. The
+        // "storyId" literal moved to the caller in this release.
+        return hit("ap.b", "r", SEEN, "void", false, 1343, true, true);
     }
 
     private static DexKitStoryFingerprint.MethodHit suggested() {
-        // Exact 261001905 APK: command 1356 with the extra suggested-story integer.
-        return hit("ap.b", "v", SUGGESTED, "void", false, 1356, true, true, true);
+        // Exact 261102901 APK: command 1356 with the extra suggested-story integer.
+        return hit("ap.b", "v", SUGGESTED, "void", false, 1356, true, true);
     }
 
     @Test public void octoberGoldenRequestsResolveIndependently() {
@@ -42,7 +43,7 @@ public final class DexKitStoryFingerprintTest {
     @Test public void aRenameNeedsNoPinnedOwnerOrMethod() {
         DexKitStoryFingerprint.Resolution found = DexKitStoryFingerprint.evaluate(false,
                 Collections.singletonList(hit("rotated.Owner", "send", SEEN, "void", false,
-                        1343, true, true, true)));
+                        1343, true, true)));
         assertTrue(found.resolved());
         assertEquals("rotated.Owner", found.owner);
     }
@@ -53,27 +54,27 @@ public final class DexKitStoryFingerprintTest {
         assertEquals("no_request", DexKitStoryFingerprint.evaluate(true, hits).status);
     }
 
-    @Test public void commandAndStoryMarkerAreBothRequired() {
+    @Test public void commandAndPayloadProofAreBothRequired() {
         assertFalse(DexKitStoryFingerprint.evaluate(false, Collections.singletonList(
-                hit("host.Request", "other", SEEN, "void", false, 1344, true, true, true))).resolved());
+                hit("host.Request", "other", SEEN, "void", false, 1344, true, true))).resolved());
         assertFalse(DexKitStoryFingerprint.evaluate(false, Collections.singletonList(
-                hit("host.Request", "other", SEEN, "void", false, 1343, false, true, true))).resolved());
+                hit("host.Request", "other", SEEN, "void", false, 1343, false, true))).resolved());
     }
 
     @Test public void serializationAndExactInstanceShapeAreRequired() {
         List<DexKitStoryFingerprint.MethodHit> decoys = Arrays.asList(
-                hit("host.Request", "a", SEEN, "void", false, 1343, true, false, true),
-                hit("host.Request", "b", SEEN, "void", false, 1343, true, true, false),
-                hit("host.Request", "c", SEEN, "boolean", false, 1343, true, true, true),
-                hit("host.Request", "d", SEEN, "void", true, 1343, true, true, true),
-                hit("host.Request", "e", SUGGESTED, "void", false, 1343, true, true, true));
+                hit("host.Request", "a", SEEN, "void", false, 1343, false, true),
+                hit("host.Request", "b", SEEN, "void", false, 1343, true, false),
+                hit("host.Request", "c", SEEN, "boolean", false, 1343, true, true),
+                hit("host.Request", "d", SEEN, "void", true, 1343, true, true),
+                hit("host.Request", "e", SUGGESTED, "void", false, 1343, true, true));
         assertEquals("no_request", DexKitStoryFingerprint.evaluate(false, decoys).status);
     }
 
     @Test public void multipleQualifyingRequestsFailClosed() {
         DexKitStoryFingerprint.Resolution ambiguous = DexKitStoryFingerprint.evaluate(false,
                 Arrays.asList(ordinary(), hit("other.Request", "r", SEEN, "void", false,
-                        1343, true, true, true)));
+                        1343, true, true)));
         assertEquals("ambiguous_request", ambiguous.status);
         assertEquals("", ambiguous.owner);
         assertEquals("", ambiguous.method);

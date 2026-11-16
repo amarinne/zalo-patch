@@ -22,18 +22,24 @@ final class SymbolCatalogMirror {
     }
 
     static String snapshot(Context context, long versionCode) throws Exception {
-        SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context, versionCode);
+        // Verified immutable catalog content is shared; only the property key stays scoped.
+        SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(
+                HostPackages.base(context), versionCode);
         return entry == null ? "-" : encode(entry.sequence, entry.profileJson);
     }
 
     static void syncLegacy(Context context, long versionCode) {
         try {
-            SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(context, versionCode);
+            // Verified catalog content is shared under the existing policy; the property key is
+            // still scoped so a clone never overwrites the original's mirror.
+            SymbolCatalogContract.Entry entry = SymbolCatalogCache.load(
+                    HostPackages.base(context), versionCode);
             String value = entry == null ? "-" : encode(entry.sequence, entry.profileJson);
-            if (value.equals(SettingsPropertyMirror.readBlob(MIRROR_KEY))) {
+            String hostPackage = HostPackages.transportHost(context);
+            if (value.equals(SettingsPropertyMirror.readBlob(hostPackage, MIRROR_KEY))) {
                 return;
             }
-            if (!SettingsPropertyMirror.writeBlob(MIRROR_KEY, value)) {
+            if (!SettingsPropertyMirror.writeBlob(hostPackage, MIRROR_KEY, value)) {
                 Log.i("ZaloPatch", "Catalog profile mirror write failed");
             }
         } catch (Throwable throwable) {

@@ -14,27 +14,30 @@ All tweaks default to off. Changes apply after Restart Zalo.
 <summary><b>Show the tweak catalog</b></summary>
 
 | Tweak | What it does |
-| --- | --- |
-| Navigation — Tab bar | Hide the Discovery and Newsfeed tabs, and keep the Group tab where Zalo shows it. Services behind hidden tabs keep running. |
-| Navigation — Start in Messages | Opens Messages on launch. Later tab choices stay native. |
-| Me — Me rows | Hides QR Wallet, zCloud, zStyle and zBusiness. |
-| Inbox — Media Box and zCloud banner | Removes the Media Box row and collapses the zCloud banner in Messages. |
-| Inbox — Inbox chips | Filters the conversation list with All, Chats, Groups, OA and Strangers chips, plus a default filter after restart. |
-| Chat — Original-quality photos | Sends picker photos and supported shares from other apps at full resolution. Camera photos and videos keep Zalo's quality. |
-| Chat — Emoji reactions | Adds a native Unicode emoji picker to the reaction row. |
-| Chat — Hide reaction row | Removes the reaction picker from the long-press menu. |
-| Chat — Seen and typing status | Stops sending read and typing receipts. Incoming receipts are unaffected. |
-| Chat — Links | Opens chat and feed links in your browser. Mini apps and official-account pages stay in Zalo. |
-| Chat — Story views | Watches stories without appearing in the viewer list. |
-| Calls — Call recording | Saves one-to-one calls as audio-only M4A files in shared storage. Group calls are not recorded. |
-| Calls — Recording notifications | Shows recording start and save status. |
-| Notifications — Promo filter | Blocks promotional notifications. Call and backup notifications always pass. Chat messages inside Zalo are untouched. |
-| Notifications — History | Keeps an opt-in local copy with a retention limit, export and clear. |
-| Ads — Ad slots | Hides message, feed, story and video ads. |
-| Tracking — Analytics records | Stops event, screen, session and view analytics writes, with one master switch. |
-| Tracking — Tracking identifiers | Blocks Crashlytics logs and measurement binds, and returns an all-zero Advertising ID. |
-| Backup — Backup interval | Lowers the minimum message-backup interval to 1, 3, 6 or 12 hours. Zalo's server, battery, network and retry guards still decide when a backup runs. |
-| Security — App-lock grace period | Extends Zalo's app-lock timeout up to one hour when a passcode is set. |
+| :--- | :--- |
+| Tab bar | Hides Discovery and Newsfeed tabs; keeps Groups in place. |
+| Start in Messages | Always opens directly to Messages on launch. |
+| Me rows | Hides QR Wallet, zCloud, zStyle, and zBusiness shortcuts. |
+| Media Box & zCloud banner | Removes the Media Box row and collapses the zCloud banner. |
+| Inbox chips | Adds conversation list filters (All, Chats, Groups, OA, Strangers). |
+| Original-quality photos | Sends picker and shared photos uncompressed at full resolution. |
+| Emoji reactions | Adds a full Unicode emoji picker to the reaction bar. |
+| Hide reaction row | Removes the reaction bar from the long-press message menu. |
+| Recalled messages | Keeps recalled one-to-one text with a recalled label and gray text. Server resync can still remove it. |
+| Native Mini Chat | Uses Zalo floating chat heads with keyboard layout fixes. |
+| Seen & typing status | Blocks outgoing read receipts and typing indicators. |
+| Links | Opens web links in your default browser instead of in-app webview. |
+| Story views | Views stories anonymously without appearing on the viewer list. |
+| Registered clones | Keeps settings, restart targets, and status separate for registered Zalo packages in the same Android user. |
+| Call recording | Records 1-on-1 calls to local audio (`.m4a`). |
+| Recording notifications | Shows status alerts when recording starts and saves. |
+| Promo filter | Blocks marketing alerts without affecting chat, call, or backup alerts. |
+| History | Keeps an opt-in local notification log with retention limits and export. |
+| Ad slots | Hides message, feed, story, and video ads. |
+| Analytics records | Disables telemetry events, screen tracking, and session analytics. |
+| Tracking identifiers | Zeroes Google Advertising ID and blocks Crashlytics logs. |
+| Backup interval | Lowers minimum chat backup interval to 1, 3, 6, or 12 hours. |
+| App-lock grace period | Extends passcode lock timeout grace period up to 1 hour. |
 
 </details>
 
@@ -66,12 +69,18 @@ LSPatch Manager. Keep both apps in the same Android user or profile. Select Rest
 the instructions to force stop and reopen the patched Zalo. The default API 102 artifact does not
 load through LSPatch.
 
+For a renamed Zalo clone, add its installed package name under Developer tools → Zalo clone
+packages, then enable Zalo Patch for that clone in LSPatch Manager. Only add apps you trust:
+they can read module settings and submit recordings. Select the installation in Zalo Patch to
+manage its settings, restart action, compatibility status, and runtime checks. Install both apps
+in the same Android user. Removing registration blocks further provider access and recording imports.
+
 Patching changes Zalo's signer. Replacing the official app can require uninstalling it and deleting
 its data. Use a disposable environment first and retain the patch signing key for later updates.
 
 ## Build
 
-Requires JDK 21, Android SDK platform 37, and the SDK Build Tools selected by Android Gradle Plugin
+Requires JDK 21, Android SDK platform 37, NDK `28.0.13004108`, CMake `3.31.6`, and the SDK Build Tools selected by Android Gradle Plugin
 9.4.1. Use the checked-in Gradle 9.8.1 wrapper. Set `JAVA_HOME` to JDK 21 and `ANDROID_HOME` to the SDK.
 
 ```sh

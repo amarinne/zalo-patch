@@ -612,15 +612,57 @@ public final class InboxFeature extends Feature {
     }
 
     private boolean isVerifiedMediaBoxRow(Object item) {
-        String mapped = schemaString("symbols.inbox.media_box_item_class", "");
+        // Advisory read: the symbol-free layout route carries Media Box hiding, so an
+        // absent or stale item class must never mark the inbox family stale.
+        String mapped = SymbolSchema.string(HookConfig.resolveModuleContextForHooks(),
+                "symbols.inbox.media_box_item_class", "");
         if (item == null || mapped.isEmpty() || !mapped.equals(item.getClass().getName())) return false;
         try {
-            // October's adapter binds this exact row to MediaBoxModuleView. The
-            // native synthetic UID guards against an unrelated rotated class.
-            return "-8".equals(callRowMethod(item, rowAnchors().rowUidMethod));
+            // October's adapter binds this exact row to MediaBoxModuleView. The native
+            // synthetic UID guards against an unrelated rotated class; the accessor is
+            // re-read from the resolved class so a rename needs no schema path.
+            String uidMethod = mediaBoxUidMethod(item);
+            if (uidMethod.isEmpty()) {
+                return false;
+            }
+            return "-8".equals(callRowMethod(item, uidMethod));
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    /** Cached per row class: the no-arg String accessor that returns the {@code -8} sentinel. */
+    private static final java.util.Map<String, String> MEDIA_BOX_ACCESSORS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final String NO_MEDIA_BOX_ACCESSOR = "";
+
+    private static String mediaBoxUidMethod(Object item) {
+        if (item == null) {
+            return NO_MEDIA_BOX_ACCESSOR;
+        }
+        Class<?> rowClass = item.getClass();
+        String cached = MEDIA_BOX_ACCESSORS.get(rowClass.getName());
+        if (cached != null) {
+            return cached;
+        }
+        String found = NO_MEDIA_BOX_ACCESSOR;
+        for (Method method : rowClass.getDeclaredMethods()) {
+            if (java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                    || method.getParameterTypes().length != 0
+                    || method.getReturnType() != String.class) {
+                continue;
+            }
+            try {
+                method.setAccessible(true);
+                if ("-8".equals(method.invoke(item))) {
+                    found = method.getName();
+                    break;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        MEDIA_BOX_ACCESSORS.put(rowClass.getName(), found);
+        return found;
     }
 
     // ---------------------------------------------------------------- module-owned filter bar

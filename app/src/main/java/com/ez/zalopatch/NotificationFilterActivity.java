@@ -23,9 +23,18 @@ public final class NotificationFilterActivity {
             buildScreen();
         }
 
+        private StatusActivity host() {
+            return (StatusActivity) requireActivity();
+        }
+
+        private Context targetContext() {
+            return host().settingsContext();
+        }
+
         private void buildScreen() {
             Context context = requireContext();
-            NotificationHistoryStore history = new NotificationHistoryStore(context);
+            Context target = targetContext();
+            NotificationHistoryStore history = new NotificationHistoryStore(target);
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
             setPreferenceScreen(screen);
 
@@ -35,13 +44,13 @@ public final class NotificationFilterActivity {
             PreferenceCategory controls = PreferenceUi.category(screen,
                     getString(R.string.zp_filter_controls));
             ZpSection controlSection = ZpSection.in(controls);
-            controlSection.add(toggle(context, Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS,
+            controlSection.add(toggle(context, target, Tweaks.KEY_HIDE_PROMO_NOTIFICATIONS,
                     getString(R.string.zp_filter_master_title),
                     getString(R.string.zp_filter_master_summary)));
-            controlSection.add(toggle(context, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY,
+            controlSection.add(toggle(context, target, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY,
                     getString(R.string.zp_history_record_title),
                     getString(R.string.zp_history_record_summary)));
-            ListPreference retention = retentionPreference(context, history);
+            ListPreference retention = retentionPreference(context, target, history);
             controlSection.addDependent(retention, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY);
             historyPage = PreferenceUi.nav(context,
                     getString(R.string.zp_notification_history_title));
@@ -97,8 +106,9 @@ public final class NotificationFilterActivity {
                 return;
             }
             refreshSnapshotAsync();
+            Context target = targetContext();
             for (java.util.Map.Entry<String, ZpSwitchPreference> entry : toggles.entrySet()) {
-                entry.getValue().chips(notificationTrackingChips(requireContext(), entry.getKey()));
+                entry.getValue().chips(notificationTrackingChips(target, entry.getKey()));
                 entry.getValue().refreshStyle();
             }
         }
@@ -112,8 +122,7 @@ public final class NotificationFilterActivity {
             if (!isAdded()) {
                 return;
             }
-            android.content.Context appContext =
-                    requireContext().getApplicationContext();
+            android.content.Context appContext = targetContext().getApplicationContext();
             new Thread(() -> {
                 NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(appContext);
                 int[] listCounts = new int[NotificationRuleStore.Type.values().length];
@@ -150,14 +159,14 @@ public final class NotificationFilterActivity {
         }
 
         private ZpSwitchPreference toggle(
-                Context context, String key, String title, String summary) {
+                Context context, Context target, String key, String title, String summary) {
             ZpSwitchPreference preference = PreferenceUi.toggle(context, key, title, summary);
-            preference.setChecked(TweakStore.isEnabled(context, key));
-            preference.chips(notificationTrackingChips(context, key));
+            preference.setChecked(TweakStore.isEnabled(target, key));
+            preference.chips(notificationTrackingChips(target, key));
             toggles.put(key, preference);
             preference.setOnPreferenceChangeListener((changed, newValue) -> {
-                return SettingsStore.confirmSaved(context,
-                        TweakStore.setEnabled(context, key, (Boolean) newValue));
+                return SettingsStore.confirmSaved(target,
+                        TweakStore.setEnabled(target, key, (Boolean) newValue));
             });
             return preference;
         }
@@ -199,7 +208,7 @@ public final class NotificationFilterActivity {
         }
 
         private ListPreference retentionPreference(
-                Context context, NotificationHistoryStore store) {
+                Context context, Context target, NotificationHistoryStore store) {
             ZpListPreference retention = new ZpListPreference(context);
             retention.setKey(Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION);
             retention.setTitle(R.string.zp_history_retention_title);
@@ -210,7 +219,7 @@ public final class NotificationFilterActivity {
             retention.setValue(String.valueOf(store.retentionLimit()));
             retention.setOnPreferenceChangeListener((preference, newValue) -> {
                 int value = Integer.parseInt(String.valueOf(newValue));
-                if (!SettingsStore.confirmSaved(context, SettingsStore.putInt(context,
+                if (!SettingsStore.confirmSaved(target, SettingsStore.putInt(target,
                         Tweaks.KEY_NOTIFICATION_HISTORY_RETENTION, value))) return false;
                 store.enforceRetention();
                 return true;

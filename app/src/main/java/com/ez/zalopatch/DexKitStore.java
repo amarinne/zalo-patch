@@ -122,9 +122,16 @@ final class DexKitStore {
         try {
             DexKitCache.Entry entry = DexKitCache.parse(json);
             if (entry.versionCode <= 0L || entry.moduleVersion <= 0) {
+                android.util.Log.i("ZaloPatch", "DexKit cache rejected: entry binding");
                 return false;
             }
             if (context != null && !hostMatchesCurrent(context, entry)) {
+                // The scan reuses the previous entry as its base, so a stale module or host
+                // field here is the difference between a rebaseline and a silent drop.
+                android.util.Log.i("ZaloPatch", "DexKit cache rejected: host mismatch"
+                        + " entry=" + entry.versionCode + ":" + entry.lastUpdateTime + ":"
+                        + entry.apkSize + ":" + entry.queryRevision + ":"
+                        + entry.resolverFormat + ":" + entry.moduleVersion);
                 releaseScanSlot(context);
                 return false;
             }
@@ -141,7 +148,9 @@ final class DexKitStore {
             }
             SymbolSchema.invalidate();
             return true;
-        } catch (Throwable ignored) {
+        } catch (Throwable throwable) {
+            android.util.Log.i("ZaloPatch", "DexKit cache rejected: "
+                    + throwable.getClass().getSimpleName() + " " + throwable.getMessage());
             return false;
         }
     }

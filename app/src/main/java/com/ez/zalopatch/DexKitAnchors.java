@@ -111,6 +111,9 @@ public final class DexKitAnchors {
         // Inbox category field (normal items and adapter runtime-derived).
         ANCHORS.add(new Anchor("symbols.inbox.category_int_field", Kind.FIELD));
         ANCHORS.add(new Anchor("symbols.inbox.conversation_uid_field", Kind.FIELD));
+        // Inbox Media Box row: the sentinel accessor's owner. The accessor name is
+        // re-read from the resolved class, so it is not an anchor of its own.
+        ANCHORS.add(new Anchor("symbols.inbox.media_box_item_class", Kind.CLASS));
         // Chat seen/typing repository family: the message repository that owns the
         // distinctive seen-ack and typing send shapes.
         ANCHORS.add(new Anchor("symbols.chat.message_repository_class", Kind.CLASS));
@@ -155,6 +158,33 @@ public final class DexKitAnchors {
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.OUTGOING, Kind.CLASS));
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.OUTGOING_METHOD, Kind.METHOD));
         ANCHORS.add(new Anchor(DexKitOriginalPhotoFingerprint.SHARE, Kind.METHOD));
+
+        for (String name : DexKitMiniChatFingerprint.CLASSES) {
+            ANCHORS.add(new Anchor(DexKitMiniChatFingerprint.PREFIX + name, Kind.CLASS));
+        }
+        for (String name : DexKitMiniChatFingerprint.FIELDS) {
+            ANCHORS.add(new Anchor(DexKitMiniChatFingerprint.PREFIX + name, Kind.FIELD));
+        }
+        for (String name : DexKitMiniChatFingerprint.METHODS) {
+            ANCHORS.add(new Anchor(DexKitMiniChatFingerprint.PREFIX + name, Kind.METHOD));
+        }
+
+        // Local recall tombstone route: coordinator -> writer -> native update, plus the
+        // cached preview. Every leaf is mandatory; a partial route never arms.
+        for (String name : DexKitRecallFingerprint.CLASSES) {
+            ANCHORS.add(new Anchor(DexKitRecallFingerprint.PREFIX + name, Kind.CLASS));
+        }
+        for (String name : DexKitRecallFingerprint.METHODS) {
+            ANCHORS.add(new Anchor(DexKitRecallFingerprint.PREFIX + name, Kind.METHOD));
+        }
+        for (String name : DexKitRecallFingerprint.FIELDS) {
+            ANCHORS.add(new Anchor(DexKitRecallFingerprint.PREFIX + name, Kind.FIELD));
+        }
+        ANCHORS.add(new Anchor(DexKitRecallFingerprint.TIME_CONFIG, Kind.CLASS));
+        ANCHORS.add(new Anchor(DexKitRecallFingerprint.TIME_VISIBILITY, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitRecallFingerprint.TIME_REFRESH, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitRecallFingerprint.TEXT_DRAW, Kind.METHOD));
+        ANCHORS.add(new Anchor(DexKitRecallFingerprint.TEXT_RECALLED, Kind.FIELD));
 
         // Adtima offline-ad and active-view gate family.
         ANCHORS.add(new Anchor(DexKitAdtimaFingerprint.OFFLINE_WINDOW_CLASS, Kind.CLASS));
@@ -223,7 +253,10 @@ public final class DexKitAnchors {
                 }
                 return true;
             case CLASS:
-                return symbol.matches("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+");
+                // Zalo keeps obfuscated classes in the default package, so a single
+                // identifier is a real class name here; a dot is not a reference test.
+                return symbol.matches(
+                        "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*");
             case METHOD:
             case FIELD:
                 return symbol.matches("[A-Za-z_$][A-Za-z0-9_$]*");

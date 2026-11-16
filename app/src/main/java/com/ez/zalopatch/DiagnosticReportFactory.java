@@ -122,6 +122,7 @@ final class DiagnosticReportFactory {
     private static JSONObject productMetadata(
             Context context, PackageSnapshot packages, String rootStatus,
             DiagnosticCaptureManager.FinishedCapture capture) throws Exception {
+        String selectedPackage = reportPackage(context);
         SymbolSchema.Active schema = SymbolSchema.active(context);
         List<SelfCheckData.Row> rows = SelfCheckData.load(context);
         SelfCheckData.Counts counts = SelfCheckData.counts(rows);
@@ -129,6 +130,11 @@ final class DiagnosticReportFactory {
                 && ZaloArtifactState.currentEvidenceEpoch(context).equals(
                         TweakStore.preferences(context).getString("internal.selfcheck_generation", ""));
         JSONObject product = new JSONObject();
+        JSONObject selectedTarget = new JSONObject();
+        selectedTarget.put("packageName", bounded(selectedPackage, 256));
+        selectedTarget.put("androidUser", ownAndroidUser());
+        selectedTarget.put("original", HostPackages.ZALO.equals(selectedPackage));
+        product.put("selectedTarget", selectedTarget);
         product.put("debugLoggingEnabled", HookConfig.isDebugEnabled());
         product.put("traceLoggingEnabled", systemPropertyEnabled("debug.zalopatch.trace"));
         product.put("rootAccessStatus", rootStatus);
@@ -401,7 +407,19 @@ final class DiagnosticReportFactory {
     private static PackageSnapshot packageSnapshot(Context context) {
         return new PackageSnapshot(
                 new PackageVersion(true, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
-                installedPackage(context, "com.zing.zalo"));
+                installedPackage(context, HostPackages.target(context)));
+    }
+
+    static String reportPackage(Context context) {
+        return HostPackages.transportHost(context);
+    }
+
+    static int ownAndroidUser() {
+        try {
+            return ZaloInstance.androidUser(android.os.Process.myUid());
+        } catch (Throwable unavailable) {
+            return -1;
+        }
     }
 
     @SuppressWarnings("deprecation")

@@ -21,6 +21,11 @@ import java.util.Set;
  *       group-flag method is resolved: that needed the DexKit invoke graph, which aborts
  *       the process for some methods, and it reintroduced a multi-way ambiguity the UID
  *       convention does not have.</li>
+ *   <li>the Media Box row class: the {@code -8}-returning accessor's owner, which holds
+ *       exactly one Conversation field and a {@code (Conversation)} constructor. The
+ *       accessor name itself is re-read from the resolved class by the feature. The
+ *       layout route needs no symbol; this anchor only keeps the row-level verification
+ *       working when the class name rotates.</li>
  * </ul>
  *
  * <p>Everything else stays runtime-derived by the feature and is never resolved here:
@@ -37,9 +42,24 @@ public final class DexKitInboxFingerprint {
 
     public static final String ANCHOR_UID_FIELD = "symbols.inbox.conversation_uid_field";
 
+    /**
+     * Media Box row: the adapter item that renders {@code item_channel_media_box}. Its
+     * no-arg String accessor returns the {@code -8} synthetic sentinel, and the row is a
+     * Conversation-holding item with a {@code (Conversation)} constructor. The two gates
+     * are stable across every retained release (260602901 {@code d00.w} through 261102901
+     * {@code hmf}); the boolean flags and extra payload fields are not, so they are not
+     * part of the gate.
+     */
+    public static final String ANCHOR_MEDIA_BOX_ITEM = "symbols.inbox.media_box_item_class";
+
     public static final String QUERY_CATEGORY_USERS = "inbox.category_users";
 
     public static final String QUERY_ROW_UID_METHODS = "inbox.row_uid_methods";
+
+    public static final String QUERY_MEDIA_BOX_UID = "inbox.media_box_uid";
+
+    /** Synthetic UID the media-box row reports; it is not a real conversation id. */
+    public static final String MEDIA_BOX_SENTINEL = "-8";
 
     public static final String CONVERSATION_CLASS =
             "com.zing.zalo.data.chat.model.tabmessage.Conversation";
@@ -240,6 +260,75 @@ public final class DexKitInboxFingerprint {
             return new RowResolution("", "", "no_uid_field");
         }
         return new RowResolution("", "", "ambiguous_uid_field");
+    }
+
+    /** One {@code -8}-returning accessor with its owner's measured row shape. */
+    public static final class MediaBoxCandidate {
+        public final String owner;
+        public final String method;
+        public final int conversationFields;
+        public final boolean conversationConstructor;
+
+        public MediaBoxCandidate(String owner, String method, int conversationFields,
+                                 boolean conversationConstructor) {
+            this.owner = owner == null ? "" : owner;
+            this.method = method == null ? "" : method;
+            this.conversationFields = conversationFields;
+            this.conversationConstructor = conversationConstructor;
+        }
+    }
+
+    /** Resolution outcome: the media-box item class plus its sentinel accessor. */
+    public static final class MediaBoxResolution {
+        public final String itemClass;
+        public final String uidMethod;
+        public final String status;
+
+        MediaBoxResolution(String itemClass, String uidMethod, String status) {
+            this.itemClass = itemClass == null ? "" : itemClass;
+            this.uidMethod = uidMethod == null ? "" : uidMethod;
+            this.status = status == null ? "" : status;
+        }
+
+        public boolean resolved() {
+            return "resolved".equals(status);
+        }
+    }
+
+    /**
+     * Resolves the Media Box row from {@code -8}-returning no-arg String accessors.
+     *
+     * <p>The literal alone is not enough: sibling box rows carry their own older
+     * sentinels (261102901 {@code h52#e} returns {@code -20251126}), so the owner shape
+     * is the second gate. A qualifying row holds exactly one Conversation field and
+     * declares a {@code (Conversation)} constructor. Exactly one qualifying owner
+     * resolves; zero or several stay unavailable (Decision 18).
+     */
+    public static MediaBoxResolution resolveMediaBoxUid(List<MediaBoxCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return new MediaBoxResolution("", "", "no_media_box_row");
+        }
+        Set<String> owners = new LinkedHashSet<>();
+        String method = "";
+        for (MediaBoxCandidate candidate : candidates) {
+            if (candidate == null || candidate.owner.isEmpty() || candidate.method.isEmpty()) {
+                continue;
+            }
+            if (candidate.conversationFields != 1 || !candidate.conversationConstructor) {
+                continue;
+            }
+            owners.add(candidate.owner);
+            if (method.isEmpty()) {
+                method = candidate.method;
+            }
+        }
+        if (owners.size() == 1) {
+            return new MediaBoxResolution(owners.iterator().next(), method, "resolved");
+        }
+        if (owners.isEmpty()) {
+            return new MediaBoxResolution("", "", "no_row_shape");
+        }
+        return new MediaBoxResolution("", "", "ambiguous_media_box_row");
     }
 
     static String fieldName(String qualified) {

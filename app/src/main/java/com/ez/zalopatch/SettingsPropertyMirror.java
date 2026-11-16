@@ -14,10 +14,15 @@ public final class SettingsPropertyMirror {
     }
 
     public static String read(String key) {
+        return read(null, key);
+    }
+
+    /** Original callers keep the historical name; a host package selects its own namespace. */
+    static String read(String hostPackage, String key) {
         try {
             Class<?> sp = Class.forName("android.os.SystemProperties");
             String value = (String) sp.getMethod("get", String.class, String.class)
-                    .invoke(null, propertyName(key), "");
+                    .invoke(null, propertyName(hostPackage, key), "");
             return value == null || value.length() == 0 ? null : value;
         } catch (Throwable ignored) {
             return null;
@@ -25,20 +30,32 @@ public final class SettingsPropertyMirror {
     }
 
     public static boolean writeBoolean(String key, boolean value) {
-        return write(key, String.valueOf(value));
+        return writeBoolean(null, key, value);
+    }
+
+    static boolean writeBoolean(String hostPackage, String key, boolean value) {
+        return write(hostPackage, key, String.valueOf(value));
     }
 
     public static boolean writeInt(String key, int value) {
-        return write(key, String.valueOf(value));
+        return writeInt(null, key, value);
+    }
+
+    static boolean writeInt(String hostPackage, String key, int value) {
+        return write(hostPackage, key, String.valueOf(value));
     }
 
     public static boolean writeString(String key, String value) {
+        return writeString(null, key, value);
+    }
+
+    static boolean writeString(String hostPackage, String key, String value) {
         // Android setprop requires a value argument. Empty optional metadata must not turn an
         // otherwise successful settings sync into a false root-denied result.
         if (value == null || value.isEmpty()) {
             return true;
         }
-        return write(key, value);
+        return write(hostPackage, key, value);
     }
 
     /**
@@ -46,11 +63,15 @@ public final class SettingsPropertyMirror {
      * property instead of leaving the hook process authorizing against the stale one.
      */
     public static boolean writeOptional(String key, String value) {
+        return writeOptional(null, key, value);
+    }
+
+    static boolean writeOptional(String hostPackage, String key, String value) {
         if (value == null) {
             return false;
         }
         try {
-            String propertyName = propertyName(key);
+            String propertyName = propertyName(hostPackage, key);
             if (!isSafePropertyName(propertyName) || !isSafeValue(value)) {
                 return logValidationFailure(key, "name/value");
             }
@@ -66,19 +87,27 @@ public final class SettingsPropertyMirror {
     }
 
     static boolean hasBlobMarker(String key) {
-        try { return !readProperty(propertyName(key) + ".n", "").isEmpty(); }
+        return hasBlobMarker(null, key);
+    }
+
+    static boolean hasBlobMarker(String hostPackage, String key) {
+        try { return !readProperty(propertyName(hostPackage, key) + ".n", "").isEmpty(); }
         catch (Throwable unavailable) { return false; }
     }
 
     public static String readBlob(String key) {
+        return readBlob(null, key);
+    }
+
+    static String readBlob(String hostPackage, String key) {
         try {
-            int count = Integer.parseInt(readProperty(propertyName(key) + ".n", "0"));
+            int count = Integer.parseInt(readProperty(propertyName(hostPackage, key) + ".n", "0"));
             if (count <= 0 || count > MAX_BLOB_CHUNKS) {
                 return null;
             }
             StringBuilder encoded = new StringBuilder(count * BLOB_CHUNK_SIZE);
             for (int i = 0; i < count; i++) {
-                String chunk = readProperty(propertyName(key) + "." + i, "");
+                String chunk = readProperty(propertyName(hostPackage, key) + "." + i, "");
                 if (chunk.isEmpty()) {
                     return null;
                 }
@@ -93,6 +122,10 @@ public final class SettingsPropertyMirror {
     }
 
     public static boolean writeBlob(String key, String value) {
+        return writeBlob(null, key, value);
+    }
+
+    static boolean writeBlob(String hostPackage, String key, String value) {
         try {
             String encoded = Base64.encodeToString(
                     (value == null ? "" : value).getBytes(StandardCharsets.UTF_8),
@@ -102,7 +135,7 @@ public final class SettingsPropertyMirror {
             if (count > MAX_BLOB_CHUNKS) {
                 throw new IllegalArgumentException("notification rules too large");
             }
-            String base = propertyName(key);
+            String base = propertyName(hostPackage, key);
             if (!isSafePropertyName(base + ".n")) {
                 return logValidationFailure(key, "name");
             }
@@ -131,9 +164,9 @@ public final class SettingsPropertyMirror {
         }
     }
 
-    private static boolean write(String key, String value) {
+    private static boolean write(String hostPackage, String key, String value) {
         try {
-            String propertyName = propertyName(key);
+            String propertyName = propertyName(hostPackage, key);
             if (!isSafePropertyName(propertyName) || !isSafeValue(value)) {
                 return logValidationFailure(key, "name/value");
             }
@@ -208,7 +241,11 @@ public final class SettingsPropertyMirror {
                 .invoke(null, name, fallback);
     }
 
-    private static String propertyName(String key) {
-        return PREFIX + Integer.toHexString(key.hashCode());
+    /** The original's wire name is unchanged; clones add the existing package scope. */
+    static String propertyName(String hostPackage, String key) {
+        String scope = HostPackages.transportScope(hostPackage);
+        return scope.isEmpty()
+                ? PREFIX + Integer.toHexString(key.hashCode())
+                : PREFIX + scope + "." + Integer.toHexString(key.hashCode());
     }
 }

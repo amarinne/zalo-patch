@@ -5,7 +5,6 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
-import android.os.Process;
 import android.util.Log;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,25 +31,30 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (context == null || intent == null) return;
-        if (!senderAllowed(context)) {
+        if (Build.VERSION.SDK_INT < 34) return;
+        String caller = HostPackages.callerPackage(context, getSentFromUid());
+        if (caller == null) {
             if (REJECTION_LOGGED.compareAndSet(false, true)) {
                 Log.w("ZaloPatch", "SelfCheck fallback rejected sender "
                         + rejectedSenderDescription());
             }
             return;
         }
-        handleAllowed(context, intent);
+        handleAllowed(HostPackages.scoped(context, caller), intent);
     }
 
     static void handleAllowed(Context context, Intent intent) {
         if (ACTION_RECORD_RUNTIME_ENVIRONMENT.equals(intent.getAction())) {
+            long reportedVersion = intent.getLongExtra("zalo_version_code", -1L);
+            if (reportedVersion <= 0L
+                    || reportedVersion != SymbolSchema.installedZaloVersionCode(context)) return;
             RuntimeEnvironment.record(context, intent.getStringExtra("framework"),
                     intent.getStringExtra("resource_hooks_status") == null
                             ? (intent.getBooleanExtra("resource_hooks_observed", false)
                                     ? "observed" : "pending")
                             : intent.getStringExtra("resource_hooks_status"),
                     intent.getIntExtra("module_version_code", -1),
-                    intent.getLongExtra("zalo_version_code", -1L));
+                    reportedVersion);
             return;
         }
         if (ACTION_COMPLETE_RUNTIME_DISCOVERY.equals(intent.getAction())) {
@@ -68,7 +72,7 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
             if (json != null && !json.isEmpty()) {
                 if (DexKitStore.save(context, json)) {
                     DexKitMirror.sync(context);
-                    ZaloArtifactState.requestRemapUpload(context);
+                    if (!HostPackages.renamed(context)) ZaloArtifactState.requestRemapUpload(context);
                 }
             }
             return;
@@ -157,25 +161,6 @@ public final class SelfCheckReceiver extends BroadcastReceiver {
         values.put("run_id", intent.getStringExtra("run_id"));
         values.put("config_snapshot_id", intent.getStringExtra("config_snapshot_id"));
         return values;
-    }
-
-    private boolean senderAllowed(Context context) {
-        if (Build.VERSION.SDK_INT < 34) {
-            return false;
-        }
-        String senderPackage = getSentFromPackage();
-        if (context.getPackageName().equals(senderPackage)
-                || ZaloArtifactIdentity.PACKAGE_NAME.equals(senderPackage)) {
-            return true;
-        }
-        int uid = getSentFromUid();
-        if (uid == Process.myUid()) return true;
-        try {
-            return uid == context.getPackageManager().getPackageUid(
-                    ZaloArtifactIdentity.PACKAGE_NAME, 0);
-        } catch (Throwable ignored) {
-            return false;
-        }
     }
 
     private String rejectedSenderDescription() {

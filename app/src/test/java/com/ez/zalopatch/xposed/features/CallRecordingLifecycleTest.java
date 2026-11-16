@@ -49,6 +49,13 @@ public final class CallRecordingLifecycleTest {
     }
 
     @Test
+    public void activityDestructionKeepsCaptureUntilThePeerEnds() {
+        // Android trimmed the call task while its native peer remained connected.
+        assertFalse(CallRecordingLifecycle.shouldStopAfterActivityDestroy(true));
+        assertTrue(CallRecordingLifecycle.shouldStopAfterActivityDestroy(false));
+    }
+
+    @Test
     public void headerOnlyCaptureReattachesOnce() {
         // A recorder that never received a frame leaves exactly the 44-byte WAV header.
         assertFalse(CallRecordingLifecycle.hasCaptureAudio(44));

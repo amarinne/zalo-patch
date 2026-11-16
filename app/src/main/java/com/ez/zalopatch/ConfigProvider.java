@@ -17,6 +17,7 @@ public final class ConfigProvider extends ContentProvider {
     public static final String AUTHORITY = "com.ez.zalopatch.config";
     public static final Uri URI = Uri.parse("content://" + AUTHORITY + "/prefs");
     public static final Uri NOTIFICATION_HISTORY_URI = Uri.parse("content://" + AUTHORITY + "/notification_history");
+    private static final String HOST_PACKAGE = "host_package";
     private static final String SELF_CHECK_PREFIX = "selfcheck.";
     private static final String KEY_SELF_CHECK_GENERATION = "internal.selfcheck_generation";
     private static final String KEY_SELF_CHECK_RUN_ID = "internal.selfcheck_run_id";
@@ -53,17 +54,19 @@ public final class ConfigProvider extends ContentProvider {
         if (getContext() == null) {
             return null;
         }
-        TweakStore.initialize(getContext());
-        SharedPreferences prefs = TweakStore.preferences(getContext());
+        android.content.Context host = callerContext(uri.getQueryParameter(HOST_PACKAGE));
+        if (host == null) return null;
+        TweakStore.initialize(host);
+        SharedPreferences prefs = TweakStore.preferences(host);
         int match = MATCHER.match(uri);
         if (match == SELF_CHECK || match == ONE_SELF_CHECK) {
-            return querySelfCheck(uri, prefs, match == ONE_SELF_CHECK);
+            return querySelfCheck(uri, TweakStore.preferences(host), match == ONE_SELF_CHECK);
         }
         if (match == SYMBOL_SCHEMA) {
-            return querySymbolSchema(getContext());
+            return querySymbolSchema(host);
         }
         if (match == DEXKIT_CACHE) {
-            return queryDexkitCache(getContext());
+            return queryDexkitCache(host);
         }
         if (match == NOTIFICATION_HISTORY) {
             return null;
@@ -77,7 +80,7 @@ public final class ConfigProvider extends ContentProvider {
         if (targetKey != null) {
             Settings.Setting<?> setting = Settings.find(targetKey);
             if (setting != null) {
-                addSettingRow(cursor, getContext(), setting);
+                addSettingRow(cursor, host, setting);
                 return cursor;
             }
             Object value = prefs.getAll().get(targetKey);
@@ -88,7 +91,7 @@ public final class ConfigProvider extends ContentProvider {
         }
 
         for (Settings.Setting<?> setting : Settings.all()) {
-            addSettingRow(cursor, getContext(), setting);
+            addSettingRow(cursor, host, setting);
         }
         Map<String, ?> all = prefs.getAll();
         for (Map.Entry<String, ?> entry : all.entrySet()) {
@@ -107,6 +110,7 @@ public final class ConfigProvider extends ContentProvider {
                 "artifact_compatible", "catalog_status", "catalog_sequence", "catalog_digest"
         });
         SymbolSchema.Active active = SymbolSchema.active(context);
+        ZaloArtifactState.Compatibility compatibility = ZaloArtifactState.currentCompatibility(context);
         cursor.addRow(new Object[]{
                 active.source,
                 active.schemaVersion,
@@ -119,10 +123,10 @@ public final class ConfigProvider extends ContentProvider {
                 active.installedVersionCode,
                 active.profileCount,
                 active.supportedVersionCodes,
-                TweakStore.preferences(context).getString(ZaloArtifactState.KEY_STATUS, "pending"),
-                TweakStore.preferences(context).getString(ZaloArtifactState.KEY_GENERATION, ""),
+                compatibility.status,
+                compatibility.generation,
                 active.string("artifact.verification", "unverified"),
-                ZaloArtifactState.currentCompatibility(context).compatible ? 1 : 0,
+                compatibility.compatible ? 1 : 0,
                 TweakStore.preferences(context).getString(
                         ZaloArtifactState.KEY_CATALOG_STATUS, "missing"),
                 TweakStore.preferences(context).getInt(
@@ -154,7 +158,7 @@ public final class ConfigProvider extends ContentProvider {
     private static String dexkitScope(android.content.Context context) {
         try {
             android.content.pm.PackageInfo info = context.getPackageManager()
-                    .getPackageInfo("com.zing.zalo", 0);
+                    .getPackageInfo(HostPackages.target(context), 0);
             return dexkitScope(android.os.Build.VERSION.SDK_INT >= 28
                     ? info.getLongVersionCode() : info.versionCode, info.lastUpdateTime);
         } catch (Throwable ignored) {
@@ -237,24 +241,42 @@ public final class ConfigProvider extends ContentProvider {
         if (getContext() == null) {
             return null;
         }
+        if ("is_host_allowed".equals(method)) {
+            Bundle result = new Bundle();
+            result.putBoolean("allowed", arg != null
+                    && arg.equals(HostPackages.callerPackage(getContext(), Binder.getCallingUid())));
+            return result;
+        }
+        if ("set_host_packages".equals(method)) {
+            if (Binder.getCallingUid() != Process.myUid() && !uidOwnsPackage("com.android.shell")) return null;
+            Bundle result = new Bundle();
+            try {
+                result.putBoolean("saved", HostPackages.save(getContext(), arg));
+            } catch (IllegalArgumentException invalid) {
+                result.putString("error", invalid.getMessage());
+            }
+            return result;
+        }
         if ("record_self_check".equals(method)) {
             if (!callerAllowed() || extras == null) return null;
             ContentValues values = extras.getParcelable("values");
             String feature = extras.getString("feature", "");
-            int recorded = values == null || feature.isEmpty()
-                    ? 0 : recordSelfCheck(getContext(), feature, values);
+            android.content.Context host = callerContext(null);
+            int recorded = values == null || feature.isEmpty() || host == null
+                    ? 0 : recordSelfCheck(host, feature, values);
             Bundle result = new Bundle();
             result.putInt("recorded", recorded);
             return result;
         }
         if ("record_notification_history".equals(method)) {
-            if (!callerAllowed() || extras == null
-                    || !SettingsChanges.runtimeBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
+            android.content.Context host = callerContext(null);
+            if (!callerAllowed() || extras == null || host == null
+                    || !SettingsChanges.runtimeBoolean(host, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
                 return null;
             }
             ContentValues values = extras.getParcelable("values");
             if (values == null) return null;
-            long id = new NotificationHistoryStore(getContext()).record(values);
+            long id = new NotificationHistoryStore(host).record(values);
             Bundle result = new Bundle();
             result.putLong("id", id);
             return result;
@@ -262,13 +284,16 @@ public final class ConfigProvider extends ContentProvider {
         if ("reconcile_zalo_artifact".equals(method)) {
             if (!syncCallerAllowed()) return null;
             Bundle result = new Bundle();
-            result.putBoolean("scheduled", ZaloArtifactState.schedule(getContext()));
+            android.content.Context host = callerContext(requestedHost(extras));
+            if (host == null) return null;
+            result.putBoolean("scheduled", ZaloArtifactState.schedule(host));
             return result;
         }
         if ("record_runtime_discovery_evidence".equals(method)) {
-            if (!callerAllowed() || extras == null) return null;
+            android.content.Context host = callerContext(null);
+            if (!callerAllowed() || extras == null || host == null) return null;
             long versionCode = extras.getLong("version_code", -1L);
-            boolean recorded = RemapEvidenceStore.record(getContext(), versionCode,
+            boolean recorded = RemapEvidenceStore.record(host, versionCode,
                     extras.getString("kind", ""), extras.getString("value", ""));
             Bundle result = new Bundle();
             result.putBoolean("recorded", recorded);
@@ -276,13 +301,20 @@ public final class ConfigProvider extends ContentProvider {
         }
         if ("record_runtime_environment".equals(method)) {
             if (!callerAllowed() || extras == null) return null;
-            boolean recorded = RuntimeEnvironment.record(getContext(),
+            android.content.Context host = callerContext(null);
+            if (host == null) return null;
+            // Validate the reported epoch without relabeling a delayed old-process report as
+            // evidence for a newer installed version. The caller UID already selects the host.
+            long zaloVersion = extras.getLong("zalo_version_code", -1L);
+            if (zaloVersion <= 0L
+                    || zaloVersion != SymbolSchema.installedZaloVersionCode(host)) return null;
+            boolean recorded = RuntimeEnvironment.record(host,
                     extras.getString("framework", "unknown"),
                     extras.getString("resource_hooks_status",
                             extras.getBoolean("resource_hooks_observed", false)
                                     ? "observed" : "pending"),
                     extras.getInt("module_version_code", -1),
-                    extras.getLong("zalo_version_code", -1L));
+                    zaloVersion);
             Bundle result = new Bundle();
             result.putBoolean("recorded", recorded);
             return result;
@@ -295,17 +327,22 @@ public final class ConfigProvider extends ContentProvider {
             } catch (NumberFormatException ignored) {
                 return null;
             }
-            DiagnosticsState.completeRuntimeDiscovery(getContext(), versionCode);
+            android.content.Context host = callerContext(null);
+            if (host == null) return null;
+            DiagnosticsState.completeRuntimeDiscovery(host, versionCode);
             Bundle result = new Bundle();
             result.putBoolean("completed", true);
             return result;
         }
         if ("record_dexkit_cache".equals(method)) {
             if (!callerAllowed() || extras == null) return null;
-            boolean recorded = DexKitStore.save(getContext(), extras.getString("json", ""));
+            android.content.Context host = callerContext(null);
+            if (host == null) return null;
+            boolean recorded = DexKitStore.save(host, extras.getString("json", ""));
+            android.util.Log.i("ZaloPatch", "DexKit cache record recorded=" + recorded);
             if (recorded) {
-                DexKitMirror.sync(getContext());
-                ZaloArtifactState.requestRemapUpload(getContext());
+                DexKitMirror.sync(host);
+                if (!HostPackages.renamed(host)) ZaloArtifactState.requestRemapUpload(getContext());
             }
             Bundle result = new Bundle();
             result.putBoolean("recorded", recorded);
@@ -316,15 +353,18 @@ public final class ConfigProvider extends ContentProvider {
             String scope = dexkitScope(extras.getLong("version_code", -1L),
                     extras.getLong("last_update_time", -1L));
             if (scope.isEmpty()) return null;
-            DexKitStore.recordFailure(getContext(), System.currentTimeMillis(), scope);
-            DexKitMirror.sync(getContext());
+            android.content.Context host = callerContext(null);
+            if (host == null) return null;
+            DexKitStore.recordFailure(host, System.currentTimeMillis(), scope);
+            DexKitMirror.sync(host);
             Bundle result = new Bundle();
             result.putBoolean("recorded", true);
             return result;
         }
         if ("clear_dexkit_cache".equals(method)) {
             if (!callerAllowed()) return null;
-            android.content.Context context = getContext();
+            android.content.Context context = callerContext(null);
+            if (context == null) return null;
             boolean cleared = DexKitStore.clear(context);
             // Clear the property mirror too, so a mirror-backed process cannot keep
             // reusing the entry this call was meant to invalidate. Report the mirror
@@ -340,8 +380,10 @@ public final class ConfigProvider extends ContentProvider {
             String scope = extras == null ? "" : dexkitScope(
                     extras.getLong("version_code", -1L),
                     extras.getLong("last_update_time", -1L));
+            android.content.Context host = callerContext(null);
+            if (host == null) return null;
             DexKitStore.ScanState state = DexKitStore.claimScanSlot(
-                    getContext(), System.currentTimeMillis(), scope);
+                    host, System.currentTimeMillis(), scope);
             Bundle result = new Bundle();
             result.putBoolean("allowed", state.allowed);
             result.putString("reason", state.reason);
@@ -350,22 +392,27 @@ public final class ConfigProvider extends ContentProvider {
         }
         if ("settings_state".equals(method)) {
             if (!syncCallerAllowed()) return null;
+            android.content.Context host = callerContext(requestedHost(extras));
+            if (host == null) return null;
             Bundle result = new Bundle();
-            result.putInt("pending", SettingsChanges.pendingCount(getContext()));
-            ConfigSnapshot active = SettingsChanges.active(getContext());
+            result.putInt("pending", SettingsChanges.pendingCount(host));
+            ConfigSnapshot active = SettingsChanges.active(host);
             result.putBoolean("activation_known", active != null);
             result.putString("active_snapshot_id", active == null ? "" : active.id);
-            result.putLong("saved_revision", SettingsChanges.generation(getContext()));
+            result.putLong("saved_revision", SettingsChanges.generation(host));
             return result;
         }
         if ("save_settings".equals(method)) {
             if (Binder.getCallingUid() != Process.myUid() && !uidOwnsPackage("com.android.shell")) return null;
-            TweakStore.initialize(getContext());
+            android.content.Context host = callerContext(requestedHost(extras));
+            if (host == null) return null;
+            TweakStore.initialize(host);
             Bundle result = new Bundle();
             java.util.Map<String, Object> changes = new java.util.HashMap<>();
             try {
                 if (extras == null) throw new IllegalArgumentException("Missing settings");
                 for (String key : extras.keySet()) {
+                    if (HOST_PACKAGE.equals(key)) continue;
                     Object value = extras.get(key);
                     Settings.Setting<?> setting = Settings.find(key);
                     if (NotificationRuleStore.MIRROR_KEY.equals(key) && value instanceof String) {
@@ -377,14 +424,34 @@ public final class ConfigProvider extends ContentProvider {
                         else throw new IllegalArgumentException("Wrong setting type");
                     } else throw new IllegalArgumentException("Unknown setting");
                 }
-                result.putBoolean("saved", SettingsStore.save(getContext(), changes));
+                result.putBoolean("saved", SettingsStore.save(host, changes));
             } catch (Exception invalid) { result.putBoolean("saved", false); }
-            result.putInt("pending", SettingsChanges.pendingCount(getContext()));
-            result.putBoolean("activation_known", SettingsChanges.active(getContext()) != null);
+            result.putInt("pending", SettingsChanges.pendingCount(host));
+            result.putBoolean("activation_known", SettingsChanges.active(host) != null);
             return result;
         }
         if ("restart_zalo".equals(method)) {
             if (Binder.getCallingUid() != Process.myUid() && !uidOwnsPackage("com.android.shell")) return null;
+            if (extras != null && extras.containsKey(HOST_PACKAGE)) {
+                // Selected-package path: explicit registered same-user target, validated before
+                // scheduling. A bad selector must fail closed, not restart the original.
+                android.content.Context host = callerContext(requestedHost(extras));
+                if (host == null) return null;
+                int requestedUser = extras.getInt("user_id", -1);
+                if (!selectedRestartUserValid(requestedUser,
+                        ZaloInstance.androidUser(Process.myUid()))) {
+                    return null;
+                }
+                ZaloRestart.InstanceTarget target = ZaloRestart.captureTarget(
+                        host, HostPackages.target(host));
+                if (target == null) return null;
+                ZaloRestart.runScoped(target, ignored -> {});
+                Bundle result = new Bundle();
+                result.putBoolean("requested", true);
+                return result;
+            }
+            // Legacy no-selector command, including the old explicit canonical user_id, stays
+            // byte-for-byte compatible for existing deploy tooling.
             int userId = extras == null ? -1 : extras.getInt("user_id", -1);
             if (userId < -1) return null;
             ZaloRestart.run(getContext(), userId < 0 ? null : ZaloRestart.Target.single(userId), ignored -> {});
@@ -396,18 +463,35 @@ public final class ConfigProvider extends ContentProvider {
             return null;
         }
         if (!syncCallerAllowed()) return null;
-        TweakStore.initialize(getContext());
-        boolean synced = FrameworkConfig.apply(getContext());
+        android.content.Context host = callerContext(requestedHost(extras));
+        if (host == null) return null;
+        TweakStore.initialize(host);
+        boolean synced = FrameworkConfig.apply(host);
         Bundle result = new Bundle();
-        NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(getContext());
+        NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(host);
         result.putBoolean("synced", synced);
         result.putString("transport", FrameworkConfig.hasRemoteService()
                 ? "framework_remote" : "provider_snapshot");
-        ConfigSnapshot published = ConfigSnapshot.decode(TweakStore.preferences(getContext())
+        ConfigSnapshot published = ConfigSnapshot.decode(TweakStore.preferences(host)
                 .getString(ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
         result.putString("snapshot_id", synced && published != null ? published.id : "");
         result.putInt("notification_rule_count", rules.total());
         return result;
+    }
+
+    private static String requestedHost(Bundle extras) {
+        if (extras == null || !extras.containsKey(HOST_PACKAGE)) return null;
+        Object value = extras.get(HOST_PACKAGE);
+        // An explicit malformed selector must not become the implicit original target.
+        return value instanceof String ? (String) value : "";
+    }
+
+    /**
+     * The selected-package restart is same-user only. The legacy no-selector path keeps its
+     * explicit canonical user_id; a selected target cannot be pointed at another Android user.
+     */
+    static boolean selectedRestartUserValid(int requestedUser, int moduleUser) {
+        return requestedUser >= -1 && (requestedUser == -1 || requestedUser == moduleUser);
     }
 
     private boolean syncCallerAllowed() {
@@ -423,12 +507,14 @@ public final class ConfigProvider extends ContentProvider {
             return null;
         }
         int match = MATCHER.match(uri);
-        TweakStore.initialize(getContext());
+        android.content.Context host = callerContext(uri.getQueryParameter(HOST_PACKAGE));
+        if (host == null) return null;
+        TweakStore.initialize(host);
         if (match == NOTIFICATION_HISTORY) {
-            if (!SettingsChanges.runtimeBoolean(getContext(), Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
+            if (!SettingsChanges.runtimeBoolean(host, Tweaks.KEY_RECORD_NOTIFICATION_HISTORY)) {
                 return null;
             }
-            long id = new NotificationHistoryStore(getContext()).record(values);
+            long id = new NotificationHistoryStore(host).record(values);
             return id >= 0L ? Uri.withAppendedPath(uri, String.valueOf(id)) : null;
         }
         return null;
@@ -448,11 +534,13 @@ public final class ConfigProvider extends ContentProvider {
         if (!callerAllowed()) return -1;
         String feature = uri.getLastPathSegment();
         if (feature == null || feature.isEmpty()) return 0;
-        return recordSelfCheck(getContext(), feature, values);
+        android.content.Context host = callerContext(null);
+        return host == null ? -1 : recordSelfCheck(host, feature, values);
     }
 
     static int recordSelfCheck(android.content.Context context, String feature,
                                ContentValues values) {
+        if (context == null) return -1;
         TweakStore.initialize(context);
         SharedPreferences preferences = TweakStore.preferences(context);
         ArtifactEvidenceIdentity identity = ZaloArtifactState.evidenceIdentity(context);
@@ -498,6 +586,7 @@ public final class ConfigProvider extends ContentProvider {
         if (!storedRunId.isEmpty()) editor.putString(KEY_SELF_CHECK_RUN_ID, storedRunId);
         editor.apply();
         if ("symbol_schema".equals(feature)) {
+            // A target's admitted report may only acknowledge its own publication.
             FrameworkConfig.acknowledge(context, values.getAsString("config_snapshot_id"));
         }
         RuntimeStatusTraceStore.record(context, feature, values);
@@ -525,8 +614,25 @@ public final class ConfigProvider extends ContentProvider {
     }
 
     private boolean callerAllowed() {
-        return getContext() != null && (Binder.getCallingUid() == Process.myUid()
-                || uidOwnsPackage("com.zing.zalo"));
+        return HostPackages.callerPackage(getContext(), Binder.getCallingUid()) != null;
+    }
+
+    private android.content.Context callerContext(String requestedPackage) {
+        if (requestedPackage != null) {
+            if (!HostPackages.explicitHostAllowed(Binder.getCallingUid(), Process.myUid(),
+                    uidOwnsPackage("com.android.shell"))
+                    || !HostPackages.allows(HostPackages.additional(getContext()), requestedPackage)) {
+                return null;
+            }
+            return HostPackages.scoped(getContext(), requestedPackage);
+        }
+        String caller = HostPackages.callerPackage(getContext(), Binder.getCallingUid());
+        if (caller == null && uidOwnsPackage("com.android.shell")) {
+            // The shell CLI keeps its existing implicit original default; it still cannot select
+            // an unregistered package, and every other unresolved caller fails closed.
+            caller = HostPackages.ZALO;
+        }
+        return caller == null ? null : HostPackages.scoped(getContext(), caller);
     }
 
     private boolean uidOwnsPackage(String packageName) {

@@ -9,15 +9,33 @@ public final class TweakStore {
     private static final int RETIRED_ZINSTANT_AD_ONLY = 1;
     private static final int RETIRED_ZINSTANT_ALL_RELATED = 2;
     private static volatile boolean initialized;
+    private static final java.util.Set<String> initializedScopes =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private TweakStore() {
     }
 
     public static synchronized void initialize(Context context) {
+        // Scope initialization by the existing host suffix. A clone must get its own defaults
+        // and must not be skipped because the original's module process ran first.
+        String scope = HostPackages.scopeSuffix(context);
+        if (!scope.isEmpty()) {
+            if (initializedScopes.contains(scope)) makeReadable(context);
+            else {
+                initializeScope(context);
+                initializedScopes.add(scope);
+            }
+            return;
+        }
         if (initialized) {
             makeReadable(context);
             return;
         }
+        initializeScope(context);
+        initialized = true;
+    }
+
+    private static void initializeScope(Context context) {
         deleteRetiredSchemaOverride(context);
         SharedPreferences preferences = preferences(context);
         removeRetiredDiagnostics(preferences);
@@ -53,7 +71,6 @@ public final class TweakStore {
             editor.commit();
         }
         makeReadable(context);
-        initialized = true;
     }
 
     public static SharedPreferences preferences(Context context) {
@@ -83,13 +100,16 @@ public final class TweakStore {
         ConfigSnapshot published = ConfigSnapshot.decode(preferences(context).getString(
                 ConfigSnapshot.KEY, null), BuildConfig.VERSION_CODE);
         if (published == null) return false;
+        String hostPackage = HostPackages.transportHost(context);
         boolean success = true;
         for (Settings.Setting<?> setting : Settings.all()) {
             String value = published.values.get(setting.key);
             if (setting.type == Settings.Type.BOOLEAN) {
-                if (!SettingsPropertyMirror.writeBoolean(setting.key, Boolean.parseBoolean(value))) return false;
+                if (!SettingsPropertyMirror.writeBoolean(hostPackage, setting.key,
+                        Boolean.parseBoolean(value))) return false;
             } else if (setting.type == Settings.Type.INT) {
-                if (!SettingsPropertyMirror.writeInt(setting.key, Integer.parseInt(value))) return false;
+                if (!SettingsPropertyMirror.writeInt(hostPackage, setting.key,
+                        Integer.parseInt(value))) return false;
             }
         }
         // Hook authorization runs inside Zalo, where the module provider and shared preferences
@@ -99,9 +119,9 @@ public final class TweakStore {
         // artifact strings such as the error text are free-form human sentences that can never
         // satisfy the shell-safe alphabet. Letting them veto the sync misreports a healthy root
         // as denied and makes Restart Zalo impossible.
-        mirrorArtifactStateLegacy(preferences(context));
+        mirrorArtifactStateLegacy(hostPackage, preferences(context));
         try {
-            success &= SettingsPropertyMirror.writeBlob(NotificationRuleStore.MIRROR_KEY,
+            success &= SettingsPropertyMirror.writeBlob(hostPackage, NotificationRuleStore.MIRROR_KEY,
                     published.values.get(NotificationRuleStore.MIRROR_KEY));
         } catch (Exception ignored) {
             success = false;
@@ -114,7 +134,8 @@ public final class TweakStore {
         try {
             // This compact, checksummed snapshot binds legacy settings to their startup ack.
             // Publish it last; never tag a mixture of independently written properties as active.
-            success &= SettingsPropertyMirror.writeBlob(ConfigSnapshot.LEGACY_KEY, published.propertySnapshot().encode());
+            success &= SettingsPropertyMirror.writeBlob(hostPackage, ConfigSnapshot.LEGACY_KEY,
+                    published.propertySnapshot().encode());
         } catch (Exception invalid) { success = false; }
         return success;
     }
@@ -136,13 +157,17 @@ public final class TweakStore {
 
     /** Best-effort, change-detected mirror refresh of the hook-authorization artifact keys. */
     static void mirrorArtifactStateLegacy(SharedPreferences preferences) {
+        mirrorArtifactStateLegacy(null, preferences);
+    }
+
+    static void mirrorArtifactStateLegacy(String hostPackage, SharedPreferences preferences) {
         for (String key : ARTIFACT_MIRROR_KEYS) {
             String value = preferences.getString(key, "");
-            String mirrored = SettingsPropertyMirror.read(key);
+            String mirrored = SettingsPropertyMirror.read(hostPackage, key);
             if (value.equals(mirrored == null ? "" : mirrored)) {
                 continue;
             }
-            SettingsPropertyMirror.writeOptional(key, value);
+            SettingsPropertyMirror.writeOptional(hostPackage, key, value);
         }
     }
 
@@ -176,7 +201,9 @@ public final class TweakStore {
     private static void makeReadable(Context context) {
         File dataDir = new File(context.getApplicationInfo().dataDir);
         File prefsDir = new File(dataDir, "shared_prefs");
-        File prefsFile = new File(prefsDir, Tweaks.PREFS_NAME + ".xml");
+        String scope = HostPackages.scopeSuffix(context);
+        File prefsFile = new File(prefsDir, Tweaks.PREFS_NAME
+                + (scope.isEmpty() ? "" : ".host." + scope) + ".xml");
 
         dataDir.setReadable(true, false);
         dataDir.setExecutable(true, false);

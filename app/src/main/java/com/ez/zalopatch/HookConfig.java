@@ -28,6 +28,7 @@ public final class HookConfig {
     private static volatile boolean moduleContextUnavailable;
     private static volatile NotificationRuleStore.RuleSet notificationRules;
     private static volatile Boolean hookDebugEnabled;
+    private static volatile String hostPackage;
 
     private HookConfig() {
     }
@@ -35,6 +36,44 @@ public final class HookConfig {
     public interface RemoteConfig {
         long properties() throws Throwable;
         String readSnapshot() throws Throwable;
+    }
+
+    /**
+     * Fix the hosting package before any snapshot, property or provider lookup. The loader knows
+     * the package before an Application context exists, and hot reload must not select the
+     * original's group after the process already belongs to a clone.
+     */
+    public static synchronized void identify(String packageName) {
+        String normalized = packageName == null || MODULE_PACKAGE.equals(packageName)
+                || "android".equals(packageName) || HostPackages.ZALO.equals(packageName)
+                ? null : packageName;
+        if (java.util.Objects.equals(normalized, hostPackage)) return;
+        hostPackage = normalized;
+        resetScopeState();
+    }
+
+    static String hostPackage() { return hostPackage; }
+
+    public static String remoteGroup() {
+        return ConfigSnapshot.remoteGroup(hostPackage);
+    }
+
+    private static void resetScopeState() {
+        cache.clear();
+        snapshot = null;
+        legacySnapshot = null;
+        legacySnapshotChecked = false;
+        legacySnapshotInvalid = false;
+        legacySettings = null;
+        legacyRules = null;
+        authoritative = false;
+        remoteInitialized = false;
+        providerSnapshotChecked = false;
+        snapshotSource = "legacy";
+        notificationRules = null;
+        appContext = null;
+        moduleContext = null;
+        moduleContextUnavailable = false;
     }
 
     public static synchronized void initRemote(RemoteConfig framework) {
@@ -68,7 +107,7 @@ public final class HookConfig {
             return legacySnapshot.values.get(key);
         }
         return ConfigSnapshot.value(snapshot, authoritative, key,
-                () -> SettingsPropertyMirror.readBlob(key));
+                () -> SettingsPropertyMirror.readBlob(hostPackage, key));
     }
 
     public static void init() {
@@ -82,12 +121,12 @@ public final class HookConfig {
         }
     }
 
-    public static void setAppContext(Context context) {
+    public static synchronized void setAppContext(Context context) {
         if (context != null) {
             Context applicationContext = context.getApplicationContext();
-            appContext = applicationContext != null ? applicationContext : context;
-            moduleContext = null;
-            moduleContextUnavailable = false;
+            Context resolved = applicationContext != null ? applicationContext : context;
+            identify(resolved.getPackageName());
+            appContext = resolved;
             loadProviderSnapshot();
             reload();
             freezeLegacySettings();
@@ -97,10 +136,12 @@ public final class HookConfig {
     private static synchronized void loadLegacySnapshot() {
         if (authoritative || legacySnapshotChecked) return;
         legacySnapshotChecked = true;
-        String encoded = SettingsPropertyMirror.readBlob(ConfigSnapshot.LEGACY_KEY);
-        if (encoded != null || SettingsPropertyMirror.hasBlobMarker(ConfigSnapshot.LEGACY_KEY)) {
+        String encoded = SettingsPropertyMirror.readBlob(hostPackage, ConfigSnapshot.LEGACY_KEY);
+        if (encoded != null
+                || SettingsPropertyMirror.hasBlobMarker(hostPackage, ConfigSnapshot.LEGACY_KEY)) {
             legacySnapshot = ConfigSnapshot.decodeProperty(encoded, BuildConfig.VERSION_CODE,
-                    SettingsPropertyMirror.readBlob(NotificationRuleStore.MIRROR_KEY));
+                    SettingsPropertyMirror.readBlob(hostPackage,
+                            NotificationRuleStore.MIRROR_KEY));
             legacySnapshotInvalid = legacySnapshot == null;
             snapshotSource = legacySnapshot == null ? "property-unavailable" : "property-snapshot";
         }
@@ -121,13 +162,20 @@ public final class HookConfig {
     private static synchronized void loadProviderSnapshot() {
         if (authoritative || providerSnapshotChecked) return;
         providerSnapshotChecked = true;
-        String encoded = readFromProvider(resolveModuleContext(appContext), ConfigSnapshot.KEY, "module");
-        if (encoded == null) encoded = readFromProvider(appContext, ConfigSnapshot.KEY, "target");
+        String moduleEncoded = originalHost()
+                ? readFromProvider(resolveModuleContext(appContext), ConfigSnapshot.KEY, "module")
+                : null;
+        String targetEncoded = readFromProvider(appContext, ConfigSnapshot.KEY, "target");
+        String encoded = ConfigSnapshot.providerSnapshotFor(hostPackage, moduleEncoded, targetEncoded);
         if (encoded != null) {
             authoritative = true;
             snapshot = ConfigSnapshot.decode(encoded, BuildConfig.VERSION_CODE);
             snapshotSource = snapshot == null ? "provider-unavailable" : "provider-snapshot";
         }
+    }
+
+    private static boolean originalHost() {
+        return hostPackage == null || HostPackages.ZALO.equals(hostPackage);
     }
 
     public static void reload() {
@@ -136,6 +184,10 @@ public final class HookConfig {
     }
 
     public static NotificationRuleStore.RuleSet notificationRules() {
+        if (!authoritative && !originalHost()
+                && (legacySnapshot == null || legacySnapshotInvalid)) {
+            return NotificationRuleStore.RuleSet.empty();
+        }
         if (!authoritative && legacyRules != null) return legacyRules;
         NotificationRuleStore.RuleSet cached = notificationRules;
         if (cached != null) {
@@ -268,12 +320,15 @@ public final class HookConfig {
             if (legacySettings != null) return legacySettings.get(key);
             if (legacySnapshot != null) return legacySnapshot.values.get(key);
             if (legacySnapshotInvalid) return null;
+            // New isolated targets have no pre-snapshot migration. Saved choices and partial
+            // individual property writes cannot stand in for a published startup snapshot.
+            if (!originalHost()) return null;
         }
         String cached = cache.get(key);
         if (cached != null) {
             return cached;
         }
-        String propertyValue = SettingsPropertyMirror.read(key);
+        String propertyValue = SettingsPropertyMirror.read(hostPackage, key);
         if (propertyValue != null) {
             cache.put(key, propertyValue);
             return propertyValue;
@@ -288,7 +343,9 @@ public final class HookConfig {
         if (context == null) {
             return null;
         }
-        String value = readFromProvider(resolveModuleContext(context), key, "module");
+        String value = originalHost()
+                ? readFromProvider(resolveModuleContext(context), key, "module")
+                : null;
         if (value != null) {
             return value;
         }

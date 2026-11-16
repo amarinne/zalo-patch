@@ -60,7 +60,9 @@ public final class DexKitStoryResolutionTest {
             assertEquals("void", spec.returnType);
             assertEquals(Integer.valueOf(suggested ? 3 : 2), spec.paramCount);
             assertEquals(Integer.valueOf(suggested ? 1356 : 1343), spec.usingNumber);
-            assertEquals("storyId", spec.exactString);
+            // The "storyId" literal moved to the caller on 261102901; only the command
+            // number is a query constraint now.
+            assertNull(spec.exactString);
             assertTrue(spec.withDetails && spec.withInvokes);
             coldResults.put(spec.id, query(suggested));
         }

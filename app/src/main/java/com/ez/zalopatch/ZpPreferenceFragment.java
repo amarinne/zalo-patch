@@ -17,6 +17,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
  * list divider is removed here.
  */
 public abstract class ZpPreferenceFragment extends PreferenceFragmentCompat {
+    static final String ARG_FOCUS_KEY = "focus_key";
+
     private View restartBanner;
     private View.OnLayoutChangeListener restartBannerLayout;
 
@@ -87,6 +89,17 @@ public abstract class ZpPreferenceFragment extends PreferenceFragmentCompat {
             reserveSpace.run();
         }
         list.setItemAnimator(new DefaultItemAnimator());
+
+        Bundle arguments = getArguments();
+        String focusKey = arguments == null ? null : arguments.getString(ARG_FOCUS_KEY);
+        if (focusKey != null && !focusKey.isEmpty()) {
+            // Search results consume the focus once. Returning to the page later must not keep
+            // snapping the list back to the row the user originally arrived from.
+            arguments.remove(ARG_FOCUS_KEY);
+            list.post(() -> {
+                if (isAdded()) scrollToPreference(focusKey);
+            });
+        }
     }
 
     @Override

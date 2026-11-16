@@ -35,9 +35,10 @@ public final class CompatibilityCatalogActivity {
 
         private void render() {
             Context context = requireContext();
+            Context target = targetContext();
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
-            long installed = SymbolSchema.installedZaloVersionCode(context);
-            SymbolSchema.Active active = SymbolSchema.active(context);
+            long installed = SymbolSchema.installedZaloVersionCode(target);
+            SymbolSchema.Active active = SymbolSchema.active(target);
             screen.addPreference(PreferenceUi.notice(context, active.valid
                     ? getString(R.string.zp_compatibility_catalog_mapped,
                             installed, active.source)
@@ -48,11 +49,11 @@ public final class CompatibilityCatalogActivity {
             ZpSection updateSection = ZpSection.in(updates);
             ZpRowPreference check = PreferenceUi.action(context,
                     getString(R.string.zp_compatibility_catalog_check),
-                    ZaloArtifactState.summary(context));
+                    ZaloArtifactState.summary(target));
             check.setOnPreferenceClickListener(preference -> {
                 check.setEnabled(false);
                 check.setSummary(R.string.zp_compatibility_catalog_checking);
-                Context applicationContext = context.getApplicationContext();
+                Context applicationContext = targetContext().getApplicationContext();
                 CHECK_EXECUTOR.execute(() -> {
                     ZaloArtifactState.ManualCheckResult result =
                             ZaloArtifactState.checkNow(applicationContext);
@@ -72,7 +73,7 @@ public final class CompatibilityCatalogActivity {
             PreferenceCategory profiles = PreferenceUi.category(screen,
                     getString(R.string.zp_compatibility_catalog_profiles));
             ZpSection section = ZpSection.in(profiles);
-            List<SymbolSchema.ProfileInfo> catalog = SymbolSchema.catalog(context);
+            List<SymbolSchema.ProfileInfo> catalog = SymbolSchema.catalog(target);
             for (SymbolSchema.ProfileInfo profile : catalog) {
                 String title = getString(R.string.zp_compatibility_catalog_version,
                         profile.versionCode);
@@ -132,6 +133,10 @@ public final class CompatibilityCatalogActivity {
                     .setView(scroll)
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
+        }
+
+        private Context targetContext() {
+            return ((StatusActivity) requireActivity()).settingsContext();
         }
     }
 }

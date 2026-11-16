@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="zp_recalled_marker">Đã thu hồi</string>
     <!--
       Partial translation by design. This module is private and single-maintainer, so Vietnamese
       covers the Zalo-native surfaces and the copy that reads as ordinary app text. Everything else
@@ -26,6 +27,7 @@
     <string name="zp_open_zalo_app_info_summary">Buộc dừng Zalo thủ công, sau đó mở lại.</string>
     <string name="zp_open_zalo_app_info_failed">Không thể mở thông tin ứng dụng Zalo</string>
     <string name="zp_section_status">Trạng thái</string>
+    <string name="zp_section_tweaks">Tùy chỉnh</string>
     <string name="zp_section_interface">Giao diện Zalo</string>
     <string name="zp_section_ads_notifications">Quảng cáo và thông báo</string>
     <string name="zp_section_privacy">Quyền riêng tư</string>
@@ -34,6 +36,27 @@
         <item quantity="one">Đã lưu %1$d thay đổi · khởi động lại để áp dụng</item>
         <item quantity="other">Đã lưu %1$d thay đổi · khởi động lại để áp dụng</item>
     </plurals>
+    <plurals name="zp_dashboard_pending_chip">
+        <item quantity="one">%1$d thay đổi đã lưu</item>
+        <item quantity="other">%1$d thay đổi đã lưu</item>
+    </plurals>
+    <string name="zp_dashboard_no_pending_chip">Không có thay đổi chờ</string>
+    <string name="zp_dashboard_restart_required_chip">Khởi động lại để áp dụng</string>
+    <string name="zp_dashboard_identity_summary">Zalo %1$d · %2$s</string>
+    <string name="zp_instance_title">Phiên bản cài đặt</string>
+    <string name="zp_instance_choose">Chọn phiên bản cài đặt</string>
+    <string name="zp_instance_original_item">Bản gốc · %1$s</string>
+    <string name="zp_instance_unavailable">Không khả dụng</string>
+    <string name="zp_instance_unavailable_option">%1$s · Không khả dụng</string>
+    <string name="zp_instance_not_checked">Chưa kiểm tra</string>
+    <string name="zp_dashboard_zalo_missing">Chưa cài Zalo</string>
+    <string name="zp_dashboard_runtime_unobserved">chưa quan sát runtime</string>
+    <string name="zp_state_not_observed">Chưa quan sát</string>
+    <string name="zp_search_title">Tìm tùy chỉnh</string>
+    <string name="zp_search_hint">Tìm tùy chỉnh</string>
+    <string name="zp_search_all_tweaks">Tất cả tùy chỉnh</string>
+    <string name="zp_search_results">Kết quả</string>
+    <string name="zp_search_no_results">Không có tùy chỉnh phù hợp.</string>
 
     <string name="zp_notification_filter_title">Bộ lọc thông báo</string>
     <string name="zp_notification_history_title">Lịch sử thông báo</string>
@@ -83,6 +106,8 @@
     <string name="zp_tweak_hide_reaction_row">Ẩn thanh Bày tỏ cảm xúc</string>
     <string name="zp_tweak_hide_reaction_row_summary">Giữ các thao tác trong menu khi nhấn giữ.</string>
     <string name="zp_tweak_custom_reaction">Nút thả cảm xúc bằng emoji</string>
+    <string name="zp_tweak_native_mini_chat">Dùng Mini Chat của Zalo</string>
+    <string name="zp_tweak_native_mini_chat_summary">Dùng bong bóng chat của Zalo thay cho bong bóng Android. Nhấn giữ cuộc trò chuyện để mở bong bóng chat. Cần cấp quyền hiển thị trên ứng dụng khác.</string>
     <string name="zp_reaction_setting_blocked">Tắt %1$s để bật tùy chọn này.</string>
     <string name="zp_tweak_custom_reaction_summary">Thêm nút + vào thanh Bày tỏ cảm xúc để mở bảng chọn emoji, cho phép gửi emoji Unicode làm cảm xúc. Chỉ emoji thuần, gửi khi bạn chạm chọn. Không dùng được khi bật Ẩn thanh Bày tỏ cảm xúc.</string>
     <string name="zp_tweak_open_links_externally">Mở liên kết bằng trình duyệt hệ thống</string>
@@ -129,6 +154,9 @@
     <string name="zp_group_me_services">Cá nhân</string>
     <string name="zp_group_external_links">Liên kết bên ngoài</string>
     <string name="zp_group_status_privacy">Quyền riêng tư trạng thái</string>
+    <string name="zp_group_recall">Thu hồi</string>
+    <string name="zp_tweak_keep_recalled_text">Giữ tin nhắn đã thu hồi</string>
+    <string name="zp_tweak_keep_recalled_text_summary">Giữ nội dung tin nhắn mà người kia đã thu hồi, trong chat riêng một-một. Nhóm, file và tin nhắn của bạn vẫn theo Zalo. Tin nhắn bị xóa phía máy chủ vẫn có thể mất sau khi đồng bộ lại.</string>
     <string name="zp_group_media">Đa phương tiện</string>
     <string name="zp_tweak_keep_expired_media">Giữ file hết hạn khả dụng</string>
     <string name="zp_tweak_keep_expired_media_summary">Giữ file trong máy khả dụng sau khi Zalo đánh dấu hết hạn. Không khôi phục file đã mất.</string>

@@ -7,8 +7,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.PersistableBundle;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ZaloArtifactState {
@@ -31,6 +33,9 @@ public final class ZaloArtifactState {
     public static final String KEY_CATALOG_ERROR = "internal.zalo_catalog.error";
     public static final String KEY_CATALOG_CHECKED_AT = "internal.zalo_catalog.checked_at";
     public static final String KEY_CATALOG_MODULE_VERSION = "internal.zalo_catalog.module_version";
+    /** Absolute deadline after a 426/module_too_old answer, keyed to the artifact below. */
+    static final String KEY_CATALOG_RETRY_AT = "internal.zalo_catalog.module_too_old_retry_at";
+    static final String KEY_CATALOG_RETRY_KEY = "internal.zalo_catalog.module_too_old_retry_key";
     /** True while an unknown exact artifact has remap evidence waiting for upload. */
     public static final String KEY_REMAP_UPLOAD_PENDING =
             "internal.zalo_catalog.remap_upload_pending";
@@ -57,10 +62,13 @@ public final class ZaloArtifactState {
      * Never report this as an exact match; a re-check is requested instead.
      */
     public static final String EVIDENCE_UNKNOWN = "unknown";
-    private static final int JOB_ID = 0x5a10;
+    private static final int JOB_ID_BASE = 0x5a100000;
+    static final String JOB_HOST_PACKAGE = "host_package";
     private static final long CATALOG_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
     private static final AtomicBoolean REQUESTED_FROM_HOOK = new AtomicBoolean(false);
-    private static volatile String cachedLightweight;
+    /** Installed-lightweight cache scoped by target package, never a process-global original. */
+    private static final ConcurrentHashMap<String, String> CACHED_LIGHTWEIGHT =
+            new ConcurrentHashMap<>();
 
     private ZaloArtifactState() {
     }
@@ -73,20 +81,92 @@ public final class ZaloArtifactState {
         if (context == null || instrumentationInstalled(context)) {
             return false;
         }
+        String target = registeredTarget(context, HostPackages.target(context));
+        if (target == null) {
+            // A revoked or malformed selected target must never become the original by default.
+            return false;
+        }
         if (forceCatalogCheck) {
             TweakStore.preferences(context).edit().putLong(KEY_CATALOG_CHECKED_AT, 0L).apply();
         }
-        cachedLightweight = null;
-        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        Context base = HostPackages.base(context);
+        CACHED_LIGHTWEIGHT.remove(cacheScope(HostPackages.scoped(base, target)));
+        JobScheduler scheduler = base.getSystemService(JobScheduler.class);
         if (scheduler == null) {
             return false;
         }
-        JobInfo job = new JobInfo.Builder(JOB_ID,
-                new ComponentName(context, ZaloArtifactJobService.class))
+        PersistableBundle extras = new PersistableBundle();
+        extras.putString(JOB_HOST_PACKAGE, target);
+        JobInfo job = new JobInfo.Builder(jobId(target),
+                new ComponentName(base, ZaloArtifactJobService.class))
                 .setMinimumLatency(0L)
                 .setOverrideDeadline(5_000L)
+                .setExtras(extras)
                 .build();
         return scheduler.schedule(job) == JobScheduler.RESULT_SUCCESS;
+    }
+
+    /** Canonical or an explicitly registered renamed package; malformed input fails closed. */
+    static String registeredTarget(Context moduleContext, String packageName) {
+        if (moduleContext == null || packageName == null || packageName.isEmpty()) return null;
+        if (HostPackages.ZALO.equals(packageName)) return packageName;
+        try {
+            if (!HostPackages.parse(packageName).contains(packageName)) return null;
+            return HostPackages.allows(
+                    HostPackages.additional(HostPackages.base(moduleContext)), packageName)
+                    ? packageName : null;
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
+    /** Package-change routing: only the canonical install or a still-registered rename. */
+    static String eventTarget(Context moduleContext, String packageName) {
+        return registeredTarget(moduleContext, packageName);
+    }
+
+    /**
+     * Job identity is persisted as an explicit package extra. A missing or revoked target is
+     * invalid; it never falls back to the original's scoped prefs or catalog deadline.
+     */
+    static String jobTarget(Context moduleContext, String requestedPackage) {
+        return registeredTarget(moduleContext, requestedPackage);
+    }
+
+    static Context jobContext(Context moduleContext, String requestedPackage) {
+        String target = jobTarget(moduleContext, requestedPackage);
+        return target == null ? null : HostPackages.scoped(moduleContext, target);
+    }
+
+    /** Stable per-target job id so one target's schedule cannot cancel another's. */
+    static int jobId(String packageName) {
+        int hash = 0;
+        try {
+            hash = Integer.parseInt(ZaloArtifactIdentity.sha256(
+                    packageName == null ? "" : packageName).substring(0, 7), 16);
+        } catch (RuntimeException ignored) {
+        }
+        return JOB_ID_BASE + (hash & 0x0fffffff);
+    }
+
+    /** Verified immutable catalog content is shared; mutable state stays in the target scope. */
+    static Context catalogStore(Context context) {
+        return HostPackages.scopeSuffix(context).isEmpty() ? context : HostPackages.base(context);
+    }
+
+    static String cacheScope(Context context) {
+        // The in-memory cache is process-local, so the package name is enough and matches the
+        // invalidation key in schedule(); scoped persistence keeps using the existing suffix.
+        return context == null ? "" : HostPackages.transportHost(context);
+    }
+
+    static void rememberLightweight(Context context, String value) {
+        if (context == null || value == null) return;
+        CACHED_LIGHTWEIGHT.put(cacheScope(context), value);
+    }
+
+    static String rememberedLightweight(Context context) {
+        return context == null ? null : CACHED_LIGHTWEIGHT.get(cacheScope(context));
     }
 
     /**
@@ -114,60 +194,99 @@ public final class ZaloArtifactState {
         SharedPreferences preferences = TweakStore.preferences(context);
         try {
             ZaloArtifactIdentity identity = ZaloArtifactIdentity.capture(context, true);
+            boolean renamed = HostPackages.renamed(context);
             String previousGeneration = preferences.getString(KEY_GENERATION, "");
             boolean generationChanged = !identity.generation.equals(previousGeneration);
             boolean instrumentationPresent = instrumentationInstalled(context);
+            // Verified immutable catalog content is shared under the existing policy; a clone
+            // reads it without rewriting the original's mutable deadline or cache files.
             SymbolCatalogContract.Entry catalogEntry = SymbolCatalogCache.load(
-                    context, identity.versionCode);
+                    catalogStore(context), identity.versionCode);
             long now = System.currentTimeMillis();
             long catalogCheckedAt = preferences.getLong(KEY_CATALOG_CHECKED_AT, 0L);
             int catalogModuleVersion = preferences.getInt(KEY_CATALOG_MODULE_VERSION, -1);
-            String catalogStatus = catalogEntry == null ? "missing" : "cached";
+            String storedCatalogStatus = preferences.getString(KEY_CATALOG_STATUS, "missing");
+            String catalogStatus;
             String catalogError = "";
-            // A 404 caches nothing, so an uncached artifact alone must not force the fetch: that
-            // kept `catalogEntry == null` true forever and re-queried on every reconcile, ignoring
-            // the interval entirely. A recorded `unknown` for this same generation is a negative
-            // answer and is honoured until the interval elapses. Manual retry still works because
-            // it zeroes KEY_CATALOG_CHECKED_AT, which drives the interval clause.
-            boolean knownAbsent = "unknown".equals(
-                    preferences.getString(KEY_CATALOG_STATUS, "missing"));
-            if (!instrumentationPresent
-                    && (generationChanged
-                    || catalogModuleVersion != BuildConfig.VERSION_CODE
-                    || now - catalogCheckedAt >= CATALOG_CHECK_INTERVAL_MS
-                    || (catalogEntry == null && !knownAbsent))) {
-                SymbolCatalogClient.Result catalogResult = SymbolCatalogClient.resolve(
-                        BuildConfig.SYMBOL_CATALOG_URL, identity, catalogEntry);
-                catalogStatus = catalogResult.status;
-                if ("available".equals(catalogResult.status)) {
-                    if (SymbolCatalogCache.save(context, identity, catalogResult.envelope)) {
-                        catalogEntry = SymbolCatalogCache.load(context, identity.versionCode);
-                        catalogStatus = catalogEntry == null ? "invalid" : "updated";
-                    } else {
-                        catalogStatus = "invalid";
+            boolean catalogFetchAttempted = false;
+            boolean moduleTooOldRejected = false;
+            String catalogRetryKey = "";
+            if (renamed) {
+                // A clone's actual mutable artifact identity is persisted in its own scope, but
+                // catalog fetch/upload/revocation stay with the canonical installation so clone
+                // APK evidence, retry counters and deadlines never masquerade as canonical.
+                catalogStatus = catalogEntry != null ? "cached" : "missing";
+            } else {
+                // A 404 or 426 caches nothing, so an uncached artifact alone must not force the
+                // fetch: that kept `catalogEntry == null` true forever and re-queried on every
+                // reconcile, ignoring the interval entirely. Negative answers for this same
+                // generation are honoured until the interval elapses, and are kept in the stored
+                // status while no fetch runs. A missing cached entry still requests a replacement.
+                catalogStatus = catalogEntry != null ? "cached"
+                        : ("cached".equals(storedCatalogStatus)
+                        || "updated".equals(storedCatalogStatus)
+                        ? "missing" : storedCatalogStatus);
+                boolean knownAbsent = "unknown".equals(storedCatalogStatus)
+                        || "module_too_old".equals(storedCatalogStatus);
+                catalogRetryKey = CatalogFetchPolicy.cooldownKey(
+                        identity.baseApkSha256, identity.versionCode, BuildConfig.VERSION_CODE);
+                boolean moduleTooOldCoolingDown = CatalogFetchPolicy.coolingDown(
+                        now,
+                        preferences.getLong(KEY_CATALOG_RETRY_AT, 0L),
+                        preferences.getString(KEY_CATALOG_RETRY_KEY, ""),
+                        catalogRetryKey);
+                if (CatalogFetchPolicy.shouldFetch(
+                        instrumentationPresent,
+                        generationChanged,
+                        catalogModuleVersion != BuildConfig.VERSION_CODE,
+                        now - catalogCheckedAt >= CATALOG_CHECK_INTERVAL_MS,
+                        catalogEntry == null,
+                        knownAbsent,
+                        moduleTooOldCoolingDown)) {
+                    catalogFetchAttempted = true;
+                    // Admitted, module/host-current evidence only. Stale or missing evidence is
+                    // reported as unknown; the build variant and root access are not framework
+                    // evidence, and this field never authorizes anything.
+                    RuntimeEnvironment.Snapshot runtimeEnvironment =
+                            RuntimeEnvironment.current(context);
+                    SymbolCatalogClient.Result catalogResult = SymbolCatalogClient.resolve(
+                            BuildConfig.SYMBOL_CATALOG_URL, identity, catalogEntry,
+                            runtimeEnvironment.framework);
+                    catalogStatus = catalogResult.status;
+                    moduleTooOldRejected = "module_too_old".equals(catalogResult.status);
+                    if ("available".equals(catalogResult.status)) {
+                        if (SymbolCatalogCache.save(context, identity, catalogResult.envelope)) {
+                            catalogEntry = SymbolCatalogCache.load(
+                                    context, identity.versionCode);
+                            catalogStatus = catalogEntry == null ? "invalid" : "updated";
+                        } else {
+                            catalogStatus = "invalid";
+                        }
+                    } else if (catalogResult.status.endsWith("error")
+                            || "invalid_response".equals(catalogResult.status)
+                            || "redirect_rejected".equals(catalogResult.status)) {
+                        catalogError = catalogResult.status;
                     }
-                } else if (catalogResult.status.endsWith("error")
-                        || "invalid_response".equals(catalogResult.status)
-                        || "redirect_rejected".equals(catalogResult.status)) {
-                    catalogError = catalogResult.status;
-                }
-                if ("revoked".equals(catalogResult.status)) {
-                    SymbolCatalogCache.clear(context);
-                    catalogEntry = null;
-                }
-                if ("unknown".equals(catalogResult.status)) {
-                    SymbolResourceUploader.markPending(context);
-                    // Unknown artifacts automatically enable the bounded discovery feature. The
-                    // next normal Zalo process run records candidates; no report screen is needed.
-                    if (!instrumentationPresent) {
-                        DiagnosticsState.requestRuntimeDiscovery(context);
+                    if ("revoked".equals(catalogResult.status)) {
+                        SymbolCatalogCache.clear(context);
+                        catalogEntry = null;
                     }
+                    if ("unknown".equals(catalogResult.status)) {
+                        SymbolResourceUploader.markPending(context);
+                        // Unknown artifacts automatically enable the bounded discovery feature.
+                        // The next normal Zalo process run records candidates; no report screen is
+                        // needed.
+                        if (!instrumentationPresent) {
+                            DiagnosticsState.requestRuntimeDiscovery(context);
+                        }
+                    }
+                    catalogCheckedAt = now;
                 }
-                catalogCheckedAt = now;
+                // Uploads are deliberately sent by the module job, after the catalog miss. A Zalo
+                // process can only record evidence and request this job; it never performs network
+                // IO. Clone evidence is never uploaded as canonical-family evidence.
+                SymbolResourceUploader.uploadIfPending(context, identity);
             }
-            // Uploads are deliberately sent by the module job, after the catalog miss. A Zalo
-            // process can only record evidence and request this job; it never performs network IO.
-            SymbolResourceUploader.uploadIfPending(context, identity);
             SymbolSchema.Active bundled = SymbolSchema.selectBundledForVersion(
                     context, identity.versionCode);
             SymbolSchema.Active remote = SymbolSchema.selectRemoteEntry(
@@ -176,12 +295,21 @@ public final class ZaloArtifactState {
             // when it names the bundled schema revision and carries a newer one.
             SymbolSchema.Active profile = SymbolProfileSelection.select(bundled, remote);
             if (profile == null) profile = bundled;
-            String expectedHash = profile.string("artifact.base_apk_sha256", "");
-            String expectedSigner = profile.string("artifact.signer_sha256", "");
             String verification = profile.string("artifact.verification", "unverified");
             String profileHash = profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "";
-            Decision decision = decide(profile.valid, profile.validation, catalogStatus,
-                    expectedSigner, expectedHash, identity.signerSha256, identity.baseApkSha256);
+            Decision decision;
+            if (renamed) {
+                // Renamed installations keep the existing version-only policy: the shared
+                // canonical-family profile is selected by exact versionCode, and provenance is
+                // never promoted to an exact or signer-match tier without clone evidence.
+                decision = decideRenamed(profile.valid, profile.validation, catalogStatus);
+            } else {
+                String expectedHash = profile.string("artifact.base_apk_sha256", "");
+                String expectedSigner = profile.string("artifact.signer_sha256", "");
+                decision = decide(profile.valid, profile.validation, catalogStatus,
+                        expectedSigner, expectedHash, identity.signerSha256,
+                        identity.baseApkSha256);
+            }
             String status = decision.status;
             String error = decision.error;
             String evidence = decision.evidence;
@@ -207,12 +335,24 @@ public final class ZaloArtifactState {
                     .putString(KEY_CATALOG_DIGEST, catalogEntry == null ? "" : catalogEntry.digest)
                     .putString(KEY_CATALOG_ERROR, catalogError)
                     .putLong(KEY_CATALOG_CHECKED_AT, catalogCheckedAt);
+            if (catalogFetchAttempted) {
+                if (moduleTooOldRejected) {
+                    long retryAt = CatalogFetchPolicy.retryAt(now, CATALOG_CHECK_INTERVAL_MS);
+                    editor.putLong(KEY_CATALOG_RETRY_AT, retryAt)
+                            .putString(KEY_CATALOG_RETRY_KEY, catalogRetryKey);
+                } else {
+                    editor.remove(KEY_CATALOG_RETRY_AT).remove(KEY_CATALOG_RETRY_KEY);
+                }
+            } else if (renamed) {
+                // Clone scopes never inherit the canonical target's retry deadline.
+                editor.remove(KEY_CATALOG_RETRY_AT).remove(KEY_CATALOG_RETRY_KEY);
+            }
             if (!instrumentationPresent) {
                 editor.putInt(KEY_CATALOG_MODULE_VERSION, BuildConfig.VERSION_CODE);
             }
             editor.commit();
             SymbolSchema.invalidate();
-            cachedLightweight = identity.lightweightKey;
+            rememberLightweight(context, identity.lightweightKey);
             TweakStore.initialize(context);
             HookConfig.reload();
             FrameworkConfig.refreshState(context);
@@ -242,12 +382,13 @@ public final class ZaloArtifactState {
         if (context == null) return;
         SharedPreferences preferences = TweakStore.preferences(context);
         if (!"unknown".equals(preferences.getString(KEY_CATALOG_STATUS, "missing"))) return;
+        if (HostPackages.renamed(context)) return;
         SymbolResourceUploader.markPending(context);
         schedule(context);
     }
 
     /** Runs an explicit foreground compatibility check without deferring to JobScheduler. */
-    static ManualCheckResult checkNow(Context context) {
+    static synchronized ManualCheckResult checkNow(Context context) {
         if (context == null) {
             return new ManualCheckResult("failed", "Context unavailable", -1L);
         }
@@ -256,10 +397,22 @@ public final class ZaloArtifactState {
             return new ManualCheckResult("suppressed",
                     "com.ez.zalopatch.test is installed", -1L);
         }
+        String target = registeredTarget(applicationContext,
+                HostPackages.target(applicationContext));
+        if (target == null) {
+            return new ManualCheckResult("failed", "Target unavailable", -1L);
+        }
         JobScheduler scheduler = applicationContext.getSystemService(JobScheduler.class);
-        if (scheduler != null) scheduler.cancel(JOB_ID);
+        if (scheduler != null) scheduler.cancel(jobId(target));
         SharedPreferences preferences = TweakStore.preferences(applicationContext);
-        preferences.edit().putLong(KEY_CATALOG_CHECKED_AT, 0L).commit();
+        // An explicit foreground retry is the owner action that lifts a module-too-old cooldown.
+        // The reconcile still records a fresh deadline if the server rejects this build again.
+        // For a clone scope this only moves its own deadline; shared catalog content is untouched.
+        preferences.edit()
+                .putLong(KEY_CATALOG_CHECKED_AT, 0L)
+                .remove(KEY_CATALOG_RETRY_AT)
+                .remove(KEY_CATALOG_RETRY_KEY)
+                .commit();
         Result result = reconcile(applicationContext);
         String catalogStatus = preferences.getString(KEY_CATALOG_STATUS, "missing");
         String catalogError = preferences.getString(KEY_CATALOG_ERROR, "");
@@ -308,6 +461,20 @@ public final class ZaloArtifactState {
     }
 
     /**
+     * Renamed installations keep their accepted version-only provenance. A shared canonical-family
+     * profile is selected by exact versionCode, but a clone never claims the mapped container or
+     * signing certificate even when a re-sign happens to reuse one.
+     */
+    static Decision decideRenamed(boolean profileValid, String profileValidation,
+                                  String catalogStatus) {
+        if (!profileValid) {
+            return new Decision("unsupported", EVIDENCE_NONE,
+                    profileValidation + "; catalog " + catalogStatus);
+        }
+        return new Decision("ready", EVIDENCE_VERSION_ONLY, "");
+    }
+
+    /**
      * Authorization inputs, deliberately excluding the install identity. Splits, install path and
      * install time vary across devices and across ordinary Play activity on one device, and carry
      * no symbol information. What remains: the module reconciled to {@code ready}, a profile is
@@ -327,6 +494,7 @@ public final class ZaloArtifactState {
     }
 
     public static Compatibility forHooks(Context context) {
+        if (HostPackages.renamed(context)) return renamedCompatibility(context);
         try {
             ZaloArtifactIdentity current = ZaloArtifactIdentity.capture(context, false);
             String status = HookConfig.getRawString(KEY_STATUS, "pending");
@@ -372,7 +540,56 @@ public final class ZaloArtifactState {
         }
     }
 
+    /** Clone admission and symbols refer to this installation, not the primary app's snapshot. */
+    private static Compatibility renamedCompatibility(Context context) {
+        try {
+            ZaloArtifactIdentity current = ZaloArtifactIdentity.capture(context, false);
+            SymbolSchema.Active profile = SymbolSchema.exactForProcess(context);
+            Decision decision = decideRenamed(profile.valid, profile.validation, "local");
+            return new Compatibility("ready".equals(decision.status), decision.status,
+                    current.lightweightKey, current.lightweightKey, decision.error, decision.evidence);
+        } catch (Throwable error) {
+            return new Compatibility(false, "failed", "", "",
+                    "Clone artifact unavailable: " + error.getClass().getSimpleName(), EVIDENCE_NONE);
+        }
+    }
+
+    /**
+     * Module-side view of a clone. It reports only the persisted reconciliation for this scope, so
+     * an unreconciled or stale clone is Not checked rather than inheriting the original's result.
+     */
+    private static Compatibility renamedStoredCompatibility(Context context) {
+        try {
+            ZaloArtifactIdentity current = ZaloArtifactIdentity.capture(context, false);
+            SharedPreferences preferences = TweakStore.preferences(context);
+            String status = preferences.getString(KEY_STATUS, "pending");
+            String generation = preferences.getString(KEY_GENERATION, "");
+            String storedLightweight = preferences.getString(KEY_LIGHTWEIGHT, "");
+            SymbolSchema.Active profile = SymbolSchema.active(context);
+            String profileHash = profile.valid
+                    ? ZaloArtifactIdentity.sha256(profile.json) : "";
+            boolean installCurrent = current.lightweightKey.equals(storedLightweight);
+            boolean authorized = installCurrent
+                    && authorizes(status, profile.valid, profileHash,
+                    preferences.getString(KEY_PROFILE_SHA256, ""));
+            String reason = authorized ? "" : preferences.getString(KEY_ERROR, "");
+            if (!authorized && reason.isEmpty()) {
+                reason = installCurrent
+                        ? "Artifact verification " + status
+                        : "Installed Zalo artifact changed; verification pending";
+            }
+            // The renamed policy never promotes provenance to exact or signer match.
+            return new Compatibility(authorized, status, current.lightweightKey, generation,
+                    reason, authorized ? EVIDENCE_VERSION_ONLY : EVIDENCE_NONE);
+        } catch (Throwable throwable) {
+            return new Compatibility(false, "failed", "", "",
+                    "Clone artifact unavailable: " + throwable.getClass().getSimpleName(),
+                    EVIDENCE_NONE);
+        }
+    }
+
     public static Compatibility currentCompatibility(Context context) {
+        if (HostPackages.renamed(context)) return renamedStoredCompatibility(context);
         try {
             ZaloArtifactIdentity current = ZaloArtifactIdentity.capture(context, false);
             SharedPreferences preferences = TweakStore.preferences(context);
@@ -436,13 +653,14 @@ public final class ZaloArtifactState {
     }
 
     public static String currentLightweight(Context context) {
-        String cached = cachedLightweight;
+        if (context == null) return "";
+        String cached = rememberedLightweight(context);
         if (cached != null) {
             return cached;
         }
         try {
             cached = ZaloArtifactIdentity.capture(context, false).lightweightKey;
-            cachedLightweight = cached;
+            rememberLightweight(context, cached);
             return cached;
         } catch (Throwable ignored) {
             return "";
@@ -454,6 +672,12 @@ public final class ZaloArtifactState {
     }
 
     static ArtifactEvidenceIdentity evidenceIdentity(Context context) {
+        if (HostPackages.renamed(context)) {
+            String lightweight = currentLightweight(context);
+            SymbolSchema.Active profile = SymbolSchema.exactForProcess(context);
+            return new ArtifactEvidenceIdentity(lightweight, lightweight, BuildConfig.VERSION_CODE,
+                    profile.valid ? ZaloArtifactIdentity.sha256(profile.json) : "");
+        }
         boolean moduleProcess = SymbolSchema.isModuleProcess(context);
         SharedPreferences preferences = moduleProcess ? TweakStore.preferences(context) : null;
         String generation = moduleProcess ? preferences.getString(KEY_GENERATION, "")

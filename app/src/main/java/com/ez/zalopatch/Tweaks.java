@@ -53,6 +53,7 @@ public final class Tweaks {
     public static final String KEY_FILTER_POPOVER_CATEGORIES = "inbox.filter_popover";
     public static final String KEY_HIDE_REACTION_ROW = "messages.hide_reaction_row";
     public static final String KEY_CUSTOM_REACTION = "messages.custom_reaction";
+    public static final String KEY_NATIVE_MINI_CHAT = "messages.native_mini_chat";
     public static final String KEY_OPEN_LINKS_EXTERNALLY = "messages.open_links_externally";
     public static final String KEY_BLOCK_SEEN_STATUS = "messages.block_seen_status";
     public static final String KEY_BLOCK_TYPING_STATUS = "messages.block_typing_status";
@@ -80,6 +81,7 @@ public final class Tweaks {
     public static final String KEY_BACKUP_PUSH_INTERVAL = "backup.push_interval";
     public static final String KEY_PREFER_ORIGINAL_PHOTO = "media.prefer_original_photo";
     public static final String KEY_KEEP_EXPIRED_MEDIA = "messages.keep_expired_media";
+    public static final String KEY_KEEP_RECALLED_TEXT = "messages.keep_recalled_text";
     public static final String KEY_PASSCODE_GRACE = "security.passcode_grace";
     public static final String KEY_PASSCODE_GRACE_MS = "security.passcode_grace_ms";
 
@@ -157,11 +159,12 @@ public final class Tweaks {
         if (SECTION_CHAT.equals(section)) {
             return Arrays.asList(
                     new Group(R.string.zp_group_message_rendering, KEY_HIDE_REACTION_ROW,
-                            KEY_CUSTOM_REACTION),
+                            KEY_CUSTOM_REACTION, KEY_NATIVE_MINI_CHAT),
                     new Group(R.string.zp_group_external_links, KEY_OPEN_LINKS_EXTERNALLY),
                     new Group(R.string.zp_group_status_privacy,
                             KEY_BLOCK_SEEN_STATUS, KEY_BLOCK_TYPING_STATUS,
                             KEY_VIEW_STORIES_ANONYMOUSLY),
+                    new Group(R.string.zp_group_recall, KEY_KEEP_RECALLED_TEXT),
                     new Group(R.string.zp_group_media, KEY_KEEP_EXPIRED_MEDIA, KEY_PREFER_ORIGINAL_PHOTO));
         }
         if (SECTION_CALLS.equals(section)) {
@@ -289,6 +292,9 @@ public final class Tweaks {
             new Item(SECTION_CHAT, KEY_CUSTOM_REACTION,
                     R.string.zp_tweak_custom_reaction, R.string.zp_tweak_custom_reaction_summary,
                     true, false),
+            new Item(SECTION_CHAT, KEY_NATIVE_MINI_CHAT,
+                    R.string.zp_tweak_native_mini_chat, R.string.zp_tweak_native_mini_chat_summary,
+                    true, false),
             new Item(SECTION_CHAT, KEY_OPEN_LINKS_EXTERNALLY,
                     R.string.zp_tweak_open_links_externally,
                     R.string.zp_tweak_open_links_externally_summary,
@@ -305,6 +311,10 @@ public final class Tweaks {
                     true, false),
             new Item(SECTION_CHAT, KEY_KEEP_EXPIRED_MEDIA,
                     R.string.zp_tweak_keep_expired_media, R.string.zp_tweak_keep_expired_media_summary,
+                    true, false),
+            new Item(SECTION_CHAT, KEY_KEEP_RECALLED_TEXT,
+                    R.string.zp_tweak_keep_recalled_text,
+                    R.string.zp_tweak_keep_recalled_text_summary,
                     true, false),
 
             new Item(SECTION_CHAT, KEY_PREFER_ORIGINAL_PHOTO,

@@ -169,4 +169,42 @@ public final class DexKitInboxFingerprintTest {
         assertEquals("no_uid_field", resolution.status);
         assertFalse(DexKitInboxFingerprint.resolveUidField(null, Arrays.asList("b")).resolved());
     }
+
+    @Test
+    public void mediaBoxRowResolvesTheSentinelAccessorOwner() {
+        // 261102901: hmf#e returns -8, hmf holds one Conversation field and a
+        // (Conversation) constructor. h52 shares the row skeleton but its sentinel is
+        // -20251126, so the query literal already excludes it; the shape is the second,
+        // independent proof.
+        List<DexKitInboxFingerprint.MediaBoxCandidate> candidates = Arrays.asList(
+                new DexKitInboxFingerprint.MediaBoxCandidate("hmf", "e", 1, true));
+        DexKitInboxFingerprint.MediaBoxResolution resolution =
+                DexKitInboxFingerprint.resolveMediaBoxUid(candidates);
+        assertTrue(resolution.resolved());
+        assertEquals("hmf", resolution.itemClass);
+        assertEquals("e", resolution.uidMethod);
+    }
+
+    @Test
+    public void mediaBoxRowRequiresTheRowShape() {
+        List<DexKitInboxFingerprint.MediaBoxCandidate> wrongShape = Arrays.asList(
+                new DexKitInboxFingerprint.MediaBoxCandidate("e3q", "e", 1, false),
+                new DexKitInboxFingerprint.MediaBoxCandidate("other", "e", 0, true));
+        DexKitInboxFingerprint.MediaBoxResolution none =
+                DexKitInboxFingerprint.resolveMediaBoxUid(wrongShape);
+        assertFalse(none.resolved());
+        assertEquals("no_row_shape", none.status);
+        assertFalse(DexKitInboxFingerprint.resolveMediaBoxUid(null).resolved());
+    }
+
+    @Test
+    public void mediaBoxRowStaysUnavailableWhenSeveralRowsQualify() {
+        List<DexKitInboxFingerprint.MediaBoxCandidate> candidates = Arrays.asList(
+                new DexKitInboxFingerprint.MediaBoxCandidate("hmf", "e", 1, true),
+                new DexKitInboxFingerprint.MediaBoxCandidate("twin", "e", 1, true));
+        DexKitInboxFingerprint.MediaBoxResolution resolution =
+                DexKitInboxFingerprint.resolveMediaBoxUid(candidates);
+        assertFalse(resolution.resolved());
+        assertEquals("ambiguous_media_box_row", resolution.status);
+    }
 }

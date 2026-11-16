@@ -42,22 +42,27 @@ public final class SectionActivity {
         private boolean recordingCountLoading;
         private boolean resourceRequirementMet;
         private long recordingPermissionGeneration = -1L;
+        private String recordingPermissionPackage;
         private final ActivityResultLauncher<String> recordingNotificationPermissionLauncher =
                 registerForActivityResult(
-                        new ActivityResultContracts.RequestPermission(), granted -> {
-                            long requestedGeneration = recordingPermissionGeneration;
-                            recordingPermissionGeneration = -1L;
-                            if (!granted || requestedGeneration < 0L || !isAdded()
-                                    || SettingsChanges.generation(requireContext()) != requestedGeneration) return;
-                            boolean saved = SettingsStore.confirmSaved(requireContext(), TweakStore.setEnabled(requireContext(),
-                                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS, true));
-                            if (!saved) return;
-                            ZpSwitchPreference preference = switches.get(
-                                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS);
-                            if (preference != null) {
-                                preference.setChecked(true);
-                            }
-                        });
+                        new ActivityResultContracts.RequestPermission(), this::recordingPermissionResult);
+
+        void recordingPermissionResult(boolean granted) {
+            long requestedGeneration = recordingPermissionGeneration;
+            String requestedPackage = recordingPermissionPackage;
+            recordingPermissionGeneration = -1L;
+            recordingPermissionPackage = null;
+            if (!granted || requestedGeneration < 0L || !isAdded()) return;
+            // Restoration may revoke the old selection before its permission result arrives.
+            if (!host().selectedPackageName().equals(requestedPackage)) return;
+            Context target = host().targetContext(requestedPackage);
+            if (target == null || SettingsChanges.generation(target) != requestedGeneration) return;
+            boolean saved = SettingsStore.confirmSaved(target, TweakStore.setEnabled(target,
+                    Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS, true));
+            if (!saved) return;
+            ZpSwitchPreference preference = switches.get(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS);
+            if (preference != null) preference.setChecked(true);
+        }
 
         static SettingsFragment forSection(String section) {
             SettingsFragment fragment = new SettingsFragment();
@@ -67,35 +72,48 @@ public final class SectionActivity {
             return fragment;
         }
 
+        private StatusActivity host() {
+            return (StatusActivity) requireActivity();
+        }
+
+        private Context targetContext() {
+            return host().settingsContext();
+        }
+
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
-            if (savedInstanceState != null) recordingPermissionGeneration = savedInstanceState.getLong(
-                    "recording_permission_generation", -1L);
+            if (savedInstanceState != null) {
+                recordingPermissionGeneration = savedInstanceState.getLong(
+                        "recording_permission_generation", -1L);
+                recordingPermissionPackage = savedInstanceState.getString("recording_permission_package");
+            }
             buildScreen();
         }
 
         @Override public void onSaveInstanceState(Bundle outState) {
             super.onSaveInstanceState(outState);
             outState.putLong("recording_permission_generation", recordingPermissionGeneration);
+            outState.putString("recording_permission_package", recordingPermissionPackage);
         }
 
         @Override
         public void onResume() {
             super.onResume();
+            Context target = targetContext();
             boolean currentResourceRequirement = RequirementGate.isMet(
-                    requireContext(), Tweaks.Requirement.RESOURCE_HOOKS);
+                    target, Tweaks.Requirement.RESOURCE_HOOKS);
             if (currentResourceRequirement != resourceRequirementMet) {
                 buildScreen();
                 return;
             }
-            selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(requireContext()));
+            selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(target));
             // One computed pass over every row: only rows whose chips actually changed get a
             // notifyChanged(), since each call is an O(n) adapter scan plus its own
             // item-change notification.
             ArrayList<ZpSwitchPreference> dirtySwitches = new ArrayList<>();
             ArrayList<ZpRowPreference> dirtyStatuses = new ArrayList<>();
             for (Map.Entry<String, ZpSwitchPreference> entry : switches.entrySet()) {
-                entry.getValue().setChecked(TweakStore.isEnabled(requireContext(), entry.getKey()));
+                entry.getValue().setChecked(TweakStore.isEnabled(target, entry.getKey()));
                 ZpRowStyle.Chip[] chips = trackingChips(entry.getKey());
                 if (!entry.getValue().rowStyle().hasChips(chips)) {
                     entry.getValue().chips(chips);
@@ -117,7 +135,7 @@ public final class SectionActivity {
                 row.refreshStyle();
             }
             if (telemetryMaster != null) {
-                telemetryMaster.setChecked(allTelemetryDisabled(requireContext()));
+                telemetryMaster.setChecked(allTelemetryDisabled(target));
             }
             refreshRecordingCount();
             refreshDeveloperRuntimeStatus();
@@ -126,6 +144,7 @@ public final class SectionActivity {
 
         private void buildScreen() {
             Context context = requireContext();
+            Context target = targetContext();
             switches.clear();
             pageStatuses.clear();
             developerRuntimeStatus = null;
@@ -134,10 +153,10 @@ public final class SectionActivity {
             recordingsRow = null;
             telemetryMaster = null;
             resourceRequirementMet = RequirementGate.isMet(
-                    context, Tweaks.Requirement.RESOURCE_HOOKS);
+                    target, Tweaks.Requirement.RESOURCE_HOOKS);
             String section = requireArguments().getString(ARG_SECTION);
-            SymbolSchema.Active schema = SymbolSchema.active(context);
-            selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(context));
+            SymbolSchema.Active schema = SymbolSchema.active(target);
+            selfCheckRows = SelfCheckData.byFeature(SelfCheckData.load(target));
 
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
             setPreferenceScreen(screen);
@@ -146,7 +165,7 @@ public final class SectionActivity {
                 ZpSection zpSection = ZpSection.in(category);
                 switch (group.specialBlock) {
                     case TELEMETRY:
-                        zpSection.add(telemetryMasterPreference(context));
+                        zpSection.add(telemetryMasterPreference(context, target));
                         zpSection.add(pageStatusPreference(context,
                                 getString(R.string.zp_runtime_status_title),
                                 "telemetry.analytics_db", "telemetry.firebase",
@@ -158,7 +177,7 @@ public final class SectionActivity {
                                 "bottom_tabs.state", "bottom_tabs.consumers"));
                         break;
                     case DEVELOPER_TOOLS:
-                        addDeveloperTools(zpSection, context);
+                        addDeveloperTools(zpSection, context, target);
                         break;
                     case NONE:
                         break;
@@ -171,19 +190,29 @@ public final class SectionActivity {
         }
 
         private void refreshReactionControls() {
+            Context target = targetContext();
             for (String key : new String[]{Tweaks.KEY_HIDE_REACTION_ROW, Tweaks.KEY_CUSTOM_REACTION}) {
                 ZpSwitchPreference preference = switches.get(key);
                 if (preference == null) continue;
                 String other = Tweaks.KEY_HIDE_REACTION_ROW.equals(key)
                         ? Tweaks.KEY_CUSTOM_REACTION : Tweaks.KEY_HIDE_REACTION_ROW;
-                boolean checked = TweakStore.isEnabled(requireContext(), key);
+                boolean checked = TweakStore.isEnabled(target, key);
                 preference.setChecked(checked);
                 // A legacy pair with both values on must still allow either value to be turned off.
-                preference.setEnabled(checked || !TweakStore.isEnabled(requireContext(), other));
+                preference.setEnabled(checked || !TweakStore.isEnabled(target, other));
             }
         }
 
-        private void addDeveloperTools(ZpSection section, Context context) {
+        private void addDeveloperTools(ZpSection section, Context context, Context target) {
+            ZpRowPreference hosts = PreferenceUi.action(context,
+                    getString(R.string.zp_host_packages_title), HostPackagesDialog.summary(context));
+            hosts.setKey("internal.host_packages");
+            hosts.setOnPreferenceClickListener(preference -> {
+                HostPackagesDialog.show(context, hosts, host()::onRegistrationChanged);
+                return true;
+            });
+            section.add(hosts);
+
             ZpSwitchPreference displayHookDetail = PreferenceUi.toggle(context,
                     UiSettings.KEY_DISPLAY_MODE,
                     getString(R.string.zp_display_hook_detail_title), null);
@@ -212,7 +241,7 @@ public final class SectionActivity {
             section.add(developerRuntimeEnvironment);
             refreshDeveloperEnvironment();
 
-            SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(context));
+            SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(target));
             developerRuntimeStatus = PreferenceUi.nav(context,
                     getString(R.string.zp_runtime_status_title), runtimeSummary(counts));
             developerRuntimeStatus.setIcon(R.drawable.ic_zp_heart_pulse);
@@ -228,7 +257,7 @@ public final class SectionActivity {
 
             ZpRowPreference catalog = PreferenceUi.nav(context,
                     getString(R.string.zp_compatibility_catalog_title),
-                    compatibilityCatalogSummary(context));
+                    compatibilityCatalogSummary(target));
             catalog.setIcon(R.drawable.ic_zp_map);
             catalog.setKey("internal.developer_compatibility_catalog");
             catalog.setOnPreferenceClickListener(preference -> {
@@ -241,7 +270,7 @@ public final class SectionActivity {
 
             ZpRowPreference report = PreferenceUi.nav(context,
                     getString(R.string.zp_diagnostic_title),
-                    SymbolSchema.active(context).valid
+                    SymbolSchema.active(target).valid
                             ? null
                             : getString(R.string.zp_diagnostic_remap_summary));
             report.setKey(DEVELOPER_REPORT);
@@ -257,7 +286,7 @@ public final class SectionActivity {
 
         private void refreshDeveloperRuntimeStatus() {
             if (developerRuntimeStatus == null || !isAdded()) return;
-            SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(requireContext()));
+            SelfCheckData.Counts counts = SelfCheckData.counts(SelfCheckData.load(targetContext()));
             developerRuntimeStatus.setSummary(runtimeSummary(counts));
             developerRuntimeStatus.dot(runtimeDotColor(counts));
             developerRuntimeStatus.refreshStyle();
@@ -266,6 +295,7 @@ public final class SectionActivity {
         void refreshDeveloperEnvironment() {
             if (!isAdded()) return;
             Context context = requireContext();
+            Context target = targetContext();
             if (developerRootAccess != null) {
                 RootAccess.State state = RootAccess.cached(context);
                 int summary = state == RootAccess.State.GRANTED
@@ -277,7 +307,7 @@ public final class SectionActivity {
                 developerRootAccess.refreshStyle();
             }
             if (developerRuntimeEnvironment != null) {
-                developerRuntimeEnvironment.value(runtimeEnvironmentSummary(context));
+                developerRuntimeEnvironment.value(runtimeEnvironmentSummary(target));
                 developerRuntimeEnvironment.refreshStyle();
             }
         }
@@ -332,13 +362,14 @@ public final class SectionActivity {
 
         private void addRowsForKey(ZpSection section, SymbolSchema.Active schema, String key) {
             Context context = requireContext();
+            Context target = targetContext();
             if (Tweaks.KEY_DEFAULT_INBOX_FILTER.equals(key)) {
-                section.addDependent(defaultInboxFilterPreference(context),
+                section.addDependent(defaultInboxFilterPreference(context, target),
                         Tweaks.KEY_FILTER_POPOVER_CATEGORIES);
                 return;
             }
             if (Tweaks.KEY_BACKUP_PUSH_INTERVAL.equals(key)) {
-                section.addDependent(backupIntPreference(context, key,
+                section.addDependent(backupIntPreference(context, target, key,
                                 R.string.zp_backup_interval_title,
                                 R.array.zp_backup_interval_entries,
                                 R.array.zp_backup_interval_values),
@@ -346,7 +377,7 @@ public final class SectionActivity {
                 return;
             }
             if (Tweaks.KEY_PASSCODE_GRACE_MS.equals(key)) {
-                section.add(backupIntPreference(context, key,
+                section.add(backupIntPreference(context, target, key,
                         R.string.zp_passcode_grace_title,
                         R.array.zp_passcode_grace_entries,
                         R.array.zp_passcode_grace_values));
@@ -359,10 +390,10 @@ public final class SectionActivity {
             Preference row;
             if (!item.implemented) {
                 row = plannedPreference(context, schema, item);
-            } else if (!RequirementGate.isMet(context, item.requirement)) {
+            } else if (!RequirementGate.isMet(target, item.requirement)) {
                 row = unavailableRequirementPreference(context, item);
             } else {
-                row = implementedPreference(context, schema, item);
+                row = implementedPreference(context, target, schema, item);
             }
             String dependency = null;
             if (Tweaks.KEY_CATEGORY_GROUPS.equals(item.key)
@@ -390,7 +421,7 @@ public final class SectionActivity {
             }
         }
 
-        private Preference defaultInboxFilterPreference(Context context) {
+        private Preference defaultInboxFilterPreference(Context context, Context target) {
             ZpListPreference preference = new ZpListPreference(context);
             preference.setKey(Tweaks.KEY_DEFAULT_INBOX_FILTER);
             preference.setTitle(R.string.zp_default_inbox_filter);
@@ -398,7 +429,7 @@ public final class SectionActivity {
             preference.setEntries(R.array.zp_inbox_filter_entries);
             preference.setEntryValues(R.array.zp_inbox_filter_values);
             preference.setValue(String.valueOf(
-                    SettingsStore.getInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER)));
+                    SettingsStore.getInt(target, Tweaks.KEY_DEFAULT_INBOX_FILTER)));
             preference.setSummaryProvider(androidx.preference.ListPreference
                     .SimpleSummaryProvider.getInstance());
             preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
@@ -408,25 +439,25 @@ public final class SectionActivity {
                 } catch (NumberFormatException ignored) {
                     return false;
                 }
-                return SettingsStore.confirmSaved(context,
-                        SettingsStore.putInt(context, Tweaks.KEY_DEFAULT_INBOX_FILTER, value));
+                return SettingsStore.confirmSaved(target,
+                        SettingsStore.putInt(target, Tweaks.KEY_DEFAULT_INBOX_FILTER, value));
             });
             return preference;
         }
 
-        private Preference backupIntPreference(Context context, String key, int title,
+        private Preference backupIntPreference(Context context, Context target, String key, int title,
                                                int entries, int values) {
             ZpListPreference preference = new ZpListPreference(context);
             preference.setKey(key);
             preference.setTitle(title);
             preference.setEntries(entries);
             preference.setEntryValues(values);
-            preference.setValue(String.valueOf(SettingsStore.getInt(context, key)));
+            preference.setValue(String.valueOf(SettingsStore.getInt(target, key)));
             preference.setSummaryProvider(androidx.preference.ListPreference
                     .SimpleSummaryProvider.getInstance());
             preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
                 try {
-                    return SettingsStore.confirmSaved(context, SettingsStore.putInt(context, key,
+                    return SettingsStore.confirmSaved(target, SettingsStore.putInt(target, key,
                             Integer.parseInt(String.valueOf(newValue))));
                 } catch (NumberFormatException ignored) {
                     return false;
@@ -452,7 +483,7 @@ public final class SectionActivity {
                 return;
             }
             recordingCountLoading = true;
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             new Thread(() -> {
                 int count = CallRecordingStore.list(context).size();
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -466,16 +497,16 @@ public final class SectionActivity {
             }, "call-recording-count").start();
         }
 
-        private Preference telemetryMasterPreference(Context context) {
+        private Preference telemetryMasterPreference(Context context, Context target) {
             telemetryMaster = PreferenceUi.mainSwitch(context, MASTER_TELEMETRY,
                     getString(R.string.zp_telemetry_master_title),
                     null);
-            telemetryMaster.setChecked(allTelemetryDisabled(context));
+            telemetryMaster.setChecked(allTelemetryDisabled(target));
             telemetryMaster.setOnPreferenceChangeListener((changedPreference, newValue) -> {
                 boolean disabled = (Boolean) newValue;
                 Map<String, Object> updates = new HashMap<>();
                 for (String key : Tweaks.TELEMETRY_KEYS) updates.put(key, disabled);
-                if (!SettingsStore.confirmSaved(context, SettingsStore.save(context, updates))) return false;
+                if (!SettingsStore.confirmSaved(target, SettingsStore.save(target, updates))) return false;
                 for (String key : Tweaks.TELEMETRY_KEYS) {
                     ZpSwitchPreference child = switches.get(key);
                     if (child != null) {
@@ -504,7 +535,8 @@ public final class SectionActivity {
             return true;
         }
 
-        private Preference implementedPreference(Context context, SymbolSchema.Active schema, Tweaks.Item item) {
+        private Preference implementedPreference(Context context, Context target,
+                                                 SymbolSchema.Active schema, Tweaks.Item item) {
             TweakHookInfo.Info hookInfo = TweakHookInfo.forKey(item.key, schema);
             String behaviorSummary = item.summaryRes == 0 ? "" : getString(item.summaryRes);
             String hookSummary = hookInfo.driftProne && !schema.valid
@@ -520,7 +552,7 @@ public final class SectionActivity {
             ZpSwitchPreference preference = PreferenceUi.toggle(context, item.key,
                     getString(item.titleRes),
                     summary);
-            preference.setChecked(TweakStore.isEnabled(context, item.key));
+            preference.setChecked(TweakStore.isEnabled(target, item.key));
             preference.chips(trackingChips(item.key));
             switches.put(item.key, preference);
             if (Tweaks.KEY_HIDE_REACTION_ROW.equals(item.key)
@@ -536,17 +568,18 @@ public final class SectionActivity {
                 boolean enabled = (Boolean) newValue;
                 if (Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS.equals(item.key)
                         && enabled && !notificationPermissionGranted(context)) {
-                    recordingPermissionGeneration = SettingsChanges.generation(context);
+                    recordingPermissionGeneration = SettingsChanges.generation(target);
+                    recordingPermissionPackage = HostPackages.target(target);
                     recordingNotificationPermissionLauncher.launch(
                             Manifest.permission.POST_NOTIFICATIONS);
                     return false;
                 }
-                if (!SettingsStore.confirmSaved(context,
-                        TweakStore.setEnabled(context, item.key, enabled))) return false;
+                if (!SettingsStore.confirmSaved(target,
+                        TweakStore.setEnabled(target, item.key, enabled))) return false;
                 if (Tweaks.KEY_HIDE_REACTION_ROW.equals(item.key)
                         || Tweaks.KEY_CUSTOM_REACTION.equals(item.key)) refreshReactionControls();
                 if (telemetryMaster != null && item.key.startsWith("telemetry.")) {
-                    telemetryMaster.setChecked(allTelemetryDisabled(context));
+                    telemetryMaster.setChecked(allTelemetryDisabled(target));
                 }
                 return true;
             });
@@ -657,6 +690,9 @@ public final class SectionActivity {
         }
 
         private String[] relatedFeatures(String key) {
+            if (Tweaks.KEY_NATIVE_MINI_CHAT.equals(key)) {
+                return new String[]{key, key + ".window"};
+            }
             if (Tweaks.KEY_FORCE_MESSAGES_AS_HOME.equals(key)) {
                 return new String[]{"bottom_tabs.force_home"};
             }

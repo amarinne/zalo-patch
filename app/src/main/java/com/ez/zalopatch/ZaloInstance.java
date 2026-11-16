@@ -27,6 +27,9 @@ final class ZaloInstance {
     /** Separates the {@code ps} block from the {@code pm list users} block in one probe call. */
     static final String USERS_MARKER = "---ZP_USERS---";
 
+    private static final String MODULE_PACKAGE = "com.ez.zalopatch";
+    private static final Pattern PACKAGE_NAME =
+            Pattern.compile("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+");
     private static final Pattern ANDROID_USER = Pattern.compile("^u(\\d+)_.*");
     private static final Pattern USER_INFO =
             Pattern.compile("UserInfo\\{(\\d+):([^:]*):[^}]*\\}");
@@ -96,6 +99,61 @@ final class ZaloInstance {
         }
         for (List<Integer> pids : grouped.values()) Collections.sort(pids);
         return grouped;
+    }
+
+    /**
+     * True when {@code packageName} is a syntactically valid installed package that may be
+     * interpolated into a root shell command. Registration is checked separately.
+     */
+    static boolean validPackage(String packageName) {
+        return packageName != null
+                && packageName.length() <= 255
+                && !MODULE_PACKAGE.equals(packageName)
+                && !"android".equals(packageName)
+                && PACKAGE_NAME.matcher(packageName).matches();
+    }
+
+    /** Android user id encoded in a process uid ({@code uid / 100000}). */
+    static int androidUser(int uid) {
+        return uid < 0 ? -1 : uid / 100_000;
+    }
+
+    /**
+     * Groups one exact package's pids by Android user. Unlike {@link #parsePs(String)}, this
+     * covers a selected renamed package without admitting canonical-prefix neighbours.
+     */
+    static Map<Integer, List<Integer>> parsePsForPackage(String output, String packageName) {
+        Map<Integer, List<Integer>> grouped = new LinkedHashMap<>();
+        if (output == null || !validPackage(packageName)) return grouped;
+        for (String line : output.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || USERS_MARKER.equals(trimmed)) break;
+            String[] fields = trimmed.split("\\s+");
+            if (fields.length < 3) continue;
+            String name = fields[fields.length - 1];
+            if (!packageProcess(name, packageName)) continue;
+            int pid;
+            try {
+                pid = Integer.parseInt(fields[0]);
+            } catch (NumberFormatException ignored) {
+                continue; // Header line ("PID USER NAME").
+            }
+            int userId = userIdOf(fields[1]);
+            if (userId < 0) continue;
+            List<Integer> pids = grouped.get(userId);
+            if (pids == null) {
+                pids = new ArrayList<>();
+                grouped.put(userId, pids);
+            }
+            pids.add(pid);
+        }
+        for (List<Integer> pids : grouped.values()) Collections.sort(pids);
+        return grouped;
+    }
+
+    /** Exact package process name or one of its {@code :subprocess} children. */
+    private static boolean packageProcess(String name, String packageName) {
+        return packageName.equals(name) || name.startsWith(packageName + ":");
     }
 
     /** Android user id encoded in a {@code ps} USER field ({@code u999_a266}, or a raw uid). */
@@ -195,6 +253,26 @@ final class ZaloInstance {
                 + "-c android.intent.category.LAUNCHER " + PACKAGE + " | tail -n 1) "
                 + "&& [ \"${launcher#" + PACKAGE + "/}\" != \"$launcher\" ] "
                 + "&& am force-stop " + user + PACKAGE + " "
+                + "&& am start " + user + "-n \"$launcher\"";
+    }
+
+    /**
+     * Restarts one exact package in one Android user. The caller must already have derived the
+     * user from the module process and validated registration; this method revalidates every
+     * value it interpolates and verifies the resolved component belongs to the exact package.
+     */
+    static String commandForPackage(String packageName, int androidUserId) {
+        if (!validPackage(packageName) || androidUserId < 0) {
+            throw new IllegalArgumentException("Invalid Zalo restart target");
+        }
+        String user = "--user " + androidUserId + " ";
+        return "launcher=$(cmd package resolve-activity " + user + "--brief "
+                + "-a android.intent.action.MAIN "
+                + "-c android.intent.category.LAUNCHER " + packageName + " | tail -n 1) "
+                + "&& [ -n \"$launcher\" ] "
+                + "&& [ \"${launcher#" + packageName + "/}\" != \"$launcher\" ] "
+                + "&& [ -n \"${launcher#" + packageName + "/}\" ] "
+                + "&& am force-stop " + user + packageName + " "
                 + "&& am start " + user + "-n \"$launcher\"";
     }
 

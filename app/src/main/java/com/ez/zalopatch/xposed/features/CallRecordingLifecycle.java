@@ -53,6 +53,10 @@ public final class CallRecordingLifecycle {
         return confirmed && audioConnected;
     }
 
+    static boolean shouldStopAfterActivityDestroy(boolean peerActive) {
+        return !peerActive;
+    }
+
     /**
      * A native start can land before ZRTC attaches the peer to the live audio path, leaving a
      * header-only file for the whole call. Re-attach once on the same thread boundary; a second

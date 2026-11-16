@@ -32,6 +32,9 @@ final class RuntimeStatusTraceStore {
             event.put("feature", safe(feature, 128));
             event.put("status", status);
             event.put("target", safe(values.getAsString("target"), 512));
+            // A trace belongs to the scope that produced it; the package makes that explicit even
+            // when rows from original and clones are reviewed side by side.
+            event.put("targetPackage", safe(HostPackages.transportHost(context), 255));
             if (callRecording) {
                 event.put("detail", safeCallDetail(values.getAsString("detail")));
             }

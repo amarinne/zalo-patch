@@ -64,6 +64,48 @@ public final class DexKitBottomTabsFingerprintTest {
     }
 
     @Test
+    public void defaultPackageEnumAndStateResolve() {
+        // 261102901: state scf and enum qcf both live in the default package, so an
+        // enum check that requires a dot rejected the real release.
+        DexKitBottomTabsFingerprint.Resolution resolution =
+                DexKitBottomTabsFingerprint.resolve(
+                        "scf", stateMethods("scf", "qcf"), stateLayout());
+        assertTrue(resolution.status, resolution.resolved());
+        assertEquals("scf", resolution.anchors.get(
+                DexKitBottomTabsFingerprint.ANCHOR_STATE_CLASS));
+        assertEquals("qcf", resolution.anchors.get(
+                DexKitBottomTabsFingerprint.ANCHOR_ENUM_CLASS));
+    }
+
+    @Test
+    public void javaAndAndroidTypesAreNotEnums() {
+        for (String type : Arrays.asList("java.lang.String", "android.os.Bundle",
+                "kotlin.Unit", "int", "boolean", "void")) {
+            assertFalse(type, DexKitBottomTabsFingerprint.resolve("scf",
+                    stateMethods("scf", type), stateLayout()).resolved());
+        }
+    }
+
+    @Test
+    public void stableWidgetCorroborationBreaksShapeTie() {
+        Map<String, List<DexKitBottomTabsFingerprint.MethodHit>> dumps = new LinkedHashMap<>();
+        dumps.put("scf", stateMethods("scf", "qcf"));
+        dumps.put("oz5", stateMethods("oz5"));
+        assertEquals("", DexKitBottomTabsFingerprint.selectStateClass(dumps));
+        assertEquals("scf", DexKitBottomTabsFingerprint.selectStateClass(
+                dumps, new java.util.LinkedHashSet<>(Arrays.asList("scf"))));
+        assertEquals("oz5", DexKitBottomTabsFingerprint.selectStateClass(
+                dumps, new java.util.LinkedHashSet<>(Arrays.asList("oz5"))));
+        // Two corroborated candidates stay ambiguous.
+        assertEquals("", DexKitBottomTabsFingerprint.selectStateClass(
+                dumps, new java.util.LinkedHashSet<>(Arrays.asList("scf", "oz5"))));
+        // Corroboration never substitutes for a missing shape.
+        assertEquals("", DexKitBottomTabsFingerprint.selectStateClass(
+                java.util.Collections.singletonMap("oz5", stateMethods("other")),
+                new java.util.LinkedHashSet<>(Arrays.asList("oz5"))));
+    }
+
+    @Test
     public void layoutGateAcceptsRenamedFields() {
         DexKitBottomTabsFingerprint.FieldLayout renamed =
                 new DexKitBottomTabsFingerprint.FieldLayout(
@@ -347,10 +389,15 @@ public final class DexKitBottomTabsFingerprintTest {
     }
 
     private List<DexKitBottomTabsFingerprint.MethodHit> stateMethods(String owner) {
+        return stateMethods(owner, ENUM);
+    }
+
+    private List<DexKitBottomTabsFingerprint.MethodHit> stateMethods(String owner,
+                                                                     String enumType) {
         List<DexKitBottomTabsFingerprint.MethodHit> hits = new ArrayList<>();
         hits.add(staticMethod(owner, "h", owner));
         hits.add(new DexKitBottomTabsFingerprint.MethodHit(owner, "g", "int",
-                Arrays.asList(ENUM), true, new ArrayList<String>(), new ArrayList<String>()));
+                Arrays.asList(enumType), true, new ArrayList<String>(), new ArrayList<String>()));
         hits.add(voidMethod(owner, "o"));
         hits.add(voidMethod(owner, "p"));
         hits.add(voidMethod(owner, "q", owner + "#p"));

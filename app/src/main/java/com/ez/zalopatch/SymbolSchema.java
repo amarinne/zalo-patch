@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.database.Cursor;
 import android.net.Uri;
-import android.text.TextUtils;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -29,6 +28,7 @@ public final class SymbolSchema {
     public static final String MODULE_PACKAGE = "com.ez.zalopatch";
     public static final String ASSET_NAME = "symbol-schema.json";
     private static volatile Active cachedHookSchema;
+    private static volatile Active exactHookSchema;
     private static volatile long cachedHookVersionCode = Long.MIN_VALUE;
     private static volatile String moduleApkPath;
 
@@ -52,6 +52,9 @@ public final class SymbolSchema {
 
     public static Active activeForHooks(Context context) {
         context = hookContext(context);
+        // Provider requests run concurrently for different installations in the module process.
+        if (context instanceof android.content.ContextWrapper && HostPackages.renamed(context)
+                && isModuleProcess(context)) return active(context);
         long installedVersionCode = installedZaloVersionCode(context);
         Active cached = cachedHookSchema;
         if (cached != null && cachedHookVersionCode == installedVersionCode) {
@@ -64,13 +67,14 @@ public final class SymbolSchema {
                 // The remote profile is consulted even when a bundled profile exists: a signed
                 // correction names the bundled revision it replaces. The mirror and the provider
                 // both carry the module-selected profile, and neither fetches over the network.
-                Active remote = HookConfig.hasAuthoritativeSnapshot()
+                Active remote = HookConfig.hasAuthoritativeSnapshot() && !HostPackages.renamed(context)
                         ? SymbolCatalogMirror.read(installedVersionCode)
                         : remoteFromProvider(context, installedVersionCode);
                 if (remote == null) {
                     remote = SymbolCatalogMirror.read(installedVersionCode);
                 }
                 cached = SymbolProfileSelection.select(bundled, remote);
+                exactHookSchema = cached;
                 cachedHookSchema = cached;
                 cachedHookVersionCode = installedVersionCode;
             }
@@ -93,6 +97,13 @@ public final class SymbolSchema {
         return activeForHooks(context);
     }
 
+    /** Artifact admission uses the selected exact profile even after a runtime overlay is adopted. */
+    static Active exactForProcess(Context context) {
+        if (isModuleProcess(context)) return active(context);
+        activeForHooks(context);
+        return exactHookSchema;
+    }
+
     static boolean isModuleProcess(Context context) {
         return context != null
                 && MODULE_PACKAGE.equals(context.getPackageName())
@@ -106,6 +117,7 @@ public final class SymbolSchema {
 
     public static void invalidate() {
         cachedHookSchema = null;
+        exactHookSchema = null;
         cachedHookVersionCode = Long.MIN_VALUE;
     }
 
@@ -114,6 +126,10 @@ public final class SymbolSchema {
             return null;
         }
         try {
+            if (HostPackages.renamed(context)) {
+                return selectRemoteEntry(SymbolCatalogCache.load(HostPackages.base(context),
+                        installedVersionCode), installedVersionCode);
+            }
             android.content.SharedPreferences preferences = TweakStore.preferences(context);
             String storedLightweight = preferences.getString(
                     ZaloArtifactState.KEY_LIGHTWEIGHT, "");
@@ -350,6 +366,7 @@ public final class SymbolSchema {
         if (path != null && !path.isEmpty() && !path.equals(moduleApkPath)) {
             moduleApkPath = path;
             cachedHookSchema = null;
+            exactHookSchema = null;
             cachedHookVersionCode = Long.MIN_VALUE;
         }
     }
@@ -701,7 +718,7 @@ public final class SymbolSchema {
             return -1L;
         }
         try {
-            PackageInfo info = context.getPackageManager().getPackageInfo(TARGET_PACKAGE, 0);
+            PackageInfo info = context.getPackageManager().getPackageInfo(HostPackages.target(context), 0);
             if (android.os.Build.VERSION.SDK_INT >= 28) {
                 return info.getLongVersionCode();
             }
@@ -947,7 +964,7 @@ public final class SymbolSchema {
         }
 
         Object value(String path) {
-            if (TextUtils.isEmpty(path)) {
+            if (path == null || path.isEmpty()) {
                 return null;
             }
             Object current = root;

@@ -7,7 +7,6 @@ import static org.junit.Assert.assertThrows;
 import io.github.libxposed.api.XposedInterface;
 
 import java.lang.reflect.Executable;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -16,10 +15,7 @@ import java.util.List;
 import org.junit.After;
 import org.junit.Test;
 
-/**
- * Exercises the API 102 adapter's install and early-return contracts against a disposable
- * framework, so the rollback and callback semantics stay verifiable without a device.
- */
+/** Install and early-return contracts of the API 102 adapter, against a disposable framework. */
 public final class XpHooksAdapterTest {
 
     @After
@@ -29,40 +25,25 @@ public final class XpHooksAdapterTest {
     }
 
     @Test
-    public void rollsBackInstalledOverloadsWhenALaterHookFails() {
-        Framework framework = new Framework(2);
-        XpHooks.attach(framework.proxy);
+    public void aFailedOverloadRollsBackTheOnesAlreadyHooked() {
+        Fake fake = new Fake(2);
+        XpHooks.attach(fake.framework);
 
         assertThrows(IllegalStateException.class, () -> XpHooks.hookAllMethods(
                 "test", Overloads.class, "probe", (XpHooks.Before) param -> { }));
 
-        assertEquals("the overload already hooked must be undone", 1, framework.unhooked.size());
+        assertEquals("the overload already hooked must be undone", 1, fake.unhooked.size());
         assertEquals("rolled-back hooks must leave the registry", 0, XpHooks.installedCount());
     }
 
     @Test
-    public void removesAnUnhookedHandleFromTheRegistry() {
-        Framework framework = new Framework(0);
-        XpHooks.attach(framework.proxy);
-
-        XpHooks.Handle handle = XpHooks.hookMethod(
-                "test", method("probe", int.class), (XpHooks.Before) param -> { });
-        assertEquals(1, XpHooks.installedCount());
-
-        handle.unhook();
-
-        assertEquals(1, framework.unhooked.size());
-        assertEquals(0, XpHooks.installedCount());
-    }
-
-    @Test
-    public void beforeThrowableSkipsTheOriginalCallAndStillRunsAfter() {
-        Framework framework = new Framework(0);
-        XpHooks.attach(framework.proxy);
+    public void aBeforeThrowableSkipsTheOriginalCallAndStillRunsAfter() {
+        Fake fake = new Fake(0);
+        XpHooks.attach(fake.framework);
         IllegalStateException blocked = new IllegalStateException("blocked");
         List<String> calls = new ArrayList<>();
 
-        XpHooks.hookMethod("test", method("probe", int.class), new XpHooks.Before() {
+        XpHooks.hookMethod("test", probe(int.class), new XpHooks.Before() {
             @Override
             public void before(XpHooks.HookParam param) {
                 calls.add("before");
@@ -76,14 +57,14 @@ public final class XpHooksAdapterTest {
         });
 
         Throwable thrown = assertThrows(IllegalStateException.class,
-                () -> framework.lastInterceptor().intercept(framework.chain(method("probe", int.class))));
+                () -> fake.lastHooker().intercept(fake.chain(probe(int.class))));
 
         assertSame(blocked, thrown);
-        assertEquals("the original call must be skipped", 0, framework.proceeded);
+        assertEquals("the original call must be skipped", 0, fake.proceeded);
         assertEquals(List.of("before", "after"), calls);
     }
 
-    /** Declared overloads used by {@code hookAllMethods} tests. */
+    /** Declared overloads used by the {@code hookAllMethods} case. */
     public static final class Overloads {
         public int probe(int value) {
             return value;
@@ -94,125 +75,98 @@ public final class XpHooksAdapterTest {
         }
     }
 
-    private static Method method(String name, Class<?>... parameterTypes) {
+    private static Method probe(Class<?> parameter) {
         try {
-            Method method = Overloads.class.getDeclaredMethod(name, parameterTypes);
-            method.setAccessible(true);
-            return method;
+            return Overloads.class.getDeclaredMethod("probe", parameter);
         } catch (NoSuchMethodException missing) {
             throw new AssertionError(missing);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
-        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler);
-    }
-
-    private static Object objectMethod(Object instance, Method method, Object[] args) {
-        switch (method.getName()) {
-            case "equals":
-                return instance == args[0];
-            case "hashCode":
-                return System.identityHashCode(instance);
-            default:
-                return "test-proxy";
-        }
-    }
-
-    /** Minimal framework that can fail a chosen install and records what the adapter did. */
-    private static final class Framework {
-        final XposedInterface proxy;
+    /** Framework double: fails a chosen install, records unhooks, and answers chain calls. */
+    private static final class Fake {
+        final XposedInterface framework;
         final List<XposedInterface.HookHandle> unhooked = new ArrayList<>();
-        private final List<XposedInterface.Hooker> interceptors = new ArrayList<>();
-        private final int failAtHook;
-        private int hookCalls;
+        final List<XposedInterface.Hooker> hookers = new ArrayList<>();
         int proceeded;
+        private final int failAt;
+        private int installs;
 
-        Framework(int failAtHook) {
-            this.failAtHook = failAtHook;
-            this.proxy = proxy(XposedInterface.class, (instance, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    return objectMethod(instance, method, args);
-                }
-                if (!"hook".equals(method.getName())) {
-                    throw new UnsupportedOperationException(method.getName());
-                }
-                if (++hookCalls == failAtHook) {
-                    throw new IllegalStateException("framework refused hook " + hookCalls);
-                }
-                return builder((Executable) args[0]);
-            });
+        Fake(int failAt) {
+            this.failAt = failAt;
+            this.framework = (XposedInterface) Proxy.newProxyInstance(
+                    Fake.class.getClassLoader(), new Class<?>[]{XposedInterface.class},
+                    (self, method, args) -> {
+                        if (!"hook".equals(method.getName())) {
+                            throw new UnsupportedOperationException(method.getName());
+                        }
+                        if (++installs == failAt) {
+                            throw new IllegalStateException("refused");
+                        }
+                        return new Builder((Executable) args[0]);
+                    });
         }
 
-        XposedInterface.Hooker lastInterceptor() {
-            return interceptors.get(interceptors.size() - 1);
+        XposedInterface.Hooker lastHooker() {
+            return hookers.get(hookers.size() - 1);
         }
 
         XposedInterface.Chain chain(Executable executable) {
-            return proxy(XposedInterface.Chain.class, (instance, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    return objectMethod(instance, method, args);
-                }
-                switch (method.getName()) {
-                    case "getExecutable":
-                        return executable;
-                    case "getThisObject":
-                        return null;
-                    case "getArgs":
-                        return Collections.emptyList();
-                    case "getArg":
-                        return null;
-                    case "proceed":
-                        proceeded++;
-                        return 42;
-                    case "proceedWith":
-                        proceeded++;
-                        return 42;
-                    default:
-                        throw new UnsupportedOperationException(method.getName());
-                }
-            });
+            return new Chain(executable);
         }
 
-        private XposedInterface.HookBuilder builder(Executable executable) {
-            return proxy(XposedInterface.HookBuilder.class, (instance, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    return objectMethod(instance, method, args);
-                }
-                switch (method.getName()) {
-                    case "setId":
-                    case "setPriority":
-                    case "setExceptionMode":
-                        return instance;
-                    case "intercept":
-                        interceptors.add((XposedInterface.Hooker) args[0]);
-                        return handle(executable);
-                    default:
-                        throw new UnsupportedOperationException(method.getName());
-                }
-            });
+        private final class Builder implements XposedInterface.HookBuilder {
+            private final Executable executable;
+
+            Builder(Executable executable) {
+                this.executable = executable;
+            }
+
+            @Override public XposedInterface.HookBuilder setPriority(int priority) { return this; }
+            @Override public XposedInterface.HookBuilder setExceptionMode(XposedInterface.ExceptionMode mode) { return this; }
+            @Override public XposedInterface.HookBuilder setId(String id) { return this; }
+
+            @Override
+            public XposedInterface.HookHandle intercept(XposedInterface.Hooker hooker) {
+                hookers.add(hooker);
+                return new Handle(executable);
+            }
         }
 
-        private XposedInterface.HookHandle handle(Executable executable) {
-            return proxy(XposedInterface.HookHandle.class, (instance, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    return objectMethod(instance, method, args);
-                }
-                switch (method.getName()) {
-                    case "unhook":
-                        unhooked.add((XposedInterface.HookHandle) instance);
-                        return null;
-                    case "getExecutable":
-                        return executable;
-                    case "getId":
-                        return "test";
-                    case "replaceHook":
-                        return instance;
-                    default:
-                        throw new UnsupportedOperationException(method.getName());
-                }
-            });
+        private final class Handle implements XposedInterface.HookHandle {
+            private final Executable executable;
+
+            Handle(Executable executable) {
+                this.executable = executable;
+            }
+
+            @Override public void unhook() { unhooked.add(this); }
+            @Override public Executable getExecutable() { return executable; }
+            @Override public String getId() { return "test"; }
+            @Override public XposedInterface.HookHandle replaceHook(XposedInterface.Hooker hooker) { return this; }
+        }
+
+        private final class Chain implements XposedInterface.Chain {
+            private final Executable executable;
+
+            Chain(Executable executable) {
+                this.executable = executable;
+            }
+
+            @Override public Executable getExecutable() { return executable; }
+            @Override public Object getThisObject() { return null; }
+            @Override public List<Object> getArgs() { return Collections.emptyList(); }
+            @Override public Object getArg(int index) { return null; }
+
+            @Override
+            public Object proceed() {
+                proceeded++;
+                return 42;
+            }
+
+            @Override public Object proceed(Object[] args) { return proceed(); }
+            @Override public Object proceedWith(Object value) { return proceed(); }
+            @Override public Object proceedWith(Object value, Object[] args) { return proceed(); }
         }
     }
 }

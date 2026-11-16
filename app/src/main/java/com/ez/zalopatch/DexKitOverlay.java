@@ -103,13 +103,32 @@ public final class DexKitOverlay {
     public static JSONObject compose(JSONObject exactSymbols, JSONObject neighborSymbols,
             Map<String, String> dexkit, String adBind, String feedBind) {
         JSONObject merged = merge(neighborSymbols, dexkit, null, null);
+        // A neighbouring recall route has no artifact-bound semantic qualification and
+        // the coordinator gate may suppress a destructive transition. Never inherit it;
+        // descriptors discovered against this host are re-applied right below.
+        merged.remove("recall");
         injectZinstantBinds(merged, adBind, feedBind);
         try {
+            putStrings(merged, discoveredRecall(dexkit), true);
             copyExactLeaves(merged, exactSymbols);
             return merged;
         } catch (org.json.JSONException exception) {
             throw new IllegalStateException("exact symbol overlay merge failed", exception);
         }
+    }
+
+    /** Only this host's discovered recall leaves, so a removed neighbour can never return. */
+    private static Map<String, String> discoveredRecall(Map<String, String> dexkit) {
+        if (dexkit == null || dexkit.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> recall = new LinkedHashMap<>();
+        for (Map.Entry<String, String> item : dexkit.entrySet()) {
+            if (item.getKey().startsWith(DexKitRecallFingerprint.PREFIX)) {
+                recall.put(item.getKey(), item.getValue());
+            }
+        }
+        return recall;
     }
 
     /** A composition base must supply a populated leaf that the exact profile lacks. */

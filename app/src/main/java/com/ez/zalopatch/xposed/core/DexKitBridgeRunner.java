@@ -803,8 +803,25 @@ final class DexKitBridgeRunner {
         final String id;
         final String targetOwner;
         final String targetMethod;
+        final String callerOwner;
+        final String targetReturn;
+        final java.util.List<String> targetParams;
 
         InvokerSpec(String id, String targetOwner, String targetMethod) {
+            this(id, targetOwner, targetMethod, null);
+        }
+
+        InvokerSpec(String id, String targetOwner, String targetMethod, String callerOwner) {
+            this(id, targetOwner, targetMethod, callerOwner, null, null);
+        }
+
+        InvokerSpec(String id, String targetOwner, String targetMethod, String callerOwner,
+                    String targetReturn, java.util.List<String> targetParams) {
+            this.callerOwner = callerOwner;
+            this.targetReturn = targetReturn;
+            this.targetParams = targetParams == null ? null
+                    : java.util.Collections.unmodifiableList(
+                            new java.util.ArrayList<>(targetParams));
             this.id = id == null ? "" : id;
             this.targetOwner = targetOwner == null ? "" : targetOwner;
             this.targetMethod = targetMethod == null ? "" : targetMethod;
@@ -851,6 +868,53 @@ final class DexKitBridgeRunner {
         return results;
     }
 
+    /**
+     * Owner/shape/literal query for the recall route. Plain hits precede bounded details.
+     * Literal presence is a candidate generator, not qualification.
+     */
+    static QueryResult recallSemanticMethods(String apkPath, String owner, String resultType,
+                                             java.util.List<String> params, String... literals) {
+        try (org.luckypray.dexkit.DexKitBridge bridge =
+                     org.luckypray.dexkit.DexKitBridge.create(apkPath)) {
+            org.luckypray.dexkit.query.matchers.MethodMatcher matcher =
+                    org.luckypray.dexkit.query.matchers.MethodMatcher.create()
+                            .declaredClass(owner).returnType(resultType).paramTypes(params)
+                            .usingEqStrings(literals);
+            org.luckypray.dexkit.result.MethodDataList methods = bridge.findMethod(
+                    org.luckypray.dexkit.query.FindMethod.create().matcher(matcher));
+            QueryResult result = new QueryResult(methods.size(), "");
+            if (methods.size() <= 8) {
+                for (org.luckypray.dexkit.result.MethodData method : methods) {
+                    result.hits.add(plainHit(method));
+                }
+            }
+            return result;
+        } catch (Throwable error) {
+            return new QueryResult(0, error.getClass().getSimpleName());
+        }
+    }
+
+    /** Used-field details for one already qualified method. Never extracts raw invokes. */
+    static QueryResult recallDetails(String apkPath, String owner, String name) {
+        try (org.luckypray.dexkit.DexKitBridge bridge =
+                     org.luckypray.dexkit.DexKitBridge.create(apkPath)) {
+            org.luckypray.dexkit.result.MethodDataList methods = bridge.findMethod(
+                    org.luckypray.dexkit.query.FindMethod.create().matcher(
+                            org.luckypray.dexkit.query.matchers.MethodMatcher.create()
+                                    .declaredClass(owner).name(name)));
+            QueryResult result = new QueryResult(methods.size(), "");
+            if (methods.size() > 8) {
+                return result;
+            }
+            for (org.luckypray.dexkit.result.MethodData method : methods) {
+                result.hits.add(toRawHitWithDetails(method, false));
+            }
+            return result;
+        } catch (Throwable error) {
+            return new QueryResult(0, error.getClass().getSimpleName());
+        }
+    }
+
     private static QueryResult queryInvokers(org.luckypray.dexkit.DexKitBridge bridge,
                                              InvokerSpec spec) {
         try {
@@ -859,10 +923,19 @@ final class DexKitBridgeRunner {
                             .name(spec.targetMethod)
                             .declaredClass(org.luckypray.dexkit.query.matchers.ClassMatcher.create()
                                     .className(spec.targetOwner));
+            if (spec.targetReturn != null) {
+                target.returnType(spec.targetReturn);
+            }
+            if (spec.targetParams != null) {
+                target.paramTypes(spec.targetParams);
+            }
             org.luckypray.dexkit.query.matchers.MethodMatcher caller =
                     org.luckypray.dexkit.query.matchers.MethodMatcher.create()
                             .invokeMethods(org.luckypray.dexkit.query.matchers.MethodsMatcher
                                     .create().add(target));
+            if (spec.callerOwner != null) {
+                caller.declaredClass(spec.callerOwner);
+            }
             org.luckypray.dexkit.result.MethodDataList found = bridge.findMethod(
                     org.luckypray.dexkit.query.FindMethod.create().matcher(caller));
             QueryResult result = new QueryResult(found.size(), "");

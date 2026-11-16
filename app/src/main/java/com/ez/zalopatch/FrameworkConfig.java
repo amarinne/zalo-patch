@@ -108,21 +108,29 @@ final class FrameworkConfig {
                 values.put(key, value instanceof String ? (String) value : "");
             }
             values.putAll(DexKitMirror.snapshot(context));
-            values.put(SymbolCatalogMirror.MIRROR_KEY, SymbolCatalogMirror.snapshot(context,
-                    SymbolSchema.installedZaloVersionCode(context)));
+            // Signed catalog content stays shared under the existing policy; only mutable target
+            // state (settings, rules, artifact, DexKit budget) follows the scoped context.
+            values.put(SymbolCatalogMirror.MIRROR_KEY, SymbolCatalogMirror.snapshot(
+                    HostPackages.base(context), SymbolSchema.installedZaloVersionCode(context)));
             ConfigSnapshot snapshot = new ConfigSnapshot(values,
                     applySettings || previous.moduleVersion != BuildConfig.VERSION_CODE
                             ? UUID.randomUUID().toString() : previous.id,
                     applySettings ? generation : previous.generation,
                     BuildConfig.VERSION_CODE);
-            return publishSnapshot(local, snapshot.encode());
+            return publishSnapshot(ConfigSnapshot.remoteGroup(HostPackages.transportHost(context)),
+                    local, snapshot.encode());
         } catch (Throwable error) {
             Log.i("ZaloPatch", "Config publication failed " + error.getClass().getSimpleName());
             return false;
         }
     }
 
+    /** Canonical publication remains the default for existing callers and fixtures. */
     static boolean publishSnapshot(SharedPreferences local, String encoded) {
+        return publishSnapshot(ConfigSnapshot.GROUP, local, encoded);
+    }
+
+    static boolean publishSnapshot(String group, SharedPreferences local, String encoded) {
         XposedService bound;
         synchronized (serviceLock) {
             bound = service;
@@ -130,7 +138,7 @@ final class FrameworkConfig {
         }
         // commit() is the IPC acknowledgment. A service-library readback may only be local cache.
         return ConfigSnapshot.publish(bound == null ? null
-                        : () -> bound.getRemotePreferences(ConfigSnapshot.GROUP).edit()
+                        : () -> bound.getRemotePreferences(group).edit()
                                 .putString(ConfigSnapshot.KEY, encoded).commit(),
                 () -> {
                     synchronized (serviceLock) {

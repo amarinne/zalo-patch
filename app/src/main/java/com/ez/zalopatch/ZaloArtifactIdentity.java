@@ -19,6 +19,7 @@ import java.util.Locale;
 final class ZaloArtifactIdentity {
     static final String PACKAGE_NAME = "com.zing.zalo";
 
+    final String packageName;
     final long versionCode;
     final String versionName;
     final long lastUpdateTime;
@@ -29,9 +30,10 @@ final class ZaloArtifactIdentity {
     final String lightweightKey;
     final String generation;
 
-    private ZaloArtifactIdentity(long versionCode, String versionName, long lastUpdateTime,
+    ZaloArtifactIdentity(String packageName, long versionCode, String versionName, long lastUpdateTime,
                                  String sourceDir, String baseApkSha256, String signerSha256,
                                  List<Split> splits) {
+        this.packageName = packageName;
         this.versionCode = versionCode;
         this.versionName = versionName;
         this.lastUpdateTime = lastUpdateTime;
@@ -47,7 +49,8 @@ final class ZaloArtifactIdentity {
         PackageManager packageManager = context.getPackageManager();
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
-        PackageInfo info = packageManager.getPackageInfo(PACKAGE_NAME, flags);
+        String packageName = HostPackages.target(context);
+        PackageInfo info = packageManager.getPackageInfo(packageName, flags);
         ApplicationInfo applicationInfo = info.applicationInfo;
         if (applicationInfo == null || applicationInfo.sourceDir == null) {
             throw new IllegalStateException("Zalo base APK path unavailable");
@@ -56,7 +59,7 @@ final class ZaloArtifactIdentity {
                 ? info.getLongVersionCode() : info.versionCode;
         String baseHash = hashApks ? sha256(new File(applicationInfo.sourceDir)) : "";
         List<Split> splits = splits(applicationInfo, hashApks);
-        return new ZaloArtifactIdentity(code, info.versionName == null ? "" : info.versionName,
+        return new ZaloArtifactIdentity(packageName, code, info.versionName == null ? "" : info.versionName,
                 info.lastUpdateTime, applicationInfo.sourceDir, baseHash,
                 signerDigest(info), splits);
     }
@@ -103,7 +106,7 @@ final class ZaloArtifactIdentity {
 
     private String canonical(boolean includeHashes) {
         StringBuilder value = new StringBuilder();
-        value.append(PACKAGE_NAME).append('\n')
+        value.append(packageName).append('\n')
                 .append(versionCode).append('\n')
                 .append(lastUpdateTime).append('\n')
                 .append(sourceDir).append('\n')

@@ -104,7 +104,7 @@ public final class NotificationHistoryActivity {
 
         private void refreshAsync() {
             if (!isAdded()) return;
-            android.content.Context context = requireContext().getApplicationContext();
+            android.content.Context context = targetContext().getApplicationContext();
             NotificationHistoryStore.Bucket requested = bucket;
             new Thread(() -> {
                 NotificationHistoryStore store = new NotificationHistoryStore(context);
@@ -129,10 +129,18 @@ public final class NotificationHistoryActivity {
                     .setMessage(R.string.zp_history_clear_message)
                     .setNegativeButton(R.string.zp_cancel, null)
                     .setPositiveButton(R.string.zp_clear, (dialog, which) -> {
-                        new NotificationHistoryStore(requireContext()).clear();
+                        new NotificationHistoryStore(targetContext()).clear();
                         refreshAsync();
                     })
                     .show();
+        }
+
+        private StatusActivity host() {
+            return (StatusActivity) requireActivity();
+        }
+
+        private android.content.Context targetContext() {
+            return host().settingsContext();
         }
 
         private void updateFilterLabel() {
@@ -290,7 +298,8 @@ public final class NotificationHistoryActivity {
             TextView title = view.findViewById(R.id.zp_sheet_title);
             TextView body = view.findViewById(R.id.zp_sheet_body);
             long id = requireArguments().getLong(ARG_ID, -1L);
-            android.content.Context context = requireContext().getApplicationContext();
+            android.content.Context context = ((StatusActivity) requireActivity())
+                    .settingsContext().getApplicationContext();
             new Thread(() -> {
                 NotificationHistoryStore.Entry entry = new NotificationHistoryStore(context).find(id);
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {

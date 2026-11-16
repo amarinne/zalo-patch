@@ -5,7 +5,6 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
-import android.os.Process;
 import android.os.RemoteException;
 
 import java.io.File;
@@ -15,7 +14,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Capability-based Binder protocol for pulling a private Zalo recording descriptor. */
 public final class CallRecordingImportProtocol {
-    private static final String ZALO_PACKAGE = "com.zing.zalo";
     private static final String DESCRIPTOR =
             "com.ez.zalopatch.CallRecordingImportProtocol";
     private static final String VERIFIER_DESCRIPTOR = DESCRIPTOR + ".Verifier";
@@ -45,19 +43,7 @@ public final class CallRecordingImportProtocol {
     // These receivers are exported without a permission because the module and Zalo are not
     // co-signed; this UID/package check substitutes for an unavailable signature permission.
     static boolean callerAllowed(Context context, int sourceUid) {
-        if (sourceUid == Process.myUid()) {
-            return true;
-        }
-        String[] packages = context.getPackageManager().getPackagesForUid(sourceUid);
-        if (packages == null) {
-            return false;
-        }
-        for (String packageName : packages) {
-            if (ZALO_PACKAGE.equals(packageName)) {
-                return true;
-            }
-        }
-        return false;
+        return HostPackages.callerPackage(context, sourceUid) != null;
     }
 
     public static IBinder source(File file, Completion completion) {

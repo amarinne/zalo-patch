@@ -21,13 +21,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * LibXposed API 102 module entry.
  *
  * <p>Package work starts from {@link #onPackageReady} (not {@code onPackageLoaded},
- * which requires API 29 while this module supports API 26+). Only {@code com.zing.zalo}
- * is handled; every other package loaded into the process is ignored without
+ * which requires API 29 while this module supports API 26+). Zalo and explicitly trusted
+ * renamed copies are handled; other packages loaded into the process are ignored without
  * {@code detach()}, because detaching on a non-matching package would also drop the
  * Zalo package callback when it arrives later in the same process.
  */
 public final class ZaloPatchModule extends XposedModule {
-    static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final String TAG = "ZaloPatch";
     private static final long RESOURCE_HOOK_OBSERVATION_WINDOW_MS = 5_000L;
     private final AtomicBoolean featuresStarted = new AtomicBoolean(false);
@@ -43,16 +42,19 @@ public final class ZaloPatchModule extends XposedModule {
 
     @Override
     public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
-        if (!TARGET_PACKAGE.equals(param.getPackageName())) {
+        if (!HostPackages.canLoad(param.getPackageName(), param.getClassLoader())) {
             return;
         }
         if (XpHooks.framework() == null) {
             XpHooks.attach(this);
         }
+        // Package identity must be fixed before the remote group selects a snapshot.
+        HookConfig.identify(param.getPackageName());
         HookConfig.initRemote(new HookConfig.RemoteConfig() {
             @Override public long properties() { return getFrameworkProperties(); }
             @Override public String readSnapshot() {
-                return getRemotePreferences(ConfigSnapshot.GROUP).getString(ConfigSnapshot.KEY, null);
+                return getRemotePreferences(HookConfig.remoteGroup())
+                        .getString(ConfigSnapshot.KEY, null);
             }
         });
         HookConfig.init();
@@ -63,15 +65,12 @@ public final class ZaloPatchModule extends XposedModule {
             XpLog.w(TAG + ": module APK path unavailable: " + throwable);
         }
         SymbolSchema.setModuleApkPathFromClassLoader(ZaloPatchModule.class.getClassLoader());
-        // An empty process name means onModuleLoaded has not run; treat it like the
-        // legacy null process name, which counted as the main process.
-        boolean mainProcess = processName.isEmpty() || TARGET_PACKAGE.equals(processName);
         XpLog.i(TAG + ": loaded into "
                 + (processName.isEmpty() ? param.getPackageName() : processName));
-        hookContextCapture(param.getClassLoader(), mainProcess);
+        hookContextCapture(param.getClassLoader(), processName);
     }
 
-    private void hookContextCapture(ClassLoader classLoader, boolean mainProcess) {
+    private void hookContextCapture(ClassLoader classLoader, String hostProcessName) {
         try {
             XpHooks.After onAttached = (XpHooks.HookParam param) -> {
                         if (param.args == null || param.args.length == 0
@@ -79,11 +78,12 @@ public final class ZaloPatchModule extends XposedModule {
                             return;
                         }
                         Context context = (Context) param.args[0];
+                        if (!HostPackages.admitted(context)) return;
                         HookConfig.setAppContext(context);
                         ClassLoader appClassLoader = context.getClassLoader();
                         startFeatures(
                                 appClassLoader != null ? appClassLoader : classLoader,
-                                mainProcess);
+                                HostPackages.mainProcess(context, hostProcessName));
                     };
             XpHooks.hookAllMethods("entry", Application.class, "attach", onAttached);
         } catch (Throwable throwable) {
@@ -149,10 +149,16 @@ public final class ZaloPatchModule extends XposedModule {
             XpLog.w(TAG + ": old hook cleanup failed: " + throwable);
         }
         XpHooks.attach(this);
+        // Identity precedes snapshot selection on hot reload too; the live application context
+        // is the only reliable source after package lifecycle callbacks were skipped.
+        Context application = HookConfig.resolveFallbackContextForHooks();
+        if (application == null || !HostPackages.admitted(application)) return;
+        HookConfig.identify(application.getPackageName());
         HookConfig.initRemote(new HookConfig.RemoteConfig() {
             @Override public long properties() { return getFrameworkProperties(); }
             @Override public String readSnapshot() {
-                return getRemotePreferences(ConfigSnapshot.GROUP).getString(ConfigSnapshot.KEY, null);
+                return getRemotePreferences(HookConfig.remoteGroup())
+                        .getString(ConfigSnapshot.KEY, null);
             }
         });
         HookConfig.init();
@@ -163,18 +169,12 @@ public final class ZaloPatchModule extends XposedModule {
         } catch (Throwable throwable) {
             XpLog.w(TAG + ": module APK path unavailable: " + throwable);
         }
-        boolean mainProcess = TARGET_PACKAGE.equals(param.getProcessName());
-        Context application = HookConfig.resolveFallbackContextForHooks();
-        ClassLoader classLoader;
-        if (application != null) {
-            HookConfig.setAppContext(application);
-            ClassLoader appClassLoader = application.getClassLoader();
-            classLoader = appClassLoader != null
-                    ? appClassLoader
-                    : ZaloPatchModule.class.getClassLoader();
-        } else {
-            classLoader = ZaloPatchModule.class.getClassLoader();
-        }
+        boolean mainProcess = HostPackages.mainProcess(application, param.getProcessName());
+        HookConfig.setAppContext(application);
+        ClassLoader appClassLoader = application.getClassLoader();
+        ClassLoader classLoader = appClassLoader != null
+                ? appClassLoader
+                : ZaloPatchModule.class.getClassLoader();
         XpLog.i(TAG + ": hot reloaded in " + param.getProcessName());
         startFeatures(classLoader, mainProcess);
     }

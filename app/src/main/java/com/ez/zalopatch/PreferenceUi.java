@@ -5,12 +5,53 @@ import android.content.Context;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceGroup;
 
+import java.text.Normalizer;
+import java.util.Locale;
+import java.util.regex.Pattern;
+
 /**
  * Factory for the connected-group row system. Every settings page builds rows from here so that
  * shape, spacing, and navigation affordances stay consistent.
  */
 final class PreferenceUi {
+    private static final Pattern COMBINING_MARKS = Pattern.compile("\\p{M}+");
+
     private PreferenceUi() {
+    }
+
+    /**
+     * Case- and accent-insensitive match used by the tweak search. Every whitespace-separated
+     * query term must appear in at least one candidate field.
+     */
+    static boolean matchesSearch(String query, CharSequence... candidates) {
+        String normalized = foldSearch(query).trim();
+        if (normalized.isEmpty()) {
+            return true;
+        }
+        String[] terms = normalized.split("\\s+");
+        for (String term : terms) {
+            boolean found = false;
+            for (CharSequence candidate : candidates) {
+                if (candidate != null && foldSearch(candidate.toString()).contains(term)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String foldSearch(String value) {
+        if (value == null) {
+            return "";
+        }
+        String decomposed = Normalizer.normalize(value, Normalizer.Form.NFD);
+        return COMBINING_MARKS.matcher(decomposed).replaceAll("")
+                .toLowerCase(Locale.ROOT)
+                .replace('đ', 'd');
     }
 
     /** Compact section label. */

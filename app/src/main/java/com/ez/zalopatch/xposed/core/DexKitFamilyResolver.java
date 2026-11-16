@@ -3,6 +3,7 @@ package com.ez.zalopatch.xposed.core;
 import android.content.Context;
 
 import com.ez.zalopatch.BuildConfig;
+import com.ez.zalopatch.HostPackages;
 import com.ez.zalopatch.DexKitCache;
 import com.ez.zalopatch.DexKitFamilyRetry;
 import com.ez.zalopatch.DexKitMirror;
@@ -17,11 +18,13 @@ import com.ez.zalopatch.DexKitChatFingerprint;
 import com.ez.zalopatch.DexKitDeletedGroupFingerprint;
 import com.ez.zalopatch.DexKitInboxFingerprint;
 import com.ez.zalopatch.DexKitMeFingerprint;
+import com.ez.zalopatch.DexKitMiniChatFingerprint;
 import com.ez.zalopatch.DexKitOriginalPhotoFingerprint;
 import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.DexKitMediaFingerprint;
 import com.ez.zalopatch.DexKitPasscodeFingerprint;
 import com.ez.zalopatch.DexKitPilotPolicy;
+import com.ez.zalopatch.DexKitRecallFingerprint;
 import com.ez.zalopatch.DexKitRemoteConfigFingerprint;
 import com.ez.zalopatch.DexKitReactionSendFingerprint;
 import com.ez.zalopatch.DexKitStoryFingerprint;
@@ -71,7 +74,6 @@ final class DexKitFamilyResolver {
     private static final long CLAIM_RETRY_WAIT_MS = 45_000L;
     /** Terminal lifecycle row for the family scan; must never stay pending. */
     static final String FEATURE_SCAN = "dexkit_scan";
-    private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final AtomicBoolean SCAN_KICKED = new AtomicBoolean(false);
     private static final AtomicBoolean SCAN_RUNNING = new AtomicBoolean(false);
 
@@ -121,6 +123,7 @@ final class DexKitFamilyResolver {
         boolean adtima;
         boolean storyAds;
         boolean reactionSend;
+        boolean recall;
     }
 
     /**
@@ -169,6 +172,9 @@ final class DexKitFamilyResolver {
                     DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
                     DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS,
                     DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
+            states.recall = checked.recall
+                    && anchorsQualified(exact, overlay, extended,
+                    DexKitRecallFingerprint.paths().toArray(new String[0]));
             if (checked.me) {
                 states.me = true;
             } else if (extended != null) {
@@ -290,7 +296,7 @@ final class DexKitFamilyResolver {
                 && checked.callRecording
                 && checked.inboxRows && checked.bottomTabsSymbols && checked.chatReaction
                 && checked.zinstantSymbols && checked.originalPhoto && checked.adtima && checked.storyAds
-                && checked.reactionSend && allVideoAds(checked);
+                && checked.reactionSend && checked.recall && checked.miniChat && allVideoAds(checked);
     }
 
     private static boolean allVideoAds(SymbolPreflight.Result checked) {
@@ -777,6 +783,16 @@ final class DexKitFamilyResolver {
                     case "reaction_send":
                         found = resolveReactionSend(host, results, anchorStatus);
                         break;
+                    case "recall":
+                        found = resolveRecall(host, anchorStatus);
+                        break;
+                    case "mini_chat":
+                        try {
+                            found = DexKitMiniChatResolver.resolve(host, anchorStatus);
+                        } catch (IllegalArgumentException unavailable) {
+                            anchorStatus.put(DexKitMiniChatFingerprint.PREFIX + "state", unavailable.getMessage());
+                        }
+                        break;
                     case "stories": found = resolveStoryRequests(results, anchorStatus); break;
                     case "adtima": found = resolveAdtima(host.sourceDir, results, anchorStatus); break;
                     default:
@@ -795,8 +811,11 @@ final class DexKitFamilyResolver {
             states.put(family, DexKitFamilyRetry.scanned(states.get(family), status));
             DexKitFamilyRetry.mergeScan(extended, found, family, status);
         }
-        DexKitCache.Entry entry = DexKitFamilyRetry.withStates(
-                DexKitCache.replaceExtended(pilotEntry, extended), states);
+        DexKitCache.Entry entry = DexKitCache.restamp(
+                DexKitFamilyRetry.withStates(
+                        DexKitCache.replaceExtended(pilotEntry, extended), states),
+                BuildConfig.VERSION_CODE, DexKitZinstantFingerprint.QUERY_REVISION,
+                DexKitCache.RESOLVER_FORMAT);
         // A negative pilot does not exempt independent families from live validation.
         entry = DexKitFamilyRetry.preflight(entry,
                 preflightFilter(context, host, loaderOf(host), entry, exact, fallback));
@@ -946,6 +965,351 @@ final class DexKitFamilyResolver {
         return resolved;
     }
 
+    /**
+     * The local recall tombstone transition. Every edge is a narrowed query over an
+     * already qualified node; a single coherent route is required, otherwise nothing is
+     * published. Literal presence only generates candidates.
+     */
+    private static Map<String, String> resolveRecall(DexKitZinstantResolver.HostIdentity host,
+            Map<String, String> status) throws Exception {
+        Map<String, DexKitBridgeRunner.QueryResult> strings = DexKitBridgeRunner.scanStrings(
+                host.sourceDir, java.util.Arrays.asList(
+                        new DexKitBridgeRunner.StringSpec("recall.writer",
+                                DexKitRecallFingerprint.WRITER_LITERAL, false),
+                        new DexKitBridgeRunner.StringSpec("recall.preview",
+                                DexKitRecallFingerprint.PREVIEW_LITERAL, false)));
+        List<DexKitRecallFingerprint.Route> routes = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit writer : recallHits(strings.get("recall.writer"))) {
+            if (!DexKitRecallFingerprint.writerShape(recallShape(writer))) continue;
+            String identityField = "";
+            Class<?> model = Class.forName(writer.paramTypeNames.get(0), false, host.loader);
+            for (java.lang.reflect.Field field : model.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                        && DexKitRecallFingerprint.MESSAGE_ID.equals(field.getType().getName())) {
+                    if (!identityField.isEmpty()) {
+                        identityField = "";
+                        break;
+                    }
+                    identityField = field.getName();
+                }
+            }
+            List<DexKitBridgeRunner.RawHit> nativeCallers = recallInvokers(host,
+                    new DexKitBridgeRunner.RawHit(DexKitRecallFingerprint.ZADB, "updateChatMessage",
+                            "int", 8, java.util.Arrays.asList("int", "boolean", "int", "byte[]",
+                            "byte[]", "byte[]", "boolean", DexKitRecallFingerprint.API_CODE), true),
+                    writer.className);
+            List<DexKitBridgeRunner.RawHit> coordinators = recallInvokers(host, writer, null);
+            Map<String, DexKitBridgeRunner.RawHit> undoHandlers = new LinkedHashMap<>();
+            for (DexKitBridgeRunner.RawHit coordinator : coordinators) {
+                if (coordinator.isStatic || coordinator.paramCount != 1
+                        || !"java.lang.Object".equals(coordinator.paramTypeNames.get(0))
+                        || !"void".equals(coordinator.returnTypeName)) {
+                    continue;
+                }
+                DexKitBridgeRunner.RawHit undo = recallUndoHandler(host, coordinator,
+                        model.getName(), status);
+                if (undo != null) {
+                    undoHandlers.put(
+                            coordinator.className + "#" + coordinator.methodName, undo);
+                }
+            }
+            for (DexKitBridgeRunner.RawHit update : nativeCallers) {
+                if (update.paramCount != 3 || !DexKitRecallFingerprint.API_CODE.equals(
+                        update.returnTypeName)) {
+                    continue;
+                }
+                boolean writerCallsUpdate = recallContains(recallInvokers(host,
+                        update, writer.className), writer);
+                for (DexKitBridgeRunner.RawHit preview : recallHits(strings.get("recall.preview"))) {
+                    if (preview.paramCount != 4) continue;
+                    List<DexKitBridgeRunner.RawHit> previewCallers = recallInvokers(host,
+                            preview, preview.className);
+                    for (DexKitBridgeRunner.RawHit coordinator : coordinators) {
+                        DexKitBridgeRunner.RawHit undo = undoHandlers.get(
+                                coordinator.className + "#" + coordinator.methodName);
+                        if (undo == null) continue;
+                        routes.add(new DexKitRecallFingerprint.Route(recallShape(writer),
+                                recallShape(update), recallShape(coordinator), recallShape(preview),
+                                recallShape(undo), identityField, writerCallsUpdate, true, true,
+                                recallContains(previewCallers, coordinator)));
+                    }
+                }
+            }
+        }
+        DexKitRecallFingerprint.Resolution result = DexKitRecallFingerprint.evaluate(routes);
+        status.put("symbols.recall.route", result.status);
+        if (!"resolved".equals(result.status)) return result.descriptors;
+        Map<String, String> output = new LinkedHashMap<>(result.descriptors);
+        String prefix = DexKitRecallFingerprint.PREFIX;
+        String model = output.get(prefix + "model_class");
+        String handler = output.get(prefix + "coordinator_class");
+        Map<String, DexKitBridgeRunner.QueryResult> diagnostics = DexKitBridgeRunner.scanStrings(
+                host.sourceDir, java.util.Collections.singletonList(
+                        new DexKitBridgeRunner.StringSpec("recall.compact",
+                                "ChatContent{msgID=", false)));
+        List<DexKitBridgeRunner.RawHit> compact = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit hit : recallHits(diagnostics.get("recall.compact"))) {
+            if (hit.className.equals(model) && hit.paramCount == 0
+                    && hit.returnTypeName.equals("java.lang.String") && !hit.isStatic) {
+                compact.add(hit);
+            }
+        }
+        if (compact.size() != 1) {
+            status.put("symbols.recall.route", compact.isEmpty()
+                    ? "no_model_diagnostic" : "ambiguous_model_diagnostic");
+            return new LinkedHashMap<>();
+        }
+        Set<String> summary = recallFields(host, model, "toString");
+        Set<String> identitySummary = recallFields(host, model, compact.get(0).methodName);
+        Set<String> textOnly = new LinkedHashSet<>(summary);
+        textOnly.removeAll(identitySummary);
+        Set<String> sender = new LinkedHashSet<>(summary);
+        sender.retainAll(recallFields(host, handler, output.get(prefix + "coordinator_method")));
+        output.put(prefix + "text_field", recallUniqueField(host, model, textOnly, String.class));
+        output.put(prefix + "type_field",
+                recallUniqueField(host, model, identitySummary, Integer.TYPE));
+        output.put(prefix + "sender_field",
+                recallUniqueField(host, model, sender, String.class));
+        output.put(prefix + "owner_field", recallUniqueField(host,
+                DexKitRecallFingerprint.MESSAGE_ID,
+                recallFields(host, handler, output.get(prefix + "preview_method")), String.class));
+        List<DexKitBridgeRunner.RawHit> identityJson = recallHits(
+                DexKitBridgeRunner.recallSemanticMethods(host.sourceDir,
+                        DexKitRecallFingerprint.MESSAGE_ID, "java.lang.String",
+                        java.util.Collections.emptyList(),
+                        "clientMsgId", "globalMsgId", "ownerId", "senderId"));
+        if (identityJson.size() != 1 || identityJson.get(0).isStatic) {
+            status.put("symbols.recall.route", "no_unique_identity_serialization");
+            return new LinkedHashMap<>();
+        }
+        DexKitBridgeRunner.RawHit supplier = identityJson.get(0);
+        Set<String> rawIdentity = recallFields(host, supplier.className, supplier.methodName);
+        int rawStrings = 0;
+        Class<?> identityOwner = Class.forName(supplier.className, false, host.loader);
+        for (String use : rawIdentity) {
+            if (!use.startsWith(supplier.className + "#")) continue;
+            java.lang.reflect.Field field = identityOwner.getDeclaredField(
+                    use.substring(supplier.className.length() + 1));
+            int flags = field.getModifiers();
+            if (!java.lang.reflect.Modifier.isStatic(flags)
+                    && java.lang.reflect.Modifier.isFinal(flags)
+                    && field.getType() == String.class) {
+                rawStrings++;
+            }
+        }
+        DexKitBridgeRunner.RawHit jsonPut = new DexKitBridgeRunner.RawHit("org.json.JSONObject",
+                "put", "org.json.JSONObject", 2,
+                java.util.Arrays.asList("java.lang.String", "java.lang.Object"), false);
+        if (rawStrings != 4 || !recallContains(recallInvokers(host, jsonPut,
+                supplier.className), supplier)) {
+            status.put("symbols.recall.route", "no_identity_serialization");
+            return new LinkedHashMap<>();
+        }
+        output.put(prefix + "identity_json_method", supplier.methodName);
+        for (String path : DexKitRecallFingerprint.paths()) {
+            if (!DexKitAnchors.validDescriptor(DexKitAnchors.find(path), output.get(path))) {
+                status.put("symbols.recall.route", "no_model_field_route");
+                return new LinkedHashMap<>();
+            }
+        }
+        try {
+            resolveRecallTime(host, output);
+        } catch (Exception unavailable) {
+            // Display discovery must not discard a qualified recall-suppression route.
+        }
+        return output;
+    }
+
+    /** Follow the kept time getter to its binder and that binder's one-argument visibility gate. */
+    private static void resolveRecallTime(DexKitZinstantResolver.HostIdentity host,
+            Map<String, String> output) throws Exception {
+        String row = DexKitRecallFingerprint.CHAT_ROW;
+        DexKitBridgeRunner.RawHit getter = new DexKitBridgeRunner.RawHit(row,
+                "getCurrentTimeText", "java.lang.String", 0,
+                java.util.Collections.emptyList(), false);
+        DexKitBridgeRunner.RawHit binder = null;
+        String model = output.get(DexKitRecallFingerprint.PREFIX + "model_class");
+        for (DexKitBridgeRunner.RawHit caller : recallInvokers(host, getter, row)) {
+            if (!caller.isStatic && "void".equals(caller.returnTypeName)
+                    && caller.paramCount == 2 && model.equals(caller.paramTypeNames.get(0))) {
+                if (binder != null) return;
+                binder = caller;
+            }
+        }
+        if (binder == null) return;
+        Class<?> owner = Class.forName(row, false, host.loader);
+        String config = binder.paramTypeNames.get(1);
+        java.lang.reflect.Method selected = null;
+        for (java.lang.reflect.Method method : owner.getDeclaredMethods()) {
+            if (java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != Boolean.TYPE || method.getParameterCount() != 1
+                    || !method.getParameterTypes()[0].getName().equals(config)) continue;
+            DexKitBridgeRunner.RawHit gate = new DexKitBridgeRunner.RawHit(row, method.getName(),
+                    "boolean", 1, java.util.Collections.singletonList(config), false);
+            if (!recallContains(recallInvokers(host, gate, row), binder)) continue;
+            if (selected != null) return;
+            selected = method;
+        }
+        if (selected != null) {
+            output.put(DexKitRecallFingerprint.TIME_CONFIG, config);
+            output.put(DexKitRecallFingerprint.TIME_VISIBILITY, selected.getName());
+            Class<?> recycler = Class.forName("androidx.recyclerview.widget.RecyclerView", false,
+                    host.loader);
+            java.lang.reflect.Method refresh = DexKitRecallFingerprint.adapterRefresh(
+                    recycler.getMethod("getAdapter").getReturnType());
+            if (refresh != null) output.put(DexKitRecallFingerprint.TIME_REFRESH, refresh.getName());
+        }
+        resolveRecallTextStyle(host, output);
+    }
+
+    /** The caption draw operation reads its native recall style flag around StaticLayout.draw. */
+    private static void resolveRecallTextStyle(DexKitZinstantResolver.HostIdentity host,
+            Map<String, String> output) throws Exception {
+        String caption = DexKitRecallFingerprint.CAPTION_ROW;
+        java.util.Map<String, DexKitBridgeRunner.RawHit> draws = new java.util.LinkedHashMap<>();
+        for (String owner : new String[]{"android.text.StaticLayout", "android.text.Layout"}) {
+            DexKitBridgeRunner.RawHit draw = new DexKitBridgeRunner.RawHit(owner, "draw", "void", 1,
+                    java.util.Collections.singletonList("android.graphics.Canvas"), false);
+            for (DexKitBridgeRunner.RawHit hit : recallInvokers(host, draw, caption)) {
+                if (!hit.isStatic && "void".equals(hit.returnTypeName) && hit.paramCount == 1
+                        && hit.paramTypeNames.get(0).equals("android.graphics.Canvas")) {
+                    draws.put(hit.methodName, hit);
+                }
+            }
+        }
+        if (draws.size() != 1) return;
+        DexKitBridgeRunner.RawHit draw = draws.values().iterator().next();
+        Set<String> uses = recallFields(host, caption, draw.methodName);
+        String flag = recallUniqueField(host, caption, uses, Boolean.TYPE);
+        if (flag.isEmpty()) return;
+        output.put(DexKitRecallFingerprint.TEXT_DRAW, draw.methodName);
+        output.put(DexKitRecallFingerprint.TEXT_RECALLED, flag);
+    }
+
+    private static Set<String> recallFields(DexKitZinstantResolver.HostIdentity host,
+            String owner, String method) {
+        List<DexKitBridgeRunner.RawHit> hits = recallHits(
+                DexKitBridgeRunner.recallDetails(host.sourceDir, owner, method));
+        if (hits.size() != 1) throw new IllegalArgumentException("recall detail ambiguity");
+        return new LinkedHashSet<>(hits.get(0).usedFields);
+    }
+
+    private static String recallUniqueField(DexKitZinstantResolver.HostIdentity host,
+            String owner, Set<String> uses, Class<?> type) throws Exception {
+        Class<?> model = Class.forName(owner, false, host.loader);
+        String selected = "";
+        for (String use : uses) {
+            if (!use.startsWith(owner + "#")) continue;
+            java.lang.reflect.Field field = model.getDeclaredField(
+                    use.substring(owner.length() + 1));
+            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                    || field.getType() != type) {
+                continue;
+            }
+            if (!selected.isEmpty()) return "";
+            selected = field.getName();
+        }
+        return selected;
+    }
+
+    private static List<DexKitBridgeRunner.RawHit> recallHits(
+            DexKitBridgeRunner.QueryResult result) {
+        if (result == null || !result.error.isEmpty()) {
+            throw new IllegalStateException("recall query_error");
+        }
+        // Query count is checked before any candidate details or reflection.
+        if (result.matchCount > 8) throw new IllegalArgumentException("recall ambiguous candidates");
+        return result.hits;
+    }
+
+    private static List<DexKitBridgeRunner.RawHit> recallInvokers(
+            DexKitZinstantResolver.HostIdentity host, DexKitBridgeRunner.RawHit target,
+            String caller) {
+        return recallHits(DexKitBridgeRunner.findInvokers(host.sourceDir,
+                java.util.Collections.singletonList(new DexKitBridgeRunner.InvokerSpec(
+                        "recall.edge", target.className, target.methodName, caller,
+                        target.returnTypeName, target.paramTypeNames))).get("recall.edge"));
+    }
+
+    private static DexKitRecallFingerprint.MethodShape recallShape(
+            DexKitBridgeRunner.RawHit hit) {
+        return new DexKitRecallFingerprint.MethodShape(hit.className, hit.methodName,
+                hit.returnTypeName, hit.paramTypeNames, hit.isStatic);
+    }
+
+    private static boolean recallContains(List<DexKitBridgeRunner.RawHit> hits,
+            DexKitBridgeRunner.RawHit target) {
+        for (DexKitBridgeRunner.RawHit hit : hits) {
+            if (hit.className.equals(target.className)
+                    && hit.methodName.equals(target.methodName)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The undo handler is the one coordinator caller that consumes the host's undo payload.
+     * A delete control reaches the same coordinator through a different method, so the route
+     * must name the undo source before the gate can distinguish a recall from a delete.
+     */
+    private static DexKitBridgeRunner.RawHit recallUndoHandler(
+            DexKitZinstantResolver.HostIdentity host, DexKitBridgeRunner.RawHit coordinator,
+            String model, Map<String, String> status) {
+        List<DexKitBridgeRunner.RawHit> callers;
+        try {
+            callers = recallInvokers(host, coordinator, null);
+        } catch (Throwable failure) {
+            status.put("symbols.recall.undo_handler", "query_error");
+            return null;
+        }
+        DexKitBridgeRunner.RawHit selected = null;
+        for (DexKitBridgeRunner.RawHit caller : callers) {
+            if (caller.isStatic || caller.paramCount != 1
+                    || !"void".equals(caller.returnTypeName)
+                    || !model.equals(caller.paramTypeNames.get(0))) {
+                continue;
+            }
+            if (!recallReadsUndoPayload(host, caller, model)) continue;
+            if (selected != null) {
+                status.put("symbols.recall.undo_handler", "ambiguous");
+                return null;
+            }
+            selected = caller;
+        }
+        if (selected != null) {
+            status.put("symbols.recall.undo_handler", "resolved");
+        } else if (!"resolved".equals(status.get("symbols.recall.undo_handler"))) {
+            status.put("symbols.recall.undo_handler", "no_match");
+        }
+        return selected;
+    }
+
+    /**
+     * The undo payload is the only model field of a host class type the handler reads that
+     * is not the message identity, text, type, sender, or a collection.
+     */
+    private static boolean recallReadsUndoPayload(DexKitZinstantResolver.HostIdentity host,
+            DexKitBridgeRunner.RawHit handler, String model) {
+        try {
+            Class<?> owner = Class.forName(model, false, host.loader);
+            for (String use : recallFields(host, handler.className, handler.methodName)) {
+                if (!use.startsWith(model + "#")) continue;
+                java.lang.reflect.Field field = owner.getDeclaredField(
+                        use.substring(model.length() + 1));
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+                Class<?> type = field.getType();
+                if (type.isPrimitive() || type.isArray() || type == String.class
+                        || type.getName().equals(DexKitRecallFingerprint.MESSAGE_ID)
+                        || java.util.Collection.class.isAssignableFrom(type)
+                        || java.util.Map.class.isAssignableFrom(type)) {
+                    continue;
+                }
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
     static String queryFamily(String id) {
         if (id.equals(DexKitZinstantFingerprint.ANCHOR_AD_BIND)
                 || id.equals(DexKitZinstantFingerprint.ANCHOR_FEED_BIND)) return "zinstant";
@@ -1033,12 +1397,13 @@ final class DexKitFamilyResolver {
                 DexKitTelemetryFingerprint.OWNER_DB_IMPL, null, 0));
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitMeFingerprint.QUERY_BUILDERS,
                 DexKitMeFingerprint.OWNER_TAB_ME, null, 1));
+        // The command constant alone separates the two request routes. The former mandatory
+        // "storyId" literal moved out of the serializer on 261102901, so the query keys on
+        // the command number plus the payload/parse proof collected after the hit.
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryFingerprint.QUERY_SEEN,
-                null, "void", 2, true, DexKitStoryFingerprint.SEEN_COMMAND, true,
-                DexKitStoryFingerprint.STORY_ID));
+                null, "void", 2, true, DexKitStoryFingerprint.SEEN_COMMAND, true));
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitStoryFingerprint.QUERY_SUGGESTED,
-                null, "void", 3, true, DexKitStoryFingerprint.SUGGESTED_COMMAND, true,
-                DexKitStoryFingerprint.STORY_ID));
+                null, "void", 3, true, DexKitStoryFingerprint.SUGGESTED_COMMAND, true));
         // Chat repository: both send shapes are void/4; parameter types discriminate.
         specs.add(new DexKitBridgeRunner.MethodSpec(DexKitChatFingerprint.QUERY_SEND_SHAPES,
                 null, "void", 4));
@@ -1261,9 +1626,22 @@ final class DexKitFamilyResolver {
         FingerprintResolver.Resolution redirectResolution =
                 DexKitWebviewFingerprint.evaluateRedirect(
                         webviewHits(host.loader, redirect), codeDigest, codeDigest, retained);
+        List<DexKitWebviewFingerprint.MethodHit> dispatchHits =
+                webviewHits(host.loader, dispatch);
+        // Stable-surface trace: the view's static Companion field names the dispatch owner
+        // per release, so the global dispatch-shape scan cannot be defeated by volume.
         FingerprintResolver.Resolution companionResolution =
-                DexKitWebviewFingerprint.evaluateCompanion(
-                        webviewHits(host.loader, dispatch), codeDigest, codeDigest, retained);
+                DexKitWebviewFingerprint.evaluateCompanionField(
+                        companionFieldType(host.loader), dispatchHits,
+                        codeDigest, codeDigest, retained);
+        if (!"resolved".equals(companionResolution.status)) {
+            if (anchorStatus != null) {
+                anchorStatus.put("symbols.webview.companion_field",
+                        companionResolution.status);
+            }
+            companionResolution = DexKitWebviewFingerprint.evaluateCompanion(
+                    dispatchHits, codeDigest, codeDigest, retained);
+        }
         if (!"resolved".equals(redirectResolution.status)
                 || !"resolved".equals(companionResolution.status)) {
             if (anchorStatus != null) {
@@ -1680,7 +2058,8 @@ final class DexKitFamilyResolver {
             anchorStatus.put("symbols.bottom_tabs.dump_errors", String.valueOf(dumpErrors));
             anchorStatus.put("symbols.bottom_tabs.dump_hits", String.valueOf(dumpHits));
         }
-        String stateClass = DexKitBottomTabsFingerprint.selectStateClass(plain);
+        String stateClass = DexKitBottomTabsFingerprint.selectStateClass(
+                plain, stableWidgetReferences(host, anchorStatus));
         if (anchorStatus != null) {
             anchorStatus.put("symbols.bottom_tabs.selected",
                     stateClass.isEmpty() ? "none" : stateClass);
@@ -1807,6 +2186,56 @@ final class DexKitFamilyResolver {
         return extended;
     }
 
+    /**
+     * Classes referenced by the stable tab widget's field accesses. The widget reads the
+     * state singleton ({@code state.Companion}) and calls its icon resolver, so this set
+     * corroborates a shape match without pinning any obfuscated name. Advisory: a failed
+     * or empty query leaves selection to the shape scan.
+     */
+    private static java.util.Set<String> stableWidgetReferences(
+            DexKitZinstantResolver.HostIdentity host, Map<String, String> anchorStatus) {
+        java.util.Set<String> referenced = new java.util.LinkedHashSet<>();
+        try {
+            java.util.Map<String, DexKitBridgeRunner.QueryResult> results =
+                    DexKitBridgeRunner.scanMethods(host.sourceDir,
+                            java.util.Collections.singletonList(
+                                    new DexKitBridgeRunner.MethodSpec(
+                                            DexKitBottomTabsFingerprint.QUERY_STABLE_WIDGET,
+                                            DexKitBottomTabsFingerprint.STABLE_TAB_WIDGET,
+                                            null, null, true, null, false)));
+            DexKitBridgeRunner.QueryResult widget = results.get(
+                    DexKitBottomTabsFingerprint.QUERY_STABLE_WIDGET);
+            if (widget == null || !widget.error.isEmpty()) {
+                if (anchorStatus != null) {
+                    anchorStatus.put("symbols.bottom_tabs.widget",
+                            widget == null ? "query_missing" : widget.error);
+                }
+                return referenced;
+            }
+            for (DexKitBridgeRunner.RawHit hit : widget.hits) {
+                if (hit.usedFields == null) {
+                    continue;
+                }
+                for (String used : hit.usedFields) {
+                    String owner = DexKitBottomTabsFingerprint.ownerOfQualified(used);
+                    if (!owner.isEmpty()) {
+                        referenced.add(owner);
+                    }
+                }
+            }
+            if (anchorStatus != null) {
+                anchorStatus.put("symbols.bottom_tabs.widget",
+                        "hits=" + widget.hits.size() + " refs=" + referenced.size());
+            }
+        } catch (Throwable throwable) {
+            if (anchorStatus != null) {
+                anchorStatus.put("symbols.bottom_tabs.widget",
+                        throwable.getClass().getSimpleName());
+            }
+        }
+        return referenced;
+    }
+
     /** Runtime field layout in declaration order; null when the shape mismatches. */
     private static DexKitBottomTabsFingerprint.FieldLayout reflectFieldLayout(
             ClassLoader loader, String stateClass) {
@@ -1899,12 +2328,13 @@ final class DexKitFamilyResolver {
                         && "void".equals(callee.returnTypeName)
                         && java.util.Collections.singletonList("int").equals(callee.paramTypeNames);
             }
-            // Both literals are mandatory in the bridge query, not guessed from a method shape.
+            // The command number is enforced by the query; the Java calls are the payload
+            // proof. The "storyId" literal is gone from this serializer on 261102901.
             hits.add(new DexKitStoryFingerprint.MethodHit(raw.className, raw.methodName,
                     raw.returnTypeName, raw.paramTypeNames, raw.isStatic,
                     suggested ? DexKitStoryFingerprint.SUGGESTED_COMMAND
                             : DexKitStoryFingerprint.SEEN_COMMAND,
-                    true, parsesStoryId, writesPayload));
+                    parsesStoryId, writesPayload));
         }
         DexKitStoryFingerprint.Resolution found = DexKitStoryFingerprint.evaluate(suggested, hits);
         status.put(methodAnchor, found.status);
@@ -2045,6 +2475,104 @@ final class DexKitFamilyResolver {
         }
         resolved.put(DexKitMeFingerprint.ANCHOR_BUILDER, resolution.symbol);
         return resolved;
+    }
+
+    /**
+     * Media Box row resolution. The layout route collapses the inflated
+     * {@code item_channel_media_box} root by resource name and needs no symbol; this anchor
+     * keeps the row-level verification (the {@code -8} synthetic UID) working when the item
+     * class rotates. The {@code -8} literal alone is shared with nothing, but sibling box
+     * rows carry their own sentinels, so the owner shape is the second gate.
+     */
+    private static void resolveMediaBoxRow(DexKitZinstantResolver.HostIdentity host,
+                                           Map<String, String> anchorStatus,
+                                           Map<String, String> resolved) {
+        Map<String, DexKitBridgeRunner.QueryResult> results;
+        try {
+            results = DexKitBridgeRunner.scanMethods(host.sourceDir,
+                    java.util.Collections.singletonList(
+                            new DexKitBridgeRunner.MethodSpec(
+                                    DexKitInboxFingerprint.QUERY_MEDIA_BOX_UID,
+                                    null, "java.lang.String", 0, false, null, false,
+                                    DexKitInboxFingerprint.MEDIA_BOX_SENTINEL)));
+        } catch (Throwable throwable) {
+            anchorStatus.put("symbols.inbox.media_box", "bridge_failed");
+            return;
+        }
+        DexKitBridgeRunner.QueryResult result =
+                results.get(DexKitInboxFingerprint.QUERY_MEDIA_BOX_UID);
+        if (result == null || !result.error.isEmpty()) {
+            anchorStatus.put("symbols.inbox.media_box",
+                    result == null ? "query_missing" : result.error);
+            return;
+        }
+        List<DexKitInboxFingerprint.MediaBoxCandidate> candidates = new ArrayList<>();
+        for (DexKitBridgeRunner.RawHit hit : result.hits) {
+            if (hit == null || hit.className.isEmpty() || hit.methodName.isEmpty()) {
+                continue;
+            }
+            MediaBoxShape shape = mediaBoxShape(host.loader, hit.className);
+            candidates.add(new DexKitInboxFingerprint.MediaBoxCandidate(
+                    hit.className, hit.methodName, shape.conversationFields,
+                    shape.conversationConstructor));
+        }
+        DexKitInboxFingerprint.MediaBoxResolution resolution =
+                DexKitInboxFingerprint.resolveMediaBoxUid(candidates);
+        anchorStatus.put("symbols.inbox.media_box",
+                resolution.status + " " + resolution.uidMethod + " hits="
+                        + result.hits.size());
+        if (!resolution.resolved()) {
+            return;
+        }
+        resolved.put(DexKitInboxFingerprint.ANCHOR_MEDIA_BOX_ITEM, resolution.itemClass);
+    }
+
+    /** Measured row shape of one candidate class. */
+    private static final class MediaBoxShape {
+        final int conversationFields;
+        final boolean conversationConstructor;
+
+        MediaBoxShape(int conversationFields, boolean conversationConstructor) {
+            this.conversationFields = conversationFields;
+            this.conversationConstructor = conversationConstructor;
+        }
+    }
+
+    /**
+     * One Conversation-typed field count plus whether a {@code (Conversation)} constructor
+     * exists. An unloadable class reports zero fields and no constructor, so it never
+     * qualifies.
+     */
+    private static MediaBoxShape mediaBoxShape(ClassLoader loader, String className) {
+        if (loader == null || className == null || className.isEmpty()) {
+            return new MediaBoxShape(0, false);
+        }
+        try {
+            Class<?> owner = Class.forName(className, false, loader);
+            int conversationFields = 0;
+            for (java.lang.reflect.Field field : owner.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                if (DexKitInboxFingerprint.CONVERSATION_CLASS
+                        .equals(field.getType().getName())) {
+                    conversationFields++;
+                }
+            }
+            Class<?> conversation = Class.forName(
+                    DexKitInboxFingerprint.CONVERSATION_CLASS, false, loader);
+            boolean constructor = false;
+            for (java.lang.reflect.Constructor<?> candidate : owner.getDeclaredConstructors()) {
+                Class<?>[] parameters = candidate.getParameterTypes();
+                if (parameters.length == 1 && parameters[0] == conversation) {
+                    constructor = true;
+                    break;
+                }
+            }
+            return new MediaBoxShape(conversationFields, constructor);
+        } catch (Throwable ignored) {
+            return new MediaBoxShape(0, false);
+        }
     }
 
     /**
@@ -2607,6 +3135,7 @@ final class DexKitFamilyResolver {
             Map<String, String> anchorStatus) {
         Map<String, String> resolved = new LinkedHashMap<>();
         resolveRowAnchors(host, anchorStatus, resolved);
+        resolveMediaBoxRow(host, anchorStatus, resolved);
         resolveDeletedGroupStore(host, anchorStatus, resolved);
         // BIZ_BOX links the discriminator to OA semantics rather than a field letter.
         List<String> intFields = conversationIntFields(host.loader);
@@ -2741,6 +3270,28 @@ final class DexKitFamilyResolver {
         return hits;
     }
 
+    /**
+     * Type name of the stable view's static {@code Companion} field, or "" when the field
+     * is absent. This is the only stable link to the obfuscated dispatch owner.
+     */
+    static String companionFieldType(ClassLoader loader) {
+        if (loader == null) {
+            return "";
+        }
+        try {
+            Class<?> view = Class.forName(DexKitWebviewFingerprint.OWNER_WEB_VIEW, false, loader);
+            java.lang.reflect.Field companion =
+                    view.getDeclaredField("Companion");
+            if (!java.lang.reflect.Modifier.isStatic(companion.getModifiers())) {
+                return "";
+            }
+            Class<?> type = companion.getType();
+            return type == null ? "" : type.getName();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
     private static List<DexKitWebviewFingerprint.MethodHit> webviewHits(ClassLoader loader,
             DexKitBridgeRunner.QueryResult result) {
         List<DexKitWebviewFingerprint.MethodHit> hits = new ArrayList<>();
@@ -2778,6 +3329,14 @@ final class DexKitFamilyResolver {
             DexKitZinstantResolver.HostIdentity host, ClassLoader loader, DexKitCache.Entry entry,
             SymbolSchema.Active exact, SymbolSchema.Active fallback) {
         Map<String, String> kept = new LinkedHashMap<>(entry.extended);
+        dropIncompleteFamily(kept, DexKitMiniChatFingerprint.paths().toArray(new String[0]));
+        if (kept.containsKey(DexKitMiniChatFingerprint.PREFIX + "task_class")) {
+            try {
+                DexKitMiniChatFingerprint.bind(kept, loader);
+            } catch (Throwable rejected) {
+                for (String path : DexKitMiniChatFingerprint.paths()) kept.remove(path);
+            }
+        }
         dropIncompleteFamily(kept,
                 DexKitWebviewFingerprint.ANCHOR_REDIRECT,
                 DexKitWebviewFingerprint.ANCHOR_COMPANION,
@@ -2796,6 +3355,7 @@ final class DexKitFamilyResolver {
                 DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD,
                 DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS,
                 DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
+        dropIncompleteFamily(kept, DexKitRecallFingerprint.paths().toArray(new String[0]));
         if (DexKitReactionSendFingerprint.complete(kept)
                 && !DexKitReactionSendFingerprint.checkShape(loader,
                         kept.get(DexKitReactionSendFingerprint.ANCHOR_LISTENER_CLASS),
@@ -2947,6 +3507,7 @@ final class DexKitFamilyResolver {
         boolean adtimaOk = false;
         boolean storyAdsOk = false;
         boolean reactionSendOk = false;
+        boolean recallOk = false;
         if (overlay != null) {
             FamilyStates states = familyStates(overlay, loader, kept, exact);
             originalPhotoOk = states.originalPhoto;
@@ -2969,6 +3530,7 @@ final class DexKitFamilyResolver {
             adtimaOk = states.adtima;
             storyAdsOk = states.storyAds;
             reactionSendOk = states.reactionSend;
+            recallOk = states.recall;
         }
         if (!originalPhotoOk) {
             for (String anchor : DexKitOriginalPhotoFingerprint.ANCHORS) kept.remove(anchor);
@@ -3035,6 +3597,9 @@ final class DexKitFamilyResolver {
             kept.remove(DexKitReactionSendFingerprint.ANCHOR_CALLBACK_METHOD);
             kept.remove(DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS);
             kept.remove(DexKitReactionSendFingerprint.ANCHOR_FACTORY_METHOD);
+        }
+        if (!recallOk) {
+            for (String anchor : DexKitRecallFingerprint.paths()) kept.remove(anchor);
         }
         if (!chatRepositoryOk(loaderOf(host), kept)) {
             kept.remove(DexKitChatFingerprint.ANCHOR_REPOSITORY_CLASS);
@@ -3254,7 +3819,7 @@ final class DexKitFamilyResolver {
             android.content.pm.PackageManager manager = context.getPackageManager();
             android.content.pm.PackageInfo info;
             if (android.os.Build.VERSION.SDK_INT >= 28) {
-                info = manager.getPackageInfo(TARGET_PACKAGE,
+                info = manager.getPackageInfo(HostPackages.target(context),
                         android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
                 if (info.signingInfo == null) {
                     return "";
@@ -3266,7 +3831,7 @@ final class DexKitFamilyResolver {
                 }
                 return sha256(signatures[0].toByteArray());
             }
-            info = manager.getPackageInfo(TARGET_PACKAGE,
+            info = manager.getPackageInfo(HostPackages.target(context),
                     android.content.pm.PackageManager.GET_SIGNATURES);
             if (info.signatures == null || info.signatures.length == 0) {
                 return "";

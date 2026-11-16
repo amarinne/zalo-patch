@@ -130,7 +130,7 @@ public final class DiagnosticReportActivity {
                 return;
             }
             Uri uri = data.getData();
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             new Thread(() -> {
                 boolean saved = false;
                 try (OutputStream output = context.getContentResolver()
@@ -153,9 +153,14 @@ public final class DiagnosticReportActivity {
             return (StatusActivity) requireActivity();
         }
 
+        private Context targetContext() {
+            return host().settingsContext();
+        }
+
         private void loadLocalState() {
-            session = DiagnosticCaptureManager.current(requireContext());
-            draft = DiagnosticDraftStore.load(requireContext());
+            Context target = targetContext();
+            session = DiagnosticCaptureManager.current(target);
+            draft = DiagnosticDraftStore.load(target);
             if (session != null) {
                 category = session.category;
                 description = session.description;
@@ -168,6 +173,7 @@ public final class DiagnosticReportActivity {
         private void buildScreen() {
             if (!isAdded()) return;
             Context context = requireContext();
+            Context target = targetContext();
             reportAction = null;
             secondaryReportAction = null;
             draftUploadRow = null;
@@ -224,7 +230,7 @@ public final class DiagnosticReportActivity {
                             getString(!session.debugLoggingManaged
                                     ? R.string.zp_diagnostic_metadata_only_capture_active_summary
                                     : "compatibility".equals(session.category)
-                                    ? SymbolSchema.active(context).valid
+                                    ? SymbolSchema.active(target).valid
                                     ? R.string.zp_diagnostic_compatibility_mapped_capture_active_summary
                                     : R.string.zp_diagnostic_compatibility_capture_active_summary
                                     : R.string.zp_diagnostic_capture_active_summary)));
@@ -318,7 +324,7 @@ public final class DiagnosticReportActivity {
                             getString(R.string.zp_diagnostic_discard));
                     discard.destructive(true);
                     discard.setOnPreferenceClickListener(preference -> {
-                        DiagnosticDraftStore.clear(requireContext());
+                        DiagnosticDraftStore.clear(targetContext());
                         draft = null;
                         reviewedReportId = null;
                         statusMessage = getString(R.string.zp_diagnostic_discarded);
@@ -396,7 +402,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void prepareMetadataReport() {
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             runBusy(() -> {
                 DiagnosticReportFactory.Draft prepared = null;
                 try {
@@ -419,7 +425,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void startCapture() {
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             runBusy(() -> {
                 DiagnosticCaptureManager.StartResult result = DiagnosticCaptureManager.start(
                         context, category, description);
@@ -441,7 +447,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void finishCapture() {
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             runBusy(() -> {
                 DiagnosticReportFactory.Draft prepared = null;
                 DiagnosticCaptureManager.FinishedCapture finished =
@@ -470,7 +476,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void cancelCapture() {
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             runBusy(() -> {
                 boolean cancelled = DiagnosticCaptureManager.cancel(context);
                 post(() -> {
@@ -487,7 +493,7 @@ public final class DiagnosticReportActivity {
             DiagnosticReportFactory.Draft expected = draft;
             if (expected == null || !DiagnosticReportActivity.canUpload(
                     expected.reportId, reviewedReportId)) return;
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             runBusy(() -> {
                 DiagnosticReportFactory.Draft current = DiagnosticDraftStore.load(context);
                 DiagnosticUploader.Result result = current == null
@@ -590,28 +596,29 @@ public final class DiagnosticReportActivity {
 
         private boolean requiresGuidedCapture() {
             Context context = requireContext();
+            Context target = targetContext();
             boolean zaloPresent;
             try {
-                context.getPackageManager().getPackageInfo("com.zing.zalo", 0);
+                context.getPackageManager().getPackageInfo(HostPackages.target(target), 0);
                 zaloPresent = true;
             } catch (PackageManager.NameNotFoundException ignored) {
                 zaloPresent = false;
             }
-            SymbolSchema.Active schema = SymbolSchema.active(context);
-            java.util.List<SelfCheckData.Row> rows = SelfCheckData.load(context);
+            SymbolSchema.Active schema = SymbolSchema.active(target);
+            java.util.List<SelfCheckData.Row> rows = SelfCheckData.load(target);
             SelfCheckData.Counts counts = SelfCheckData.counts(rows);
             return DiagnosticReportActivity.requiresGuidedCapture(category, zaloPresent,
                     schema.valid, !rows.isEmpty(), counts.failed, counts.stale);
         }
 
         private int compatibilityTitleRes() {
-            return SymbolSchema.active(requireContext()).valid
+            return SymbolSchema.active(targetContext()).valid
                     ? R.string.zp_diagnostic_compatibility_mapped_title
                     : R.string.zp_diagnostic_compatibility_unmapped_title;
         }
 
         private int compatibilitySummaryRes() {
-            return SymbolSchema.active(requireContext()).valid
+            return SymbolSchema.active(targetContext()).valid
                     ? R.string.zp_diagnostic_compatibility_mapped_summary
                     : R.string.zp_diagnostic_compatibility_unmapped_summary;
         }
@@ -638,7 +645,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void cleanupExpiredCapture() {
-            Context context = requireContext().getApplicationContext();
+            Context context = targetContext().getApplicationContext();
             new Thread(() -> {
                 boolean expired = DiagnosticCaptureManager.expireIfNeeded(context);
                 post(() -> {
@@ -650,7 +657,7 @@ public final class DiagnosticReportActivity {
         }
 
         private void invalidateDraft() {
-            if (draft != null) DiagnosticDraftStore.clear(requireContext());
+            if (draft != null) DiagnosticDraftStore.clear(targetContext());
             draft = null;
             reviewedReportId = null;
             successfulReportId = null;

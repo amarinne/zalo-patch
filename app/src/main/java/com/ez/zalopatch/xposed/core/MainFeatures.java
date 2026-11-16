@@ -4,6 +4,8 @@ import android.content.Context;
 
 import com.ez.zalopatch.DiagnosticsState;
 import com.ez.zalopatch.DexKitOverlay;
+import com.ez.zalopatch.DexKitMiniChatFingerprint;
+import com.ez.zalopatch.DexKitRecallFingerprint;
 import com.ez.zalopatch.DexKitStoryAdFingerprint;
 import com.ez.zalopatch.DexKitVideoAdsFingerprint;
 import com.ez.zalopatch.HookConfig;
@@ -21,9 +23,11 @@ import com.ez.zalopatch.xposed.features.InboxFeature;
 import com.ez.zalopatch.xposed.features.InteractionTraceFeature;
 import com.ez.zalopatch.xposed.features.MeCleanupFeature;
 import com.ez.zalopatch.xposed.features.MediaFeature;
+import com.ez.zalopatch.xposed.features.MiniChatFeature;
 import com.ez.zalopatch.xposed.features.OriginalPhotoFeature;
 import com.ez.zalopatch.xposed.features.NotificationFeature;
 import com.ez.zalopatch.xposed.features.PasscodeGraceFeature;
+import com.ez.zalopatch.xposed.features.RecallGuardFeature;
 import com.ez.zalopatch.xposed.features.RuntimeDiscoveryFeature;
 import com.ez.zalopatch.xposed.features.StatusPrivacyFeature;
 import com.ez.zalopatch.xposed.features.SponsoredPlacementsFeature;
@@ -150,6 +154,11 @@ public final class MainFeatures {
                         ? "no exact-profile binding or unique photo relationship match"
                         : preflight.reason(preflight.originalPhotoErrors)));
         SymbolSchema.Active composed = SymbolSchema.activeForHooks(context);
+        if (mainProcess) {
+            features.add(new MiniChatFeature(classLoader,
+                    DexKitFamilyResolver.anchorsQualified(hookActive, composed, overlay.resolved,
+                    DexKitMiniChatFingerprint.paths().toArray(new String[0]))));
+        }
         boolean storyAdsQualified = preflight != null && preflight.storyAds
                 && DexKitFamilyResolver.anchorsQualified(hookActive, composed, overlay.resolved,
                         DexKitStoryAdFingerprint.ANCHOR_CLASS, DexKitStoryAdFingerprint.ANCHOR_BIND);
@@ -221,6 +230,14 @@ public final class MainFeatures {
                     pilot.adBindOverride, pilot.feedBindOverride));
             features.add(new ChatFeature(classLoader, preflight.chatReaction,
                     preflight.reason(preflight.chatReactionErrors)));
+            boolean recallReady = preflight.recall
+                    && DexKitFamilyResolver.anchorsQualified(hookActive, composed,
+                            overlay.resolved,
+                            DexKitRecallFingerprint.paths().toArray(new String[0]));
+            features.add(new RecallGuardFeature(classLoader, recallReady,
+                    preflight.recallErrors.isEmpty()
+                            ? "recall coordinator route requires exact-profile or current-host discovery"
+                            : preflight.reason(preflight.recallErrors)));
             features.add(new ZcloudBannerFeature(classLoader));
             addPasscodeGrace(features, classLoader, preflight);
             addStatusPrivacy(features, classLoader, preflight);
@@ -456,6 +473,10 @@ public final class MainFeatures {
         if (overlay.adtima && !preflight.adtima) {
             preflight.adtima = true;
             preflight.adtimaErrors.clear();
+        }
+        if (overlay.recall && !preflight.recall) {
+            preflight.recall = true;
+            preflight.recallErrors.clear();
         }
     }
 

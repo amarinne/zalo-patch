@@ -381,6 +381,7 @@ public final class FrameworkConfigPublicationTest {
                     switch (method.getName()) {
                         case "hashCode": return System.identityHashCode(proxy);
                         case "equals": return proxy == args[0];
+                        case "contains": return values.containsKey(args[0]);
                         case "getString":
                         case "getInt":
                         case "getBoolean":

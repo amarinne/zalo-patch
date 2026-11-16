@@ -48,6 +48,17 @@ public final class DexKitBottomTabsFingerprint {
 
     public static final String QUERY_STATE_CANDIDATES = "bottomtabs.state_candidates";
 
+    /**
+     * Stable widget that reads the state on every retained release. Its field references
+     * corroborate a shape match (the widget reads the state's {@code Companion} static
+     * field), so two structurally similar classes can no longer dead-lock the family as
+     * ambiguous. Only used-field owners are collected: the DexKit invoke graph aborts the
+     * process for some methods.
+     */
+    public static final String STABLE_TAB_WIDGET =
+            "com.zing.zalo.ui.maintab.widget.CustomMainTab";
+    public static final String QUERY_STABLE_WIDGET = "bottomtabs.stable_widget";
+
     /** Schema roles in canonical tab order, then size. */
     public static final String[] INDEX_ROLES = {
             "message_index", "phonebook_index", "group_index", "discovery_index",
@@ -232,24 +243,55 @@ public final class DexKitBottomTabsFingerprint {
      * candidates must subsequently prove the complete rebuild field/enum linkage.
      */
     public static String selectStateClass(Map<String, List<MethodHit>> dumps) {
+        return selectStateClass(dumps, null);
+    }
+
+    /**
+     * Picks the state class from method dumps keyed by candidate class.
+     *
+     * <p>A single full-shape candidate wins outright. When several classes carry the shape
+     * (for example a sibling state holder with the same counters), a candidate referenced by
+     * the stable tab widget wins if it is the only referenced one. Anything else stays
+     * unavailable: corroboration can break a tie, but it can never outvote a different shape.
+     */
+    public static String selectStateClass(Map<String, List<MethodHit>> dumps,
+                                          java.util.Set<String> stableReferenced) {
         if (dumps == null) {
             return "";
         }
-        String match = null;
-        boolean ambiguous = false;
+        List<String> shaped = new ArrayList<>();
         for (Map.Entry<String, List<MethodHit>> candidate : dumps.entrySet()) {
             if (candidate.getKey() == null || candidate.getKey().isEmpty()) {
                 continue;
             }
             if (hasFullShape(candidate.getKey(), candidate.getValue())) {
-                if (match != null) {
-                    ambiguous = true;
-                    break;
-                }
-                match = candidate.getKey();
+                shaped.add(candidate.getKey());
             }
         }
-        return ambiguous ? "" : (match == null ? "" : match);
+        if (shaped.size() == 1) {
+            return shaped.get(0);
+        }
+        if (shaped.size() > 1 && stableReferenced != null && !stableReferenced.isEmpty()) {
+            List<String> corroborated = new ArrayList<>();
+            for (String candidate : shaped) {
+                if (stableReferenced.contains(candidate)) {
+                    corroborated.add(candidate);
+                }
+            }
+            if (corroborated.size() == 1) {
+                return corroborated.get(0);
+            }
+        }
+        return "";
+    }
+
+    /** Owner class of one qualified used-field entry ({@code owner#name}). */
+    public static String ownerOfQualified(String qualified) {
+        if (qualified == null) {
+            return "";
+        }
+        int hash = qualified.indexOf('#');
+        return hash < 0 ? "" : qualified.substring(0, hash);
     }
 
     static boolean hasFullShape(String owner, List<MethodHit> hits) {
@@ -285,10 +327,29 @@ public final class DexKitBottomTabsFingerprint {
     }
 
     private static boolean isEnumType(String type) {
-        return type != null && !type.isEmpty() && !"void".equals(type)
-                && !"boolean".equals(type) && !"int".equals(type) && !"long".equals(type)
-                && !"java.lang.String".equals(type) && !"android.os.Bundle".equals(type)
-                && type.contains(".");
+        if (type == null || type.isEmpty()) {
+            return false;
+        }
+        switch (type) {
+            case "void":
+            case "boolean":
+            case "byte":
+            case "char":
+            case "short":
+            case "int":
+            case "long":
+            case "float":
+            case "double":
+                return false;
+            default:
+                break;
+        }
+        // R8 emits default-package class names without a dot (261102901: state scf, enum
+        // qcf). Package prefixes are the only reliable exclusion; a parameter's own shape
+        // is checked by the GROUP constant and the singleton calibration.
+        return !type.startsWith("java.") && !type.startsWith("javax.")
+                && !type.startsWith("android.") && !type.startsWith("androidx.")
+                && !type.startsWith("kotlin.") && !type.startsWith("kotlinx.");
     }
 
     /**

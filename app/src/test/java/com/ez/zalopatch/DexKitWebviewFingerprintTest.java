@@ -81,6 +81,44 @@ public final class DexKitWebviewFingerprintTest {
     }
 
     @Test
+    public void companionFieldResolvesTheStableViewCompanion() {
+        // 261102901: ZaloWebView.Companion is e3w, and two owners carry a dispatch shape,
+        // so the global scan alone is ambiguous while the stable field is exact.
+        List<DexKitWebviewFingerprint.MethodHit> hits = new ArrayList<>();
+        hits.add(dispatch("e3w", "g"));
+        hits.add(dispatch("other.Companion", "k"));
+        assertFalse("resolved".equals(DexKitWebviewFingerprint.evaluateCompanion(
+                hits, DIGEST, DIGEST, false).status));
+        FingerprintResolver.Resolution field =
+                DexKitWebviewFingerprint.evaluateCompanionField(
+                        "e3w", hits, DIGEST, DIGEST, false);
+        assertEquals("resolved", field.status);
+        assertEquals("e3w", field.symbol);
+    }
+
+    @Test
+    public void companionFieldFailsClosedWithoutEvidence() {
+        List<DexKitWebviewFingerprint.MethodHit> hits = new ArrayList<>();
+        hits.add(dispatch("e3w", "g"));
+        assertEquals("no_companion_field", DexKitWebviewFingerprint.evaluateCompanionField(
+                "", hits, DIGEST, DIGEST, false).status);
+        assertEquals("no_companion_field", DexKitWebviewFingerprint.evaluateCompanionField(
+                null, hits, DIGEST, DIGEST, false).status);
+        assertEquals("companion_self", DexKitWebviewFingerprint.evaluateCompanionField(
+                DexKitWebviewFingerprint.OWNER_WEB_VIEW, hits, DIGEST, DIGEST, false).status);
+        assertEquals("no_dispatch_on_companion",
+                DexKitWebviewFingerprint.evaluateCompanionField(
+                        "e3w", new ArrayList<DexKitWebviewFingerprint.MethodHit>(),
+                        DIGEST, DIGEST, false).status);
+        List<DexKitWebviewFingerprint.MethodHit> doubled = new ArrayList<>();
+        doubled.add(dispatch("e3w", "g"));
+        doubled.add(dispatch("e3w", "h"));
+        assertEquals("ambiguous_dispatch_on_companion",
+                DexKitWebviewFingerprint.evaluateCompanionField(
+                        "e3w", doubled, DIGEST, DIGEST, false).status);
+    }
+
+    @Test
     public void dispatchResolvesOnKnownCompanion() {
         List<DexKitWebviewFingerprint.MethodHit> hits = new ArrayList<>();
         hits.add(dispatch("com.zing.zalo.ui.zviews.vt", "k"));

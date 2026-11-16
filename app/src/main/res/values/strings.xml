@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="zp_recalled_marker">Recalled</string>
+    <string name="zp_host_packages_title">Zalo clone packages</string>
+    <string name="zp_host_packages_none">No additional packages</string>
+    <string name="zp_host_packages_explanation">Enter each cloned Zalo package name on a separate line. Only add apps you trust: they can read module settings and submit recordings. Enable Zalo Patch for each clone in your framework manager, then force stop and reopen it. The original Zalo remains supported.</string>
+    <string name="zp_host_packages_invalid">Enter valid package names, with no more than 16 clones.</string>
     <string name="zp_app_name">Zalo Patch</string>
 
     <!-- Dashboard -->
@@ -35,6 +40,7 @@
     <string name="zp_capability_pending">pending observation</string>
     <string name="zp_capability_unavailable">unavailable</string>
     <string name="zp_section_status">Status</string>
+    <string name="zp_section_tweaks">Tweaks</string>
     <string name="zp_section_interface">Zalo interface</string>
     <string name="zp_section_ads_notifications">Ads &amp; notifications</string>
     <string name="zp_section_privacy">Privacy</string>
@@ -43,6 +49,27 @@
         <item quantity="one">%1$d saved change · restart to activate</item>
         <item quantity="other">%1$d saved changes · restart to activate</item>
     </plurals>
+    <plurals name="zp_dashboard_pending_chip">
+        <item quantity="one">%1$d saved change</item>
+        <item quantity="other">%1$d saved changes</item>
+    </plurals>
+    <string name="zp_dashboard_no_pending_chip">No pending changes</string>
+    <string name="zp_dashboard_restart_required_chip">Restart to activate</string>
+    <string name="zp_dashboard_identity_summary">Zalo %1$d · %2$s</string>
+    <string name="zp_instance_title">Settings instance</string>
+    <string name="zp_instance_choose">Choose settings instance</string>
+    <string name="zp_instance_original_item">Original · %1$s</string>
+    <string name="zp_instance_unavailable">Unavailable</string>
+    <string name="zp_instance_unavailable_option">%1$s · Unavailable</string>
+    <string name="zp_instance_not_checked">Not checked</string>
+    <string name="zp_dashboard_zalo_missing">Zalo not installed</string>
+    <string name="zp_dashboard_runtime_unobserved">runtime not observed</string>
+    <string name="zp_state_not_observed">Not observed</string>
+    <string name="zp_search_title">Find a tweak</string>
+    <string name="zp_search_hint">Search tweaks</string>
+    <string name="zp_search_all_tweaks">All tweaks</string>
+    <string name="zp_search_results">Results</string>
+    <string name="zp_search_no_results">No tweak matches this search.</string>
 
     <string name="zp_notification_filter_title">Notification filter</string>
     <string name="zp_notification_history_title">Notification history</string>
@@ -115,6 +142,8 @@
     <string name="zp_tweak_hide_reaction_row">Hide reaction row</string>
     <string name="zp_tweak_hide_reaction_row_summary">Keeps the action items in the long-press menu.</string>
     <string name="zp_tweak_custom_reaction">Emoji reaction button</string>
+    <string name="zp_tweak_native_mini_chat">Use Zalo Mini Chat</string>
+    <string name="zp_tweak_native_mini_chat_summary">Uses Zalo’s floating chat heads instead of Android bubbles. Long-press a conversation to open its chat head. Requires permission to display over other apps.</string>
     <string name="zp_reaction_setting_blocked">Turn off %1$s to enable this setting.</string>
     <string name="zp_tweak_custom_reaction_summary">Adds a + button to the reaction bar that opens an emoji picker, so a native Unicode emoji can be sent as a reaction. Only plain emoji, sent when you tap one. Not available while Hide reaction row is on.</string>
     <string name="zp_tweak_open_links_externally">Open links in system browser</string>
@@ -167,6 +196,9 @@
     <string name="zp_group_message_rendering">Message rendering</string>
     <string name="zp_group_external_links">External links</string>
     <string name="zp_group_status_privacy">Status privacy</string>
+    <string name="zp_group_recall">Recalls</string>
+    <string name="zp_tweak_keep_recalled_text">Keep recalled text</string>
+    <string name="zp_tweak_keep_recalled_text_summary">Keeps the text of a message the other person recalled, in ordinary one-to-one chats. Groups, media, and your own messages still follow Zalo. A message deleted for everyone from the server can still disappear after a resync.</string>
     <string name="zp_group_media">Media</string>
     <string name="zp_tweak_keep_expired_media">Keep expired files accessible</string>
     <string name="zp_tweak_keep_expired_media_summary">Keeps on-device chat files usable after Zalo marks them expired. Does not restore missing files.</string>

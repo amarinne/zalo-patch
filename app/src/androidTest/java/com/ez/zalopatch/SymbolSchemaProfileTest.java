@@ -124,6 +124,31 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertHookIdentities(active);
     }
 
+    public void testSelectsNovemberFeatureExactProfile() throws Exception {
+        SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 261102901L);
+
+        assertTrue(active.valid);
+        assertEquals(46, active.schemaRevision);
+        assertEquals(261102901, active.minCode);
+        assertEquals("scf", active.string("symbols.bottom_tabs.state_class", ""));
+        assertEquals("qcf", active.string("symbols.bottom_tabs.enum_class", ""));
+        assertEquals("h3q", active.strings("symbols.bottom_tabs.consumer_adapter_classes").get(0));
+        assertEquals("t0h", active.string("symbols.inbox.message_adapter_class", ""));
+        assertEquals("y2", active.string("symbols.inbox.messages_view_adapter_field", ""));
+        assertEquals("t54", active.string("symbols.inbox.normal_item_class", ""));
+        assertEquals("f", active.string("symbols.inbox.conversation_field", ""));
+        assertEquals("e", active.string("symbols.inbox.row_uid_method", ""));
+        assertEquals("dx3", active.string("symbols.recall.time_config_class", ""));
+        assertEquals("E", active.string("symbols.recall.time_visibility_method", ""));
+        assertEquals("s", active.string("symbols.recall.time_refresh_method", ""));
+        assertEquals("U", active.string("symbols.recall.text_draw_method", ""));
+        assertEquals("v7", active.string("symbols.recall.text_recalled_field", ""));
+        assertEquals("8529eafd80d88f9f14f02f9c42e3cf1e7e76d41a1a0d899668b2548008e0ea0b",
+                active.string("artifact.base_apk_sha256", ""));
+        assertEquals("static-verified", active.string("artifact.verification", ""));
+        assertHookIdentities(active);
+    }
+
     public void testUnknownVersionDoesNotUseNearestProfile() throws Exception {
         SymbolSchema.Active active = SymbolSchema.select(bundleJson, "Test", 260800000L);
 
@@ -131,7 +156,7 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
         assertTrue(active.bundleValid);
         assertTrue(active.validation.contains("No exact bundled symbol profile"));
         assertEquals("260602901, 260701901, 260801903, 260802903, 261001903, 261001905, "
-                        + "261002901, 261002903, 261101901",
+                        + "261002901, 261002903, 261101901, 261102901",
                 active.supportedVersionCodes);
     }
 
@@ -617,6 +642,37 @@ public final class SymbolSchemaProfileTest extends AndroidTestCase {
                         "#<reaction callback>(<reaction>,String)",
                         "<reaction>",
                         "#<factory>(int,String)"), info.driftSymbols);
+                continue;
+            }
+            // The recall route is also resolved at runtime: no bundled profile carries
+            // it, so the displayed identity stays an honest placeholder set until the
+            // scan resolves against the installed host.
+            if (Tweaks.KEY_KEEP_RECALLED_TEXT.equals(item.key)
+                    && active.string(DexKitRecallFingerprint.PREFIX + "coordinator_class",
+                    "").isEmpty()) {
+                assertMissingAnchors(active, DexKitRecallFingerprint.paths());
+                assertEquals("<undo handler>#<undo>(message) -> "
+                        + "<recall coordinator>#<recall>(Object) -> "
+                        + "<message writer>#<writer>(message, boolean, undo) -> "
+                        + "#<tombstone update>(record, id, boolean)", info.path);
+                assertEquals(java.util.Arrays.asList(
+                        "<undo handler>",
+                        "#<undo>(message)",
+                        "<recall coordinator>",
+                        "#<recall>(Object)",
+                        "<message writer>",
+                        "#<writer>(message, boolean, undo)",
+                        "#<tombstone update>(record, id, boolean)"), info.driftSymbols);
+                continue;
+            }
+            // Mini Chat is discovered per host; older profiles contain no invented names.
+            if (Tweaks.KEY_NATIVE_MINI_CHAT.equals(item.key)
+                    && active.string(DexKitMiniChatFingerprint.PREFIX + "task_class", "").isEmpty()) {
+                assertMissingAnchors(active, DexKitMiniChatFingerprint.paths());
+                assertEquals("<native chat-head capabilities> + <bubble configuration> + "
+                        + "<native launch> + " + DexKitMiniChatFingerprint.SERVICE, info.path);
+                assertEquals(java.util.Arrays.asList("<native chat-head capabilities>",
+                        "<bubble configuration>", "<native launch>"), info.driftSymbols);
                 continue;
             }
             for (String symbol : info.driftSymbols) {

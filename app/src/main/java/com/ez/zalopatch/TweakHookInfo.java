@@ -91,6 +91,14 @@ final class TweakHookInfo {
             case Tweaks.KEY_HIDE_REACTION_ROW:
                 path = "View#performLongClick() + PopupWindow/Dialog#show()";
                 break;
+            case Tweaks.KEY_NATIVE_MINI_CHAT:
+                path = schema.string(DexKitMiniChatFingerprint.PREFIX + "capability_class",
+                        "<native chat-head capabilities>") + " + "
+                        + schema.string(DexKitMiniChatFingerprint.PREFIX + "config_class",
+                        "<bubble configuration>") + " + "
+                        + schema.string(DexKitMiniChatFingerprint.PREFIX + "task_class",
+                        "<native launch>") + " + " + DexKitMiniChatFingerprint.SERVICE;
+                break;
             case Tweaks.KEY_CUSTOM_REACTION:
                 String reactionClass = schema.string(
                         DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, "<reaction>");
@@ -160,6 +168,22 @@ final class TweakHookInfo {
                 path = schema.string("symbols.media.state_classifier_class", "<media classifier>")
                         + "#" + schema.string("symbols.media.state_classifier_method", "<classify>")
                         + "()";
+                break;
+            case Tweaks.KEY_KEEP_RECALLED_TEXT:
+                path = schema.string(DexKitRecallFingerprint.PREFIX + "undo_handler_class",
+                        "<undo handler>")
+                        + "#" + schema.string(DexKitRecallFingerprint.PREFIX + "undo_handler_method",
+                        "<undo>") + "(message) -> "
+                        + schema.string(DexKitRecallFingerprint.PREFIX + "coordinator_class",
+                        "<recall coordinator>")
+                        + "#" + schema.string(DexKitRecallFingerprint.PREFIX + "coordinator_method",
+                        "<recall>") + "(Object) -> "
+                        + schema.string(DexKitRecallFingerprint.PREFIX + "writer_class",
+                        "<message writer>")
+                        + "#" + schema.string(DexKitRecallFingerprint.PREFIX + "writer_method",
+                        "<writer>") + "(message, boolean, undo) -> "
+                        + "#" + schema.string(DexKitRecallFingerprint.PREFIX + "update_method",
+                        "<tombstone update>") + "(record, id, boolean)";
                 break;
             case Tweaks.KEY_AUTO_RECORD_CALLS:
                 path = "PeerJNI#zrtc_peer_start_record_audio() + CallCallback callbacks";
@@ -355,6 +379,11 @@ final class TweakHookInfo {
                     videoAnchors.add("#" + schema.string(route.anchor("marker_method"), "<marker>") + "()");
                 }
                 return videoAnchors;
+            case Tweaks.KEY_NATIVE_MINI_CHAT:
+                return Arrays.asList(
+                        schema.string(DexKitMiniChatFingerprint.PREFIX + "capability_class", "<native chat-head capabilities>"),
+                        schema.string(DexKitMiniChatFingerprint.PREFIX + "config_class", "<bubble configuration>"),
+                        schema.string(DexKitMiniChatFingerprint.PREFIX + "task_class", "<native launch>"));
             case Tweaks.KEY_CUSTOM_REACTION:
                 String reactionClass = schema.string(
                         DexKitReactionSendFingerprint.ANCHOR_REACTION_CLASS, "<reaction>");
@@ -417,6 +446,22 @@ final class TweakHookInfo {
                         schema.string("symbols.media.state_classifier_class", "<media classifier>"),
                         "#" + schema.string("symbols.media.state_classifier_method",
                                 "<classify>") + "()");
+            case Tweaks.KEY_KEEP_RECALLED_TEXT:
+                return Arrays.asList(
+                        schema.string(DexKitRecallFingerprint.PREFIX + "undo_handler_class",
+                                "<undo handler>"),
+                        "#" + schema.string(DexKitRecallFingerprint.PREFIX + "undo_handler_method",
+                                "<undo>") + "(message)",
+                        schema.string(DexKitRecallFingerprint.PREFIX + "coordinator_class",
+                                "<recall coordinator>"),
+                        "#" + schema.string(DexKitRecallFingerprint.PREFIX + "coordinator_method",
+                                "<recall>") + "(Object)",
+                        schema.string(DexKitRecallFingerprint.PREFIX + "writer_class",
+                                "<message writer>"),
+                        "#" + schema.string(DexKitRecallFingerprint.PREFIX + "writer_method",
+                                "<writer>") + "(message, boolean, undo)",
+                        "#" + schema.string(DexKitRecallFingerprint.PREFIX + "update_method",
+                                "<tombstone update>") + "(record, id, boolean)");
             case Tweaks.KEY_BACKUP_FREQUENT_PUSH:
                 return Arrays.asList(
                         schema.string("symbols.backup.interval_reader_class",

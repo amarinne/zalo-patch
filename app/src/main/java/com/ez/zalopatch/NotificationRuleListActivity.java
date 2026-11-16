@@ -39,7 +39,8 @@ public final class NotificationRuleListActivity {
 
         private void buildScreen() {
             Context context = requireContext();
-            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(context);
+            Context target = targetContext();
+            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(target);
             List<String> values = rules.list(type);
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
 
@@ -82,7 +83,7 @@ public final class NotificationRuleListActivity {
                     .setPositiveButton(R.string.zp_add, (dialog, which) -> {
                         List<String> additions = Arrays.asList(input.getText().toString().split("[,\\n]"));
                         ArrayList<String> updated = new ArrayList<>(
-                                NotificationRuleStore.load(requireContext()).list(type));
+                                NotificationRuleStore.load(targetContext()).list(type));
                         updated.addAll(additions);
                         save(updated);
                     })
@@ -123,17 +124,26 @@ public final class NotificationRuleListActivity {
         }
 
         private ArrayList<String> currentValues() {
-            return new ArrayList<>(NotificationRuleStore.load(requireContext()).list(type));
+            return new ArrayList<>(NotificationRuleStore.load(targetContext()).list(type));
         }
 
         private void save(List<String> values) {
-            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(requireContext());
-            if (!NotificationRuleStore.save(requireContext(), rules.with(type, values))) {
+            Context target = targetContext();
+            NotificationRuleStore.RuleSet rules = NotificationRuleStore.load(target);
+            if (!NotificationRuleStore.save(target, rules.with(type, values))) {
                 Toast.makeText(requireContext(), R.string.zp_rule_save_failed,
                         Toast.LENGTH_SHORT).show();
                 return;
             }
             buildScreen();
+        }
+
+        private StatusActivity host() {
+            return (StatusActivity) requireActivity();
+        }
+
+        private Context targetContext() {
+            return host().settingsContext();
         }
 
         private boolean isAccountType() {

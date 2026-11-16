@@ -65,7 +65,7 @@ public final class DexKitZinstantFingerprint {
      * 20 = combined six-feature query set and both framework adapters.
      * 23 = native emoji reaction send chain anchored on ReactionPickerView#getListener.
      */
-    public static final int QUERY_REVISION = 23;
+    public static final int QUERY_REVISION = 31;
     public static final String ANCHOR_AD_BIND = "zinstant.ad_bind_method";
     public static final String ANCHOR_FEED_BIND = "zinstant.feed_bind_method";
 

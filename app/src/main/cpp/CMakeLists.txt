@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(zalo_recorder_guard LANGUAGES CXX)
+add_library(zalo_recorder_guard SHARED recorder_guard.cpp)
+target_compile_features(zalo_recorder_guard PRIVATE cxx_std_20)
+target_compile_options(zalo_recorder_guard PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
+target_link_options(zalo_recorder_guard PRIVATE -Wl,--exclude-libs,ALL)
+target_link_libraries(zalo_recorder_guard PRIVATE dl)

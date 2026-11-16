@@ -11,6 +11,59 @@ import io.github.libxposed.service.XposedService;
 
 /** Exercises the same rootless boundary as the settings UI, preserving local and remote state. */
 public final class FrameworkConfigTest extends AndroidTestCase {
+    public void testMalformedTargetSelectorsCannotPublishOrSaveOriginal() {
+        Context context = getContext();
+        Map<String, ?> original = new HashMap<>(TweakStore.preferences(context).getAll());
+        try {
+            for (int type = 0; type < 3; type++) {
+                Bundle extras = new Bundle();
+                if (type == 0) extras.putInt("host_package", 42);
+                else if (type == 1) extras.putString("host_package", null);
+                else extras.putStringArray("host_package", new String[]{HostPackages.ZALO});
+                extras.putBoolean(Tweaks.KEY_HIDE_DISCOVERY_TAB,
+                        !SettingsStore.getBoolean(context, Tweaks.KEY_HIDE_DISCOVERY_TAB));
+                assertNull(context.getContentResolver().call(ConfigProvider.URI,
+                        "save_settings", null, extras));
+                assertNull(context.getContentResolver().call(ConfigProvider.URI,
+                        "apply_config", null, extras));
+                assertEquals(original, TweakStore.preferences(context).getAll());
+            }
+        } finally {
+            restore(TweakStore.preferences(context), original);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void testCloneRuntimeRequiresPublishedSnapshot() throws Exception {
+        Map<String, Object> before = resetHookState();
+        Field cacheField = HookConfig.class.getDeclaredField("cache");
+        cacheField.setAccessible(true);
+        Map<String, String> cache = (Map<String, String>) cacheField.get(null);
+        Map<String, String> originalCache = new HashMap<>(cache);
+        try {
+            HookConfig.identify("vn.example.runtimeclone");
+            cache.put(Tweaks.KEY_HIDE_DISCOVERY_TAB, "true");
+            cache.put(NotificationRuleStore.PREF_KEY, NotificationRuleStore.encode(
+                    new NotificationRuleStore.RuleSet(java.util.List.of("promotion"), null, null, null)));
+            assertFalse(HookConfig.isEnabled(Tweaks.KEY_HIDE_DISCOVERY_TAB));
+            assertEquals(0, HookConfig.notificationRules().total());
+            assertEquals("", HookConfig.snapshotId());
+            Field snapshot = HookConfig.class.getDeclaredField("legacySnapshot");
+            snapshot.setAccessible(true);
+            snapshot.set(null, new ConfigSnapshot(Map.of(Tweaks.KEY_HIDE_DISCOVERY_TAB, "true"),
+                    "clone-published", 1, BuildConfig.VERSION_CODE));
+            assertTrue(HookConfig.isEnabled(Tweaks.KEY_HIDE_DISCOVERY_TAB));
+            assertEquals("clone-published", HookConfig.snapshotId());
+            HookConfig.identify(HostPackages.ZALO);
+            cache.put(Tweaks.KEY_HIDE_DISCOVERY_TAB, "true");
+            assertTrue(HookConfig.isEnabled(Tweaks.KEY_HIDE_DISCOVERY_TAB));
+        } finally {
+            restoreHookState(before);
+            cache.clear();
+            cache.putAll(originalCache);
+        }
+    }
+
     public void testLegacyBlobRevocation() {
         String key = "internal.test_blob_revocation";
         String original = SettingsPropertyMirror.readBlob(key);
@@ -395,7 +448,7 @@ public final class FrameworkConfigTest extends AndroidTestCase {
     private static final String[] HOOK_FIELDS = {"snapshot", "authoritative", "remoteInitialized",
             "providerSnapshotChecked", "snapshotSource", "appContext", "moduleContext",
             "moduleContextUnavailable", "notificationRules", "legacySnapshot", "legacySnapshotChecked",
-            "legacySnapshotInvalid", "legacySettings", "legacyRules"};
+            "legacySnapshotInvalid", "legacySettings", "legacyRules", "hostPackage"};
 
     private static Map<String, Object> resetHookState() throws Exception {
         Map<String, Object> before = new HashMap<>();

@@ -20,7 +20,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Loader entry for upstream LSPatch 0.6 build 398 (legacy API 82). */
 public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit {
-    private static final String TARGET_PACKAGE = "com.zing.zalo";
     private static final String TAG = "ZaloPatch";
     private static final long RESOURCE_HOOK_OBSERVATION_WINDOW_MS = 5_000L;
     private final AtomicBoolean featuresStarted = new AtomicBoolean(false);
@@ -29,13 +28,12 @@ public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookZyg
         SymbolSchema.setModuleApkPath(param.modulePath);
     }
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) {
-        if (!TARGET_PACKAGE.equals(param.packageName)) return;
+        if (!HostPackages.canLoad(param.packageName, param.classLoader)) return;
         SymbolSchema.setModuleApkPathFromClassLoader(ModuleEntry.class.getClassLoader());
-        boolean mainProcess = param.processName == null || TARGET_PACKAGE.equals(param.processName);
-        hookContextCapture(param.classLoader, mainProcess);
+        hookContextCapture(param.classLoader, param.processName);
     }
 
-    private void hookContextCapture(ClassLoader classLoader, boolean mainProcess) {
+    private void hookContextCapture(ClassLoader classLoader, String hostProcessName) {
         try {
             XpHooks.After onAttached = (XpHooks.HookParam param) -> {
                         if (param.args == null || param.args.length == 0
@@ -43,11 +41,12 @@ public final class ModuleEntry implements IXposedHookLoadPackage, IXposedHookZyg
                             return;
                         }
                         Context context = (Context) param.args[0];
+                        if (!HostPackages.admitted(context)) return;
                         HookConfig.setAppContext(context);
                         ClassLoader appClassLoader = context.getClassLoader();
                         startFeatures(
                                 appClassLoader != null ? appClassLoader : classLoader,
-                                mainProcess);
+                                HostPackages.mainProcess(context, hostProcessName));
                     };
             XpHooks.hookAllMethods("entry", Application.class, "attach", onAttached);
         } catch (Throwable throwable) {

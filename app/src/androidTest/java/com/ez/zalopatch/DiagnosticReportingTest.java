@@ -6,6 +6,39 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class DiagnosticReportingTest extends AndroidTestCase {
+    private static final String CLONE_A = "vn.example.insta";
+    private static final String CLONE_B = "vn.example.instb";
+
+    public void testSelfCheckAndDiagnosticsNameTheSelectedScope() {
+        android.content.Context module = getContext();
+        android.content.Context cloneA = HostPackages.scoped(module, CLONE_A);
+        android.content.Context cloneB = HostPackages.scoped(module, CLONE_B);
+        android.content.Context originalScope = HostPackages.scoped(module, HostPackages.ZALO);
+
+        assertEquals("", SelfCheckData.providerHost(module));
+        assertEquals("", SelfCheckData.providerHost(originalScope));
+        assertEquals(CLONE_A, SelfCheckData.providerHost(cloneA));
+        assertEquals(CLONE_B, SelfCheckData.providerHost(cloneB));
+
+        assertEquals(HostPackages.ZALO, DiagnosticReportFactory.reportPackage(module));
+        assertEquals(CLONE_A, DiagnosticReportFactory.reportPackage(cloneA));
+        assertEquals(CLONE_B, DiagnosticReportFactory.reportPackage(cloneB));
+
+        assertFalse(DiagnosticCaptureManager.requiresScopedCapture(module));
+        assertFalse(DiagnosticCaptureManager.requiresScopedCapture(originalScope));
+        assertTrue(DiagnosticCaptureManager.requiresScopedCapture(cloneA));
+        assertTrue(DiagnosticCaptureManager.requiresScopedCapture(cloneB));
+    }
+
+    public void testSelectedRestartIsOwnUserOnlyButLegacyUserIdsRemainValid() {
+        assertTrue(ConfigProvider.selectedRestartUserValid(-1, 0));
+        assertTrue(ConfigProvider.selectedRestartUserValid(0, 0));
+        assertTrue(ConfigProvider.selectedRestartUserValid(10, 10));
+        assertFalse(ConfigProvider.selectedRestartUserValid(10, 0));
+        assertFalse(ConfigProvider.selectedRestartUserValid(0, 10));
+        assertFalse(ConfigProvider.selectedRestartUserValid(-2, 0));
+    }
+
     public void testModuleSideRowsDoNotMakeHostSetupReady() {
         java.util.List<SelfCheckData.Row> rows = java.util.Arrays.asList(
                 selfCheckRow("notifications.listener", "active", "", ""),
@@ -289,6 +322,23 @@ public final class DiagnosticReportingTest extends AndroidTestCase {
             assertEquals(RuntimeEnvironment.Framework.LSPATCH, provider.framework);
             assertFalse(provider.resourceHooksObserved);
             assertEquals(RuntimeEnvironment.ResourceHooks.PENDING, provider.resourceHooks);
+
+            // A delayed report must not become evidence for the newly installed target version.
+            android.os.Bundle stale = new android.os.Bundle(extras);
+            stale.putLong("zalo_version_code", zaloVersion + 1L);
+            stale.putString("framework", "lsposed");
+            stale.putString("resource_hooks_status", "observed");
+            assertNull(getContext().getContentResolver().call(
+                    android.net.Uri.parse("content://com.ez.zalopatch.config"),
+                    "record_runtime_environment", null, stale));
+            android.content.Intent staleFallback = new android.content.Intent(
+                    SelfCheckReceiver.ACTION_RECORD_RUNTIME_ENVIRONMENT).putExtras(stale);
+            SelfCheckReceiver.handleAllowed(getContext(), staleFallback);
+            RuntimeEnvironment.Snapshot retained = RuntimeEnvironment.current(getContext());
+            assertTrue(retained.reported);
+            assertEquals(RuntimeEnvironment.Framework.LSPATCH, retained.framework);
+            assertEquals(RuntimeEnvironment.ResourceHooks.PENDING, retained.resourceHooks);
+            assertEquals(provider.updatedAtMs, retained.updatedAtMs);
 
             if (android.os.Build.VERSION.SDK_INT < 34) return;
             android.content.Intent fallback = new android.content.Intent(

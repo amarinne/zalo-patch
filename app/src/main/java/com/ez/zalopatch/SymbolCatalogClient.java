@@ -1,5 +1,6 @@
 package com.ez.zalopatch;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -16,7 +17,8 @@ final class SymbolCatalogClient {
     }
 
     static Result resolve(String endpoint, ZaloArtifactIdentity identity,
-                          SymbolCatalogContract.Entry current) {
+                          SymbolCatalogContract.Entry current,
+                          RuntimeEnvironment.Framework runtimeFramework) {
         HttpsURLConnection connection = null;
         try {
             URL url = new URL(endpoint);
@@ -25,16 +27,10 @@ final class SymbolCatalogClient {
                     || !"/v1/resolve".equals(url.getPath())) {
                 return Result.failure("invalid_endpoint");
             }
-            JSONObject request = new JSONObject()
-                    .put("protocolVersion", SymbolCatalogContract.PROTOCOL_VERSION)
-                    .put("packageName", SymbolSchema.TARGET_PACKAGE)
-                    .put("versionCode", identity.versionCode)
-                    .put("versionName", identity.versionName)
-                    .put("baseApkSha256", identity.baseApkSha256)
-                    .put("signerSha256", identity.signerSha256)
-                    .put("moduleVersionCode", BuildConfig.VERSION_CODE)
-                    .put("currentCatalogSequence", current == null ? 0 : current.sequence)
-                    .put("currentEntryDigest", current == null ? JSONObject.NULL : current.digest);
+            JSONObject request = requestBody(identity.versionCode, identity.versionName,
+                    identity.baseApkSha256, identity.signerSha256, BuildConfig.VERSION_CODE,
+                    current == null ? 0 : current.sequence,
+                    current == null ? null : current.digest, runtimeFramework);
             byte[] body = request.toString().getBytes(StandardCharsets.UTF_8);
             connection = (HttpsURLConnection) url.openConnection();
             connection.setInstanceFollowRedirects(false);
@@ -69,6 +65,35 @@ final class SymbolCatalogClient {
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    /**
+     * The request describes the installed artifact plus this module build. Runtime framework is
+     * self-reported telemetry from admitted, current evidence only; callers pass {@code null} or
+     * {@code UNKNOWN} when that evidence is missing or stale. It travels beside the signed request
+     * fields and never participates in catalog verification or symbol authorization.
+     */
+    static JSONObject requestBody(long versionCode, String versionName, String baseApkSha256,
+                                  String signerSha256, int moduleVersionCode,
+                                  int currentCatalogSequence, String currentEntryDigest,
+                                  RuntimeEnvironment.Framework runtimeFramework) throws JSONException {
+        return new JSONObject()
+                .put("protocolVersion", SymbolCatalogContract.PROTOCOL_VERSION)
+                .put("packageName", SymbolSchema.TARGET_PACKAGE)
+                .put("versionCode", versionCode)
+                .put("versionName", versionName)
+                .put("baseApkSha256", baseApkSha256)
+                .put("signerSha256", signerSha256)
+                .put("moduleVersionCode", moduleVersionCode)
+                .put("currentCatalogSequence", currentCatalogSequence)
+                .put("currentEntryDigest", currentEntryDigest == null
+                        ? JSONObject.NULL : currentEntryDigest)
+                .put("runtimeFramework", frameworkValue(runtimeFramework));
+    }
+
+    /** Only the frozen wire enum reaches the request; there is no free-form pass-through. */
+    static String frameworkValue(RuntimeEnvironment.Framework framework) {
+        return framework == null ? "unknown" : framework.value();
     }
 
     private static byte[] readBounded(InputStream stream) throws Exception {

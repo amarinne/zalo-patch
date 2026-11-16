@@ -14,13 +14,22 @@ public final class DexKitStoryFingerprint {
     public static final String ANCHOR_SUGGESTED_METHOD = "symbols.stories.suggested_seen_request_method";
     public static final String QUERY_SEEN = "stories.seen_request";
     public static final String QUERY_SUGGESTED = "stories.suggested_seen_request";
+    /**
+     * Historic literal. Releases through 261101901 carried it in the serializer body; 261102901
+     * moved it to the caller, so the query keys on the command number instead and the
+     * method's payload write plus {@code Long.parseLong} call stay mandatory.
+     */
     public static final String STORY_ID = "storyId";
     public static final int SEEN_COMMAND = 1343;
     public static final int SUGGESTED_COMMAND = 1356;
 
     private DexKitStoryFingerprint() { }
 
-    /** Query evidence includes both literals and the serializer's stable Java calls. */
+    /**
+     * Query evidence: the command number plus the serializer's stable Java calls. The
+     * {@code "storyId"} literal is not evidence any more: 261102901 moved it to the caller,
+     * so requiring it would fail closed on the current release.
+     */
     public static final class MethodHit {
         public final String owner;
         public final String name;
@@ -28,12 +37,11 @@ public final class DexKitStoryFingerprint {
         public final List<String> parameters;
         public final boolean isStatic;
         public final int command;
-        public final boolean storyId;
         public final boolean parsesStoryId;
         public final boolean writesPayload;
 
         public MethodHit(String owner, String name, String returnType, List<String> parameters,
-                         boolean isStatic, int command, boolean storyId,
+                         boolean isStatic, int command,
                          boolean parsesStoryId, boolean writesPayload) {
             this.owner = owner == null ? "" : owner;
             this.name = name == null ? "" : name;
@@ -41,7 +49,6 @@ public final class DexKitStoryFingerprint {
             this.parameters = parameters == null ? new ArrayList<>() : new ArrayList<>(parameters);
             this.isStatic = isStatic;
             this.command = command;
-            this.storyId = storyId;
             this.parsesStoryId = parsesStoryId;
             this.writesPayload = writesPayload;
         }
@@ -71,7 +78,7 @@ public final class DexKitStoryFingerprint {
         if (hits != null) for (MethodHit hit : hits) {
             if (hit == null || hit.owner.isEmpty() || hit.name.isEmpty() || hit.isStatic
                     || !"void".equals(hit.returnType) || !expected.equals(hit.parameters)
-                    || hit.command != command || !hit.storyId || !hit.parsesStoryId
+                    || hit.command != command || !hit.parsesStoryId
                     || !hit.writesPayload) continue;
             if (selected != null) return new Resolution("", "", "ambiguous_request");
             selected = hit;
