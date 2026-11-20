@@ -17,6 +17,7 @@ final class CallRecordingNotifier {
     private static final String RESULT_CHANNEL = "call_recording_result";
     private static final int STATUS_ID = 4601;
     private static final int RESULT_ID = 4602;
+    private static final long FINALIZING_NOTIFICATION_TIMEOUT_MS = 10 * 60_000L;
 
     private CallRecordingNotifier() {
     }
@@ -60,6 +61,8 @@ final class CallRecordingNotifier {
                 .setContentText(context.getString(R.string.zp_call_recording_notification_saving_text))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                // Android can remove this notification even if the app process dies.
+                .setTimeoutAfter(FINALIZING_NOTIFICATION_TIMEOUT_MS)
                 .build());
         updateSelfCheck(context, "active", "finalizing", false, "");
     }

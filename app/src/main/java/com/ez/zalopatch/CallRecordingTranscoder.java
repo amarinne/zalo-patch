@@ -14,7 +14,37 @@ import java.nio.ByteOrder;
 
 final class CallRecordingTranscoder {
     private static final long CODEC_TIMEOUT_US = 10_000L;
+    static final long CODEC_IDLE_TIMEOUT_MS = 30_000L;
     private static final long TRANSCODE_MARGIN_MS = 10L * 60L * 1000L;
+
+    static final class EncodingDeadline {
+        private final long deadlineMs;
+        private long lastSampleMs;
+
+        EncodingDeadline(long nowMs, long recordingDurationMs) {
+            deadlineMs = nowMs + recordingDurationMs * 2L + TRANSCODE_MARGIN_MS;
+            lastSampleMs = nowMs;
+        }
+
+        void sampleWritten(long nowMs) {
+            lastSampleMs = nowMs;
+        }
+
+        void check(long nowMs) throws IOException {
+            if (nowMs >= deadlineMs) {
+                throw new IOException("AAC transcode deadline exceeded");
+            }
+            if (nowMs - lastSampleMs >= CODEC_IDLE_TIMEOUT_MS) {
+                throw new NoCodecProgressException();
+            }
+        }
+    }
+
+    static final class NoCodecProgressException extends IOException {
+        NoCodecProgressException() {
+            super("AAC encoder produced no audio");
+        }
+    }
 
     private CallRecordingTranscoder() {
     }
@@ -42,18 +72,17 @@ final class CallRecordingTranscoder {
             long remaining = wav.dataLength;
             long recordingDurationMs = wav.dataLength * 1000L
                     / (2L * wav.channels * wav.sampleRate);
-            long deadlineMs = SystemClock.elapsedRealtime()
-                    + recordingDurationMs * 2L + TRANSCODE_MARGIN_MS;
+            EncodingDeadline deadline = new EncodingDeadline(
+                    SystemClock.elapsedRealtime(), recordingDurationMs);
             long sampleFrames = 0L;
             boolean inputEnded = false;
             boolean outputEnded = false;
+            boolean sampleWritten = false;
             int track = -1;
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
             while (!outputEnded) {
-                if (SystemClock.elapsedRealtime() > deadlineMs) {
-                    throw new IOException("AAC transcode deadline exceeded");
-                }
+                deadline.check(SystemClock.elapsedRealtime());
                 if (!inputEnded) {
                     int inputIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_US);
                     if (inputIndex >= 0) {
@@ -64,16 +93,19 @@ final class CallRecordingTranscoder {
                         buffer.clear();
                         int requested = (int) Math.min(remaining, buffer.remaining());
                         requested -= requested % (2 * wav.channels);
-                        int count = requested <= 0 ? -1 : read(input, buffer, requested);
                         long presentationUs = sampleFrames * 1_000_000L / wav.sampleRate;
-                        if (count <= 0) {
+                        if (remaining == 0) {
                             codec.queueInputBuffer(inputIndex, 0, 0, presentationUs,
                                     MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                             inputEnded = true;
                         } else {
-                            codec.queueInputBuffer(inputIndex, 0, count, presentationUs, 0);
-                            remaining -= count;
-                            sampleFrames += count / (2L * wav.channels);
+                            if (requested <= 0) {
+                                throw new IOException("AAC input cannot fit a PCM frame");
+                            }
+                            read(input, buffer, requested);
+                            codec.queueInputBuffer(inputIndex, 0, requested, presentationUs, 0);
+                            remaining -= requested;
+                            sampleFrames += requested / (2L * wav.channels);
                         }
                     }
                 }
@@ -87,28 +119,30 @@ final class CallRecordingTranscoder {
                     muxer.start();
                     muxerStarted = true;
                 } else if (outputIndex >= 0) {
-                    ByteBuffer output = codec.getOutputBuffer(outputIndex);
-                    if (output == null) {
-                        throw new IOException("AAC output buffer unavailable");
-                    }
-                    if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                        info.size = 0;
-                    }
-                    if (info.size > 0) {
+                    if (info.size > 0 && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                        ByteBuffer output = codec.getOutputBuffer(outputIndex);
+                        if (output == null) {
+                            throw new IOException("AAC output buffer unavailable");
+                        }
                         if (!muxerStarted || track < 0) {
                             throw new IOException("AAC muxer not started");
                         }
                         output.position(info.offset);
                         output.limit(info.offset + info.size);
                         muxer.writeSampleData(track, output, info);
+                        deadline.sampleWritten(SystemClock.elapsedRealtime());
+                        sampleWritten = true;
                     }
                     outputEnded = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                     codec.releaseOutputBuffer(outputIndex, false);
                 }
             }
             // stop() commits the MP4 index. A non-empty file is not publishable if this fails.
-            if (!muxerStarted) {
-                throw new IOException("AAC muxer did not start");
+            if (!inputEnded) {
+                throw new IOException("AAC encoder ended before consuming the WAV");
+            }
+            if (!sampleWritten) {
+                throw new IOException("AAC output contained no audio samples");
             }
             muxer.stop();
             muxerStarted = false;
@@ -218,14 +252,11 @@ final class CallRecordingTranscoder {
         return isPcmWave(file);
     }
 
-    private static int read(RandomAccessFile input, ByteBuffer buffer, int requested)
+    private static void read(RandomAccessFile input, ByteBuffer buffer, int requested)
             throws IOException {
         byte[] bytes = new byte[requested];
-        int count = input.read(bytes);
-        if (count > 0) {
-            buffer.put(bytes, 0, count);
-        }
-        return count;
+        input.readFully(bytes);
+        buffer.put(bytes);
     }
 
     private static WavInfo readWav(File file) throws IOException {

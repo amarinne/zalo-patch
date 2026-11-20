@@ -457,8 +457,10 @@
     <string name="zp_call_recording_delete_message">This removes the shared M4A file.</string>
     <string name="zp_call_recording_delete_failed">Could not delete recording</string>
     <string name="zp_call_recording_raw_summary">%1$s · Raw WAV retained · %2$s · Tap to retry M4A conversion</string>
-    <string name="zp_call_recording_retry_started">M4A conversion started</string>
-    <string name="zp_call_recording_retry_failed">Raw WAV is unavailable or invalid</string>
+    <string name="zp_call_recording_retry_queued">M4A conversion queued</string>
+    <string name="zp_call_recording_retry_busy">M4A conversion is already queued or running</string>
+    <string name="zp_call_recording_retry_invalid">This WAV contains invalid audio</string>
+    <string name="zp_call_recording_retry_failed">Could not queue the WAV for conversion</string>
     <string name="zp_call_recording_notification_status_channel">Call recording status</string>
     <string name="zp_call_recording_notification_status_channel_summary">Shows when Zalo call recording is active.</string>
     <string name="zp_call_recording_notification_result_channel">Call recording results</string>

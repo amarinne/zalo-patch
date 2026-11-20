@@ -11,6 +11,7 @@ import android.provider.MediaStore;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -201,30 +202,51 @@ public final class CallRecordingStore {
 
     public static boolean delete(Context context, Entry entry) {
         if (entry.raw) {
-            if (entry.rawFile != null && QUEUED.contains(entry.rawFile.getAbsolutePath())) {
+            if (entry.rawFile == null) return false;
+            String key = entry.rawFile.getAbsolutePath();
+            if (!QUEUED.add(key)) {
                 return false;
             }
-            boolean deleted = entry.rawFile != null && entry.rawFile.delete();
-            if (deleted) {
-                metadataFile(entry.rawFile).delete();
-                clearRecoveryFailures(context, entry.rawFile);
+            try {
+                boolean deleted = entry.rawFile.delete();
+                if (deleted) {
+                    metadataFile(entry.rawFile).delete();
+                    clearRecoveryFailures(context, entry.rawFile);
+                }
+                return deleted;
+            } finally {
+                QUEUED.remove(key);
             }
-            return deleted;
         }
         return context.getContentResolver().delete(entry.uri, null, null) > 0;
     }
 
-    public static boolean retry(Context context, Entry entry) {
-        if (entry == null || !entry.raw || entry.rawFile == null || !entry.rawFile.isFile()) {
-            return false;
+    enum RetryResult { QUEUED, ALREADY_QUEUED, INVALID_AUDIO, UNAVAILABLE }
+
+    static RetryResult retry(Context context, Entry entry) {
+        if (entry == null || !entry.raw || entry.rawFile == null) {
+            return RetryResult.UNAVAILABLE;
         }
-        if (!isNativeImportReady(entry.rawFile) && !repairNativeImport(entry.rawFile)) {
-            updateSelfCheck(context, "failed", 0, "Raw WAV is not valid PCM audio");
-            return false;
+        File wav = entry.rawFile;
+        String key = wav.getAbsolutePath();
+        if (!QUEUED.add(key)) return RetryResult.ALREADY_QUEUED;
+        boolean submitted = false;
+        try {
+            if (!wav.isFile()) return RetryResult.UNAVAILABLE;
+            if (!isNativeImportReady(wav) && !repairNativeImport(wav)) {
+                updateSelfCheck(context, "failed", 0, "Raw WAV is not valid PCM audio");
+                return RetryResult.INVALID_AUDIO;
+            }
+            Metadata metadata = metadataFor(wav);
+            clearRecoveryFailures(context, wav);
+            submit(context.getApplicationContext(), wav, metadata, false);
+            submitted = true;
+            return RetryResult.QUEUED;
+        } catch (RuntimeException failure) {
+            return RetryResult.UNAVAILABLE;
+        } finally {
+            if (!submitted) QUEUED.remove(key);
         }
-        Metadata metadata = metadataFor(entry.rawFile);
-        clearRecoveryFailures(context, entry.rawFile);
-        return queue(context.getApplicationContext(), entry.rawFile, metadata, false);
     }
 
     static boolean isPendingName(String name) {
@@ -246,22 +268,30 @@ public final class CallRecordingStore {
             return false;
         }
         try {
-            FINALIZER.execute(() -> {
-                try {
-                    if (finalizeNow(context, processing, metadata)) {
-                        clearRecoveryFailures(context, processing);
-                    } else if (recovery) {
-                        recordRecoveryFailure(context, processing);
-                    }
-                } finally {
-                    QUEUED.remove(key);
-                }
-            });
+            if (!processing.isFile()) {
+                QUEUED.remove(key);
+                return false;
+            }
+            submit(context, processing, metadata, recovery);
         } catch (RuntimeException rejected) {
             QUEUED.remove(key);
             throw rejected;
         }
         return true;
+    }
+
+    private static void submit(Context context, File processing, Metadata metadata, boolean recovery) {
+        FINALIZER.execute(() -> {
+            try {
+                if (finalizeNow(context, processing, metadata)) {
+                    clearRecoveryFailures(context, processing);
+                } else if (recovery) {
+                    recordRecoveryFailure(context, processing);
+                }
+            } finally {
+                QUEUED.remove(processing.getAbsolutePath());
+            }
+        });
     }
 
     private static void reportImportFailure(Context context) {
@@ -273,26 +303,38 @@ public final class CallRecordingStore {
     private static boolean finalizeNow(Context context, File wav, Metadata metadata) {
         File encoded = new File(privateDirectory(context),
                 wav.getName().replace(".processing.wav", ".m4a.tmp"));
+        String stage = "encoding";
         try {
+            logFinalization(stage, "started");
             CallRecordingTranscoder.wavToM4a(wav, encoded);
+            stage = "publication";
+            logFinalization(stage, "started");
             Uri saved = publish(context, encoded, buildDisplayName(
                     metadata.startedAt, metadata.displayName, metadata.phoneNumber));
             if (saved == null) {
                 throw new IOException("Shared recording destination unavailable");
             }
-            long size = encoded.length();
-            wav.delete();
-            encoded.delete();
-            metadataFile(wav).delete();
-            updateSelfCheck(context, "active", size, "");
-            CallRecordingNotifier.finishSaved(context);
-            return true;
         } catch (Throwable throwable) {
             encoded.delete();
-            updateSelfCheck(context, "failed", 0,
-                    "M4A conversion failed: " + throwable.getClass().getSimpleName());
+            String errorType = throwable.getClass().getSimpleName();
+            logFinalization(stage, errorType);
+            updateSelfCheck(context, "failed", 0, stage + " failed: " + errorType);
             CallRecordingNotifier.finishFailed(context);
             return false;
+        }
+        logFinalization(stage, "completed");
+        long size = encoded.length();
+        wav.delete();
+        encoded.delete();
+        metadataFile(wav).delete();
+        updateSelfCheck(context, "active", size, "");
+        CallRecordingNotifier.finishSaved(context);
+        return true;
+    }
+
+    private static void logFinalization(String stage, String outcome) {
+        if (HookConfig.isDebugEnabled()) {
+            Log.i("ZaloPatch", "Call recording stage=" + stage + " result=" + outcome);
         }
     }
 

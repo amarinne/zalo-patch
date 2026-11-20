@@ -156,7 +156,8 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
                 }
             }
             assertNotNull("Retained raw WAV missing from recording catalog", found);
-            assertFalse(CallRecordingStore.retry(context, found));
+            assertEquals(CallRecordingStore.RetryResult.INVALID_AUDIO,
+                    CallRecordingStore.retry(context, found));
             assertTrue("Failed retry deleted retained raw WAV", raw.isFile());
             assertTrue(CallRecordingStore.delete(context, found));
             assertFalse(raw.exists());
@@ -287,6 +288,10 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         assertPublicationOutcome(1, false, false);
     }
 
+    public void testRetryReportsAlreadyQueuedWhileOriginalAttemptPublishes() throws Exception {
+        assertPublicationOutcome(1, false, false, false, true);
+    }
+
     public void testNotificationServiceFailureDoesNotUndoSuccessfulPublication() throws Exception {
         assertPublicationOutcome(1, false, false, true);
     }
@@ -348,6 +353,11 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
     private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete,
             boolean throwNotification)
             throws Exception {
+        assertPublicationOutcome(updated, throwUpdate, throwDelete, throwNotification, false);
+    }
+
+    private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete,
+            boolean throwNotification, boolean retryWhilePublishing) throws Exception {
         Context base = getInstrumentation().getTargetContext();
         String preferencesName = "recording-publication-fixture-" + UUID.randomUUID();
         File directory = Files.createTempDirectory(base.getCacheDir().toPath(),
@@ -387,18 +397,38 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
                     + "\"display_name\":\"Fixture\",\"phone_number\":\"\"}")
                     .getBytes(StandardCharsets.UTF_8);
             Files.write(metadata.toPath(), metadataBefore);
-            Method readMetadata = CallRecordingStore.class.getDeclaredMethod("metadataFor", File.class);
-            readMetadata.setAccessible(true);
-            Object parsed = readMetadata.invoke(null, raw);
-            Method finalizeNow = CallRecordingStore.class.getDeclaredMethod(
-                    "finalizeNow", Context.class, File.class, parsed.getClass());
-            finalizeNow.setAccessible(true);
-            boolean saved = (Boolean) finalizeNow.invoke(null, context, raw, parsed);
+            String prefix = "selfcheck.calls.auto_record.storage.";
+            boolean saved;
+            if (retryWhilePublishing) {
+                CallRecordingStore.Entry entry = new CallRecordingStore.Entry(Uri.fromFile(raw),
+                        "Fixture", 1785150000000L, raw.length(), 500L, true, raw);
+                provider.beforeUpdate = () -> {
+                    assertEquals(CallRecordingStore.RetryResult.ALREADY_QUEUED,
+                            CallRecordingStore.retry(context, entry));
+                    assertFalse(CallRecordingStore.delete(context, entry));
+                    assertTrue(raw.isFile());
+                };
+                assertEquals(CallRecordingStore.RetryResult.QUEUED, CallRecordingStore.retry(context, entry));
+                long deadline = android.os.SystemClock.elapsedRealtime() + 15_000L;
+                String status = preferences.getString(prefix + "status", "");
+                while (status.isEmpty() && android.os.SystemClock.elapsedRealtime() < deadline) {
+                    Thread.sleep(20L);
+                    status = preferences.getString(prefix + "status", "");
+                }
+                saved = "active".equals(status);
+            } else {
+                Method readMetadata = CallRecordingStore.class.getDeclaredMethod("metadataFor", File.class);
+                readMetadata.setAccessible(true);
+                Object parsed = readMetadata.invoke(null, raw);
+                Method finalizeNow = CallRecordingStore.class.getDeclaredMethod(
+                        "finalizeNow", Context.class, File.class, parsed.getClass());
+                finalizeNow.setAccessible(true);
+                saved = (Boolean) finalizeNow.invoke(null, context, raw, parsed);
+            }
             assertEquals(1, provider.updates);
             assertTrue("Fixture must reach publication with encoded audio", provider.bytesAtUpdate > 0);
             boolean expectedSaved = updated == 1 && !throwUpdate;
             assertEquals(expectedSaved, saved);
-            String prefix = "selfcheck.calls.auto_record.storage.";
             assertEquals(expectedSaved ? "active" : "failed", preferences.getString(prefix + "status", ""));
             assertEquals(expectedSaved ? 1 : 0, preferences.getInt(prefix + "hit_count", 0));
             if (throwNotification) {
@@ -436,6 +466,7 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         int updates;
         int deletes;
         long bytesAtUpdate;
+        Runnable beforeUpdate = () -> {};
 
         PublicationFixture(File output, int updated, boolean throwUpdate, boolean throwDelete) {
             this.output = output;
@@ -460,6 +491,7 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         @Override public int update(Uri uri, ContentValues values, String selection, String[] args) {
             assertEquals(owned, uri);
             assertEquals(Integer.valueOf(0), values.getAsInteger(MediaStore.Audio.Media.IS_PENDING));
+            beforeUpdate.run();
             updates++;
             bytesAtUpdate = output.length();
             if (throwUpdate) throw new IllegalStateException("Injected publication failure");

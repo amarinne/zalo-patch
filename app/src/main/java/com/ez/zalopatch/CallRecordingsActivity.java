@@ -113,14 +113,17 @@ public final class CallRecordingsActivity {
         private void retryConversion(CallRecordingStore.Entry entry) {
             android.content.Context context = targetContext().getApplicationContext();
             new Thread(() -> {
-                boolean queued = CallRecordingStore.retry(context, entry);
+                CallRecordingStore.RetryResult result = CallRecordingStore.retry(context, entry);
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (!isAdded()) return;
-                    Toast.makeText(requireContext(), queued
-                                    ? R.string.zp_call_recording_retry_started
-                                    : R.string.zp_call_recording_retry_failed,
-                            Toast.LENGTH_SHORT).show();
-                    if (queued) {
+                    int message = switch (result) {
+                        case QUEUED -> R.string.zp_call_recording_retry_queued;
+                        case ALREADY_QUEUED -> R.string.zp_call_recording_retry_busy;
+                        case INVALID_AUDIO -> R.string.zp_call_recording_retry_invalid;
+                        case UNAVAILABLE -> R.string.zp_call_recording_retry_failed;
+                    };
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
+                    if (result == CallRecordingStore.RetryResult.QUEUED) {
                         new android.os.Handler(android.os.Looper.getMainLooper())
                                 .postDelayed(this::refreshAsync, 1500L);
                     }
