@@ -82,6 +82,12 @@
         </service>
 
         <service
+            android:name=".CallRecordingFinalizationJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:process=":call_recording" />
+
+        <service
             android:name=".ZaloArtifactJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />

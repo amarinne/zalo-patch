@@ -9,12 +9,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.service.notification.StatusBarNotification;
+
+import java.util.Objects;
 
 final class CallRecordingNotifier {
     private static final String FEATURE = "calls.auto_record.notifications";
     private static final String STATUS_CHANNEL = "call_recording_status";
     private static final String RESULT_CHANNEL = "call_recording_result";
+    private static final String RECORDING = "recording";
     private static final int STATUS_ID = 4601;
     private static final int RESULT_ID = 4602;
     private static final long FINALIZING_NOTIFICATION_TIMEOUT_MS = 10 * 60_000L;
@@ -22,7 +26,7 @@ final class CallRecordingNotifier {
     private CallRecordingNotifier() {
     }
 
-    static boolean showRunning(Context context) {
+    static synchronized boolean showRunning(Context context, String recording) {
         context = UiSettings.localizedContext(context);
         if (!enabled(context)) {
             cancelStatus(context);
@@ -35,7 +39,7 @@ final class CallRecordingNotifier {
         }
         NotificationManager manager = manager(context);
         ensureChannels(context, manager);
-        manager.notify(STATUS_ID, statusBuilder(context, STATUS_CHANNEL)
+        manager.notify(STATUS_ID, statusBuilder(context, recording)
                 .setContentTitle(context.getString(R.string.zp_call_recording_notification_running))
                 .setContentText(context.getString(R.string.zp_call_recording_notification_running_text))
                 .setOngoing(true)
@@ -45,9 +49,9 @@ final class CallRecordingNotifier {
         return true;
     }
 
-    static void showFinalizing(Context context) {
+    static synchronized void showFinalizing(Context context, String recording) {
         context = UiSettings.localizedContext(context);
-        if (!hasActiveStatus(context)) {
+        if (!hasActiveStatus(context, recording)) {
             return;
         }
         if (!enabled(context) || !canPost(context)) {
@@ -56,7 +60,7 @@ final class CallRecordingNotifier {
         }
         NotificationManager manager = manager(context);
         ensureChannels(context, manager);
-        manager.notify(STATUS_ID, statusBuilder(context, STATUS_CHANNEL)
+        manager.notify(STATUS_ID, statusBuilder(context, recording)
                 .setContentTitle(context.getString(R.string.zp_call_recording_notification_saving))
                 .setContentText(context.getString(R.string.zp_call_recording_notification_saving_text))
                 .setOngoing(true)
@@ -67,23 +71,21 @@ final class CallRecordingNotifier {
         updateSelfCheck(context, "active", "finalizing", false, "");
     }
 
-    static void finishSaved(Context context) {
-        finish(context, true);
+    static synchronized void finishFinalization(Context context, String recording, boolean saved) {
+        finish(context, recording, saved, false);
     }
 
-    static void finishFailed(Context context) {
-        finish(context, false);
+    static synchronized void finishCaptureFailure(Context context, String recording) {
+        finish(context, recording, false, true);
     }
 
-    private static void finish(Context context, boolean saved) {
+    private static void finish(Context context, String recording, boolean saved, boolean requireStatus) {
         String state = saved ? "saved" : "failed";
         try {
             context = UiSettings.localizedContext(context);
-            boolean hadStatus = hasActiveStatus(context);
-            cancelStatus(context);
-            if (!hadStatus || !enabled(context) || !canPost(context)) {
-                return;
-            }
+            boolean hadStatus = hasActiveStatus(context, recording);
+            if (hadStatus) cancelStatus(context);
+            if ((requireStatus && !hadStatus) || !enabled(context) || !canPost(context)) return;
             NotificationManager manager = manager(context);
             ensureChannels(context, manager);
             manager.notify(RESULT_ID, resultBuilder(context, RESULT_CHANNEL)
@@ -124,14 +126,15 @@ final class CallRecordingNotifier {
         }
     }
 
-    private static boolean hasActiveStatus(Context context) {
+    private static boolean hasActiveStatus(Context context, String recording) {
         NotificationManager manager = manager(context);
         if (manager == null) {
             return false;
         }
         try {
             for (StatusBarNotification notification : manager.getActiveNotifications()) {
-                if (notification.getId() == STATUS_ID) {
+                if (notification.getId() == STATUS_ID && Objects.equals(recording,
+                        notification.getNotification().extras.getString(RECORDING))) {
                     return true;
                 }
             }
@@ -144,8 +147,11 @@ final class CallRecordingNotifier {
         return (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
     }
 
-    private static Notification.Builder statusBuilder(Context context, String channel) {
-        return builder(context, channel)
+    private static Notification.Builder statusBuilder(Context context, String recording) {
+        Bundle extras = new Bundle();
+        extras.putString(RECORDING, recording);
+        return builder(context, STATUS_CHANNEL)
+                .setExtras(extras)
                 .setSmallIcon(R.drawable.ic_zp_recording)
                 .setCategory(Notification.CATEGORY_PROGRESS)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)

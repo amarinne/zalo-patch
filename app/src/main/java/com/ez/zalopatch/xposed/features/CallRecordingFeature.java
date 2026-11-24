@@ -786,7 +786,7 @@ public final class CallRecordingFeature extends Feature {
                     if (attempt == 1
                             && HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
                         sendRecordingNotification(application,
-                                CallRecordingNotificationReceiver.STATE_RUNNING);
+                                CallRecordingNotificationReceiver.STATE_RUNNING, session.pendingName);
                     }
                     SelfCheckRegistry.incrementHit(FEATURE_NATIVE,
                             "PeerJNI#zrtc_peer_start_record_audio",
@@ -948,7 +948,7 @@ public final class CallRecordingFeature extends Feature {
                 }
                 if (HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
                     sendRecordingNotification(application,
-                            CallRecordingNotificationReceiver.STATE_FINALIZING);
+                            CallRecordingNotificationReceiver.STATE_FINALIZING, session.pendingName);
                 }
                 observed = CallRecordingMetadata.current();
                 String mappedPeerUid = PEER_PARTNERS.get(session.peerHandle);
@@ -1052,7 +1052,7 @@ public final class CallRecordingFeature extends Feature {
                             + " events=" + eventTrace(),
                     "Native WAV did not finalize within 5 seconds; private source preserved");
             sendRecordingNotification(application,
-                    CallRecordingNotificationReceiver.STATE_FAILED);
+                    CallRecordingNotificationReceiver.STATE_FAILED, pendingName);
             return;
         }
         try {
@@ -1071,13 +1071,13 @@ public final class CallRecordingFeature extends Feature {
                         "MediaStore shared M4A finalizer", "trigger=" + trigger,
                         "Recording import broadcast failed");
                 sendRecordingNotification(application,
-                        CallRecordingNotificationReceiver.STATE_FAILED);
+                        CallRecordingNotificationReceiver.STATE_FAILED, pendingName);
             }
         } catch (Throwable throwable) {
             SelfCheckRegistry.markFailed(FEATURE_STORAGE,
                     "CallRecordingImportReceiver", throwable);
             sendRecordingNotification(application,
-                    CallRecordingNotificationReceiver.STATE_FAILED);
+                    CallRecordingNotificationReceiver.STATE_FAILED, pendingName);
         }
     }
 
@@ -1137,7 +1137,7 @@ public final class CallRecordingFeature extends Feature {
                             "CallRecordingImportReceiver", "trigger=" + trigger,
                             "Private WAV copy rejected; source preserved");
                     sendRecordingNotification(application,
-                            CallRecordingNotificationReceiver.STATE_FAILED);
+                            CallRecordingNotificationReceiver.STATE_FAILED, pendingName);
                 }
             }
         });
@@ -1171,7 +1171,8 @@ public final class CallRecordingFeature extends Feature {
         }
     }
 
-    private static void sendRecordingNotification(Context application, String state) {
+    private static void sendRecordingNotification(
+            Context application, String state, String pendingName) {
         if (!HookConfig.isEnabled(Tweaks.KEY_CALL_RECORDING_NOTIFICATIONS)) {
             return;
         }
@@ -1182,6 +1183,7 @@ public final class CallRecordingFeature extends Feature {
         extras.putBinder(CallRecordingNotificationReceiver.EXTRA_IDENTITY_BINDER,
                 CallRecordingImportProtocol.identity());
         extras.putString(CallRecordingNotificationReceiver.EXTRA_STATE, state);
+        extras.putString(CallRecordingNotificationReceiver.EXTRA_RECORDING, pendingName);
         intent.putExtras(extras);
         try {
             application.sendBroadcast(intent);

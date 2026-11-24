@@ -9,6 +9,7 @@ import android.os.IBinder;
 /** Receives privacy-safe recording state changes from the Zalo process. */
 public final class CallRecordingNotificationReceiver extends BroadcastReceiver {
     public static final String EXTRA_IDENTITY_BINDER = "identity_binder";
+    public static final String EXTRA_RECORDING = "recording";
     public static final String EXTRA_STATE = "state";
     public static final String STATE_RUNNING = "running";
     public static final String STATE_FINALIZING = "finalizing";
@@ -32,12 +33,14 @@ public final class CallRecordingNotificationReceiver extends BroadcastReceiver {
                 return;
             }
             String state = extras.getString(EXTRA_STATE, "");
+            String recording = extras.getString(EXTRA_RECORDING);
+            if (recording != null && !CallRecordingStore.isPendingName(recording)) return;
             if (STATE_RUNNING.equals(state)) {
-                CallRecordingNotifier.showRunning(context);
+                CallRecordingNotifier.showRunning(context, recording);
             } else if (STATE_FINALIZING.equals(state)) {
-                CallRecordingNotifier.showFinalizing(context);
+                CallRecordingNotifier.showFinalizing(context, recording);
             } else if (STATE_FAILED.equals(state)) {
-                CallRecordingNotifier.finishFailed(context);
+                CallRecordingNotifier.finishCaptureFailure(context, recording);
             }
         } catch (Throwable ignored) {
         }

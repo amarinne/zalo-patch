@@ -50,6 +50,10 @@ final class CallRecordingTranscoder {
     }
 
     static void wavToM4a(File wavFile, File outputFile) throws IOException {
+        wavToM4a(wavFile, outputFile, () -> {});
+    }
+
+    static void wavToM4a(File wavFile, File outputFile, Runnable progress) throws IOException {
         WavInfo wav = readWav(wavFile);
         MediaCodec codec = null;
         MediaMuxer muxer = null;
@@ -110,31 +114,36 @@ final class CallRecordingTranscoder {
                     }
                 }
 
-                int outputIndex = codec.dequeueOutputBuffer(info, CODEC_TIMEOUT_US);
-                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    if (muxerStarted) {
-                        throw new IOException("AAC output format changed twice");
-                    }
-                    track = muxer.addTrack(codec.getOutputFormat());
-                    muxer.start();
-                    muxerStarted = true;
-                } else if (outputIndex >= 0) {
-                    if (info.size > 0 && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                        ByteBuffer output = codec.getOutputBuffer(outputIndex);
-                        if (output == null) {
-                            throw new IOException("AAC output buffer unavailable");
+                // Drain every ready frame. One frame per pass throttled encoding to ~2x real time.
+                int outputIndex;
+                while (!outputEnded && (outputIndex = codec.dequeueOutputBuffer(info,
+                        inputEnded ? CODEC_TIMEOUT_US : 0L)) != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        if (muxerStarted) {
+                            throw new IOException("AAC output format changed twice");
                         }
-                        if (!muxerStarted || track < 0) {
-                            throw new IOException("AAC muxer not started");
+                        track = muxer.addTrack(codec.getOutputFormat());
+                        muxer.start();
+                        muxerStarted = true;
+                    } else if (outputIndex >= 0) {
+                        if (info.size > 0 && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                            ByteBuffer output = codec.getOutputBuffer(outputIndex);
+                            if (output == null) {
+                                throw new IOException("AAC output buffer unavailable");
+                            }
+                            if (!muxerStarted || track < 0) {
+                                throw new IOException("AAC muxer not started");
+                            }
+                            output.position(info.offset);
+                            output.limit(info.offset + info.size);
+                            muxer.writeSampleData(track, output, info);
+                            deadline.sampleWritten(SystemClock.elapsedRealtime());
+                            progress.run();
+                            sampleWritten = true;
                         }
-                        output.position(info.offset);
-                        output.limit(info.offset + info.size);
-                        muxer.writeSampleData(track, output, info);
-                        deadline.sampleWritten(SystemClock.elapsedRealtime());
-                        sampleWritten = true;
+                        outputEnded = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                        codec.releaseOutputBuffer(outputIndex, false);
                     }
-                    outputEnded = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-                    codec.releaseOutputBuffer(outputIndex, false);
                 }
             }
             // stop() commits the MP4 index. A non-empty file is not publishable if this fails.

@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ProviderInfo;
 import android.content.res.Configuration;
 import android.database.Cursor;
+import android.database.MatrixCursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.content.Intent;
 import android.media.MediaExtractor;
@@ -27,7 +28,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -288,6 +288,10 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         assertPublicationOutcome(1, false, false);
     }
 
+    public void testRecoveryReusesRowIfPublicationCommittedBeforeConnectionDied() throws Exception {
+        assertPublicationOutcome(1, true, false, false, false, true);
+    }
+
     public void testRetryReportsAlreadyQueuedWhileOriginalAttemptPublishes() throws Exception {
         assertPublicationOutcome(1, false, false, false, true);
     }
@@ -358,6 +362,13 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
 
     private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete,
             boolean throwNotification, boolean retryWhilePublishing) throws Exception {
+        assertPublicationOutcome(
+                updated, throwUpdate, throwDelete, throwNotification, retryWhilePublishing, false);
+    }
+
+    private void assertPublicationOutcome(int updated, boolean throwUpdate, boolean throwDelete,
+            boolean throwNotification, boolean retryWhilePublishing, boolean throwAfterCommit)
+            throws Exception {
         Context base = getInstrumentation().getTargetContext();
         String preferencesName = "recording-publication-fixture-" + UUID.randomUUID();
         File directory = Files.createTempDirectory(base.getCacheDir().toPath(),
@@ -369,6 +380,7 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         File metadata = new File(raw + ".json");
         File published = new File(directory, "published.m4a");
         PublicationFixture provider = new PublicationFixture(published, updated, throwUpdate, throwDelete);
+        provider.throwAfterCommit = throwAfterCommit;
         SharedPreferences preferences = base.getSharedPreferences(preferencesName, Context.MODE_PRIVATE);
         // Keep UI localization and self-check state inside this fixture's preferences.
         preferences.edit().putString(UiSettings.KEY_LANGUAGE, UiSettings.LANGUAGE_ENGLISH).commit();
@@ -390,6 +402,7 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         ProviderInfo info = new ProviderInfo();
         info.authority = "media";
         provider.attachInfo(context, info);
+        provider.context = context;
         try {
             writeSilenceWav(raw, 16_000, 1, 500);
             byte[] audioBefore = Files.readAllBytes(raw.toPath());
@@ -398,7 +411,6 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
                     .getBytes(StandardCharsets.UTF_8);
             Files.write(metadata.toPath(), metadataBefore);
             String prefix = "selfcheck.calls.auto_record.storage.";
-            boolean saved;
             if (retryWhilePublishing) {
                 CallRecordingStore.Entry entry = new CallRecordingStore.Entry(Uri.fromFile(raw),
                         "Fixture", 1785150000000L, raw.length(), 500L, true, raw);
@@ -408,26 +420,18 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
                     assertFalse(CallRecordingStore.delete(context, entry));
                     assertTrue(raw.isFile());
                 };
-                assertEquals(CallRecordingStore.RetryResult.QUEUED, CallRecordingStore.retry(context, entry));
-                long deadline = android.os.SystemClock.elapsedRealtime() + 15_000L;
-                String status = preferences.getString(prefix + "status", "");
-                while (status.isEmpty() && android.os.SystemClock.elapsedRealtime() < deadline) {
-                    Thread.sleep(20L);
-                    status = preferences.getString(prefix + "status", "");
-                }
-                saved = "active".equals(status);
-            } else {
-                Method readMetadata = CallRecordingStore.class.getDeclaredMethod("metadataFor", File.class);
-                readMetadata.setAccessible(true);
-                Object parsed = readMetadata.invoke(null, raw);
-                Method finalizeNow = CallRecordingStore.class.getDeclaredMethod(
-                        "finalizeNow", Context.class, File.class, parsed.getClass());
-                finalizeNow.setAccessible(true);
-                saved = (Boolean) finalizeNow.invoke(null, context, raw, parsed);
             }
+            // Exercise terminal publication failure without waiting for the previous attempts.
+            new CallRecordingFinalization(CallRecordingFinalization.MAX_ATTEMPTS - 1,
+                    false, "", 0L, CallRecordingFinalization.Outcome.PENDING).write(raw);
+            while (CallRecordingStore.finalizeNext(context, () -> {})) {
+                // Drain the same queue used by the JobService.
+            }
+            boolean saved = "active".equals(preferences.getString(prefix + "status", ""));
+            assertEquals(1, provider.inserts);
             assertEquals(1, provider.updates);
             assertTrue("Fixture must reach publication with encoded audio", provider.bytesAtUpdate > 0);
-            boolean expectedSaved = updated == 1 && !throwUpdate;
+            boolean expectedSaved = updated == 1 && (!throwUpdate || throwAfterCommit);
             assertEquals(expectedSaved, saved);
             assertEquals(expectedSaved ? "active" : "failed", preferences.getString(prefix + "status", ""));
             assertEquals(expectedSaved ? 1 : 0, preferences.getInt(prefix + "hit_count", 0));
@@ -463,6 +467,11 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         private final int updated;
         private final boolean throwUpdate;
         private final boolean throwDelete;
+        Context context;
+        boolean exists;
+        boolean throwAfterCommit;
+        int pending;
+        int inserts;
         int updates;
         int deletes;
         long bytesAtUpdate;
@@ -478,15 +487,28 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
         @Override public boolean onCreate() { return true; }
         @Override public String getType(Uri uri) { return "audio/mp4"; }
         @Override public Cursor query(Uri uri, String[] projection, String selection,
-                String[] args, String sortOrder) { throw new UnsupportedOperationException(); }
+                String[] args, String sortOrder) {
+            assertEquals(owned, uri);
+            MatrixCursor cursor = new MatrixCursor(projection);
+            if (exists) cursor.addRow(new Object[]{pending});
+            return cursor;
+        }
+        @Override public Bundle call(String method, String arg, Bundle extras) {
+            assertEquals(CallRecordingStore.REPORT_FINALIZATION, method);
+            CallRecordingStore.reportFinalization(context, arg, extras.getLong("size"),
+                    extras.getString("error"));
+            return Bundle.EMPTY;
+        }
         @Override public Uri insert(Uri uri, ContentValues values) {
             assertEquals(Integer.valueOf(1), values.getAsInteger(MediaStore.Audio.Media.IS_PENDING));
+            inserts++;
+            exists = true;
+            pending = 1;
             return owned;
         }
         @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
             assertEquals(owned, uri);
-            return ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_CREATE
-                    | ParcelFileDescriptor.MODE_TRUNCATE | ParcelFileDescriptor.MODE_WRITE_ONLY);
+            return ParcelFileDescriptor.open(output, ParcelFileDescriptor.parseMode(mode));
         }
         @Override public int update(Uri uri, ContentValues values, String selection, String[] args) {
             assertEquals(owned, uri);
@@ -494,13 +516,16 @@ public final class CallRecordingTranscoderTest extends InstrumentationTestCase {
             beforeUpdate.run();
             updates++;
             bytesAtUpdate = output.length();
+            if (throwAfterCommit) pending = 0;
             if (throwUpdate) throw new IllegalStateException("Injected publication failure");
+            if (updated == 1) pending = 0;
             return updated;
         }
         @Override public int delete(Uri uri, String selection, String[] args) {
             assertEquals(owned, uri);
             deletes++;
             if (throwDelete) throw new IllegalStateException("Injected cleanup failure");
+            exists = false;
             return output.delete() ? 1 : 0;
         }
     }

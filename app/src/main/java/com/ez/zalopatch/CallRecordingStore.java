@@ -6,6 +6,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.system.ErrnoException;
@@ -21,7 +22,12 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,7 +38,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -42,8 +47,7 @@ public final class CallRecordingStore {
             + "/call_recordings");
     private static final String DIRECTORY = "call_recordings";
     private static final String CORRUPT_DIRECTORY = "corrupt";
-    private static final String RECOVERY_ATTEMPTS_PREFIX = "call_recording_recovery_attempts.";
-    private static final int MAX_RECOVERY_ATTEMPTS = 3;
+    static final String REPORT_FINALIZATION = "report_call_recording_finalization";
     private static final int MAX_METADATA_BYTES = 16 * 1024;
     private static final String SHARED_DIRECTORY = "Recordings/Zalo Call Recordings";
     private static final Pattern PENDING_NAME = Pattern.compile(
@@ -53,7 +57,6 @@ public final class CallRecordingStore {
     private static final Pattern RAW_NAME = Pattern.compile(
             "zalo-call-(\\d{13})-(incoming|outgoing|unknown)-([0-9a-f]{8})"
                     + "\\.processing\\.wav(?:\\.\\d+)?");
-    private static final ExecutorService FINALIZER = Executors.newSingleThreadExecutor();
     private static final Set<String> QUEUED = Collections.synchronizedSet(new HashSet<String>());
     // Copying must not wait behind a long AAC conversion while a broadcast is pending.
     private static final CallRecordingTransfer TRANSFERS = new CallRecordingTransfer(
@@ -110,17 +113,16 @@ public final class CallRecordingStore {
         Context application = context.getApplicationContext();
         TRANSFERS.enqueue(new ParcelFileDescriptor.AutoCloseInputStream(source),
                 processing, recoveryMetadata, CallRecordingTranscoder::isPcmWave, accepted -> {
+                    // Register the wakeup before acknowledging the copy, so process death
+                    // after acknowledgment cannot leave it without a scheduled conversion.
+                    boolean scheduled = accepted && CallRecordingFinalizationJob.enqueue(application);
                     try {
                         completion.onComplete(accepted);
                     } finally {
-                        if (accepted) {
-                            try {
-                                queue(application, processing, metadata, false);
-                            } catch (RuntimeException rejected) {
-                                reportImportFailure(application);
-                            }
-                        } else {
-                            reportImportFailure(application);
+                        if (!scheduled) {
+                            reportFinalization(application, pendingName, 0L, accepted
+                                    ? "Could not schedule conversion; private WAV preserved"
+                                    : "Recording import incomplete; source or recovery WAV preserved");
                         }
                     }
                 });
@@ -128,29 +130,22 @@ public final class CallRecordingStore {
     }
 
     public static void recover(Context context) {
-        File[] files = privateDirectory(context).listFiles();
-        if (files == null) {
-            return;
-        }
-        for (File file : files) {
-            if (!PROCESSING_NAME.matcher(file.getName()).matches()) {
-                continue;
-            }
-            if (recoveryAttempts(context, file) >= MAX_RECOVERY_ATTEMPTS) {
-                continue;
-            }
+        if (CallRecordingFinalizationJob.isScheduled(context)) return;
+        for (File wav : recoveryFiles(context)) {
             try {
-                queue(context.getApplicationContext(), file, readMetadata(metadataFile(file)), true);
-            } catch (Exception exception) {
-                recordRecoveryFailure(context, file);
-                updateSelfCheck(context, "failed", 0, "Could not recover pending conversion");
+                if (eligible(context, wav, CallRecordingFinalization.read(wav))) {
+                    CallRecordingFinalizationJob.enqueue(context);
+                    return;
+                }
+            } catch (IOException failure) {
+                logFinalization("recovery", failure.getClass().getSimpleName());
             }
         }
     }
 
     public static void recoverAsync(Context context) {
-        Context applicationContext = context.getApplicationContext();
-        FINALIZER.execute(() -> recover(applicationContext));
+        Context application = context.getApplicationContext();
+        new Thread(() -> recover(application), "call-recording-recovery").start();
     }
 
     public static List<Entry> list(Context context) {
@@ -207,13 +202,13 @@ public final class CallRecordingStore {
             if (!QUEUED.add(key)) {
                 return false;
             }
-            try {
-                boolean deleted = entry.rawFile.delete();
-                if (deleted) {
-                    metadataFile(entry.rawFile).delete();
-                    clearRecoveryFailures(context, entry.rawFile);
-                }
-                return deleted;
+            try (FileChannel channel = openForLock(entry.rawFile);
+                 FileLock lock = channel.tryLock()) {
+                if (lock == null || !entry.rawFile.delete()) return false;
+                removeRecoveryFiles(entry.rawFile);
+                return true;
+            } catch (IOException | OverlappingFileLockException failure) {
+                return false;
             } finally {
                 QUEUED.remove(key);
             }
@@ -230,23 +225,22 @@ public final class CallRecordingStore {
         File wav = entry.rawFile;
         String key = wav.getAbsolutePath();
         if (!QUEUED.add(key)) return RetryResult.ALREADY_QUEUED;
-        boolean submitted = false;
-        try {
+        try (FileChannel channel = openForLock(wav); FileLock lock = channel.tryLock()) {
+            if (lock == null) return RetryResult.ALREADY_QUEUED;
             if (!wav.isFile()) return RetryResult.UNAVAILABLE;
             if (!isNativeImportReady(wav) && !repairNativeImport(wav)) {
                 updateSelfCheck(context, "failed", 0, "Raw WAV is not valid PCM audio");
                 return RetryResult.INVALID_AUDIO;
             }
-            Metadata metadata = metadataFor(wav);
-            clearRecoveryFailures(context, wav);
-            submit(context.getApplicationContext(), wav, metadata, false);
-            submitted = true;
-            return RetryResult.QUEUED;
-        } catch (RuntimeException failure) {
+            CallRecordingFinalization.read(wav).resetForRetry(wav);
+        } catch (OverlappingFileLockException busy) {
+            return RetryResult.ALREADY_QUEUED;
+        } catch (IOException | RuntimeException failure) {
             return RetryResult.UNAVAILABLE;
         } finally {
-            if (!submitted) QUEUED.remove(key);
+            QUEUED.remove(key);
         }
+        return CallRecordingFinalizationJob.enqueue(context) ? RetryResult.QUEUED : RetryResult.UNAVAILABLE;
     }
 
     static boolean isPendingName(String name) {
@@ -261,98 +255,166 @@ public final class CallRecordingStore {
         return file != null && file.isFile() && CallRecordingTranscoder.repairHeader(file);
     }
 
-    private static boolean queue(
-            Context context, File processing, Metadata metadata, boolean recovery) {
-        String key = processing.getAbsolutePath();
-        if (!QUEUED.add(key)) {
-            return false;
+    private static FileChannel openForLock(File wav) throws IOException {
+        // Closing an encoder input descriptor can release process-owned locks on its inode.
+        // Keep the lock on a separate file used only for this purpose.
+        return FileChannel.open(lockFile(wav).toPath(), StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE);
+    }
+
+    private static File lockFile(File wav) {
+        return new File(wav.getPath() + ".lock");
+    }
+
+    private static List<File> recoveryFiles(Context context) {
+        File directory = privateDirectory(context);
+        ArrayList<File> files = new ArrayList<>();
+        for (File folder : new File[]{directory, new File(directory, CORRUPT_DIRECTORY)}) {
+            File[] raw = folder.listFiles((ignored, name) -> RAW_NAME.matcher(name).matches());
+            if (raw != null) Collections.addAll(files, raw);
         }
-        try {
-            if (!processing.isFile()) {
+        files.sort(CallRecordingFinalization.NEWEST_FIRST);
+        return files;
+    }
+
+    private static boolean eligible(Context context, File wav, CallRecordingFinalization state) {
+        return state.next() != CallRecordingFinalization.Next.DONE && (state.manual()
+                || (wav.getParentFile().equals(privateDirectory(context))
+                    && PROCESSING_NAME.matcher(wav.getName()).matches()));
+    }
+
+    static boolean finalizeNext(Context context, Runnable progress) {
+        for (File wav : recoveryFiles(context)) {
+            String key = wav.getAbsolutePath();
+            if (!QUEUED.add(key)) continue;
+            try (FileChannel channel = openForLock(wav); FileLock lock = channel.tryLock()) {
+                if (lock != null && wav.isFile() && finalizePending(context, wav, progress)) {
+                    return true;
+                }
+            } catch (NoSuchFileException | OverlappingFileLockException unavailable) {
+                // Deleted, or held by another caller.
+            } catch (IOException failure) {
+                logFinalization("recovery", failure.getClass().getSimpleName());
+            } finally {
                 QUEUED.remove(key);
-                return false;
             }
-            submit(context, processing, metadata, recovery);
-        } catch (RuntimeException rejected) {
-            QUEUED.remove(key);
-            throw rejected;
+        }
+        return false;
+    }
+
+    private static boolean finalizePending(Context context, File wav, Runnable progress)
+            throws IOException {
+        CallRecordingFinalization state = CallRecordingFinalization.read(wav);
+        if (!eligible(context, wav, state)) return false;
+        CallRecordingFinalization.Next next = state.next();
+        switch (next) {
+            case CONVERT, VERIFY_PUBLICATION -> {
+                state = state.start(wav);
+                long size = finalizeNow(context, wav, state,
+                        next == CallRecordingFinalization.Next.VERIFY_PUBLICATION, progress);
+                if (size > 0L) {
+                    CallRecordingFinalization.read(wav).complete(
+                            wav, CallRecordingFinalization.Outcome.SAVED);
+                }
+            }
+            case EXHAUSTED -> {
+                state.complete(wav, CallRecordingFinalization.Outcome.FAILED);
+                encodedFile(wav).delete();
+            }
+            case REPORT -> {
+                // Keep the confirmed outcome across process death, including during reporting.
+                // An unavailable result provider gets a separate, bounded retry budget.
+                state = state.start(wav);
+                boolean saved = state.outcome() == CallRecordingFinalization.Outcome.SAVED;
+                sendFinalizationResult(context, wav, saved ? state.encodedSize() : 0L, saved ? ""
+                        : "No confirmed shared M4A after conversion retries; private WAV preserved");
+                if (saved) {
+                    metadataFile(wav).delete();
+                    if (wav.delete()) {
+                        removeRecoveryFiles(wav);
+                        return true;
+                    }
+                }
+                state.finishReporting(wav);
+            }
+            case DONE -> throw new IllegalStateException("Finalization is already complete");
         }
         return true;
     }
 
-    private static void submit(Context context, File processing, Metadata metadata, boolean recovery) {
-        FINALIZER.execute(() -> {
-            try {
-                if (finalizeNow(context, processing, metadata)) {
-                    clearRecoveryFailures(context, processing);
-                } else if (recovery) {
-                    recordRecoveryFailure(context, processing);
-                }
-            } finally {
-                QUEUED.remove(processing.getAbsolutePath());
-            }
-        });
-    }
-
-    private static void reportImportFailure(Context context) {
-        updateSelfCheck(context, "failed", 0,
-                "Recording import incomplete; source or recovery WAV preserved");
-        CallRecordingNotifier.finishFailed(context);
-    }
-
-    private static boolean finalizeNow(Context context, File wav, Metadata metadata) {
-        File encoded = new File(privateDirectory(context),
-                wav.getName().replace(".processing.wav", ".m4a.tmp"));
-        String stage = "encoding";
+    private static long finalizeNow(Context context, File wav, CallRecordingFinalization state,
+            boolean verifyOnly, Runnable progress) {
+        File encoded = encodedFile(wav);
+        String stage = "publication recovery";
         try {
+            Uri uri = state.mediaUri().isEmpty() ? null : Uri.parse(state.mediaUri());
+            if (uri != null) {
+                int pending = publicationState(context.getContentResolver(), uri);
+                if (pending == 0) {
+                    return verifiedSize(context.getContentResolver(), uri, state.encodedSize());
+                }
+                if (pending == -1) uri = null;
+            }
+            if (verifyOnly) return 0L;
+            stage = "encoding";
             logFinalization(stage, "started");
-            CallRecordingTranscoder.wavToM4a(wav, encoded);
+            progress.run();
+            encoded.delete();
+            CallRecordingTranscoder.wavToM4a(wav, encoded, progress);
             stage = "publication";
             logFinalization(stage, "started");
-            Uri saved = publish(context, encoded, buildDisplayName(
+            progress.run();
+            Metadata metadata = metadataFor(wav);
+            long size = publish(context, wav, state, uri, encoded, buildDisplayName(
                     metadata.startedAt, metadata.displayName, metadata.phoneNumber));
-            if (saved == null) {
-                throw new IOException("Shared recording destination unavailable");
-            }
-        } catch (Throwable throwable) {
+            logFinalization(stage, "completed");
+            return size;
+        } catch (Exception failure) {
+            logFinalization(stage, failure.getClass().getSimpleName());
+            return 0L;
+        } finally {
             encoded.delete();
-            String errorType = throwable.getClass().getSimpleName();
-            logFinalization(stage, errorType);
-            updateSelfCheck(context, "failed", 0, stage + " failed: " + errorType);
-            CallRecordingNotifier.finishFailed(context);
-            return false;
         }
-        logFinalization(stage, "completed");
-        long size = encoded.length();
-        wav.delete();
-        encoded.delete();
+    }
+
+    private static File encodedFile(File wav) {
+        return new File(wav.getParentFile(), wav.getName().replace(".processing.wav", ".m4a.tmp"));
+    }
+
+    private static void removeRecoveryFiles(File wav) {
         metadataFile(wav).delete();
-        updateSelfCheck(context, "active", size, "");
-        CallRecordingNotifier.finishSaved(context);
-        return true;
+        encodedFile(wav).delete();
+        File state = CallRecordingFinalization.file(wav);
+        state.delete();
+        new File(state.getPath() + ".writing").delete();
+        lockFile(wav).delete();
+    }
+
+    private static void sendFinalizationResult(Context context, File wav, long size, String error) {
+        Matcher matcher = RAW_NAME.matcher(wav.getName());
+        if (!matcher.matches()) return;
+        String pendingName = "zalo-call-" + matcher.group(1) + "-" + matcher.group(2)
+                + "-" + matcher.group(3) + ".part";
+        Bundle result = new Bundle();
+        result.putLong("size", size);
+        result.putString("error", error);
+        if (context.getContentResolver().call(
+                ConfigProvider.URI, REPORT_FINALIZATION, pendingName, result) == null) {
+            throw new IllegalStateException("Recording result was not accepted");
+        }
+    }
+
+    static void reportFinalization(Context context, String pendingName, long size, String error) {
+        if (!updateSelfCheck(context, size > 0L ? "active" : "failed", size, error)) {
+            throw new IllegalStateException("Recording self-check could not be saved");
+        }
+        CallRecordingNotifier.finishFinalization(context, pendingName, size > 0L);
     }
 
     private static void logFinalization(String stage, String outcome) {
         if (HookConfig.isDebugEnabled()) {
             Log.i("ZaloPatch", "Call recording stage=" + stage + " result=" + outcome);
         }
-    }
-
-    private static void recordRecoveryFailure(Context context, File processing) {
-        android.content.SharedPreferences preferences = TweakStore.preferences(context);
-        String key = RECOVERY_ATTEMPTS_PREFIX + processing.getName();
-        int attempts = preferences.getInt(key, 0) + 1;
-        preferences.edit().putInt(key, attempts).apply();
-    }
-
-    private static void clearRecoveryFailures(Context context, File processing) {
-        TweakStore.preferences(context).edit()
-                .remove(RECOVERY_ATTEMPTS_PREFIX + processing.getName()).apply();
-    }
-
-    private static int recoveryAttempts(Context context, File processing) {
-        return TweakStore.preferences(context).getInt(
-                RECOVERY_ATTEMPTS_PREFIX + processing.getName(), 0);
     }
 
     private static void addRawEntries(File directory, List<Entry> entries) {
@@ -387,46 +449,63 @@ public final class CallRecordingStore {
         }
     }
 
-    private static Uri publish(Context context, File source, String displayName) throws IOException {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            throw new IOException("Shared call recordings require Android 10 or newer");
-        }
+    private static long publish(Context context, File wav, CallRecordingFinalization state,
+            Uri uri, File source, String displayName) throws IOException {
         ContentResolver resolver = context.getContentResolver();
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Audio.Media.DISPLAY_NAME, displayName);
-        values.put(MediaStore.Audio.Media.TITLE,
-                displayName.substring(0, displayName.length() - ".m4a".length()));
-        values.put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4");
-        values.put(MediaStore.Audio.Media.RELATIVE_PATH, SHARED_DIRECTORY);
-        values.put(MediaStore.Audio.Media.IS_PENDING, 1);
-        Uri uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) {
-            return null;
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Audio.Media.DISPLAY_NAME, displayName);
+            values.put(MediaStore.Audio.Media.TITLE,
+                    displayName.substring(0, displayName.length() - ".m4a".length()));
+            values.put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4");
+            values.put(MediaStore.Audio.Media.RELATIVE_PATH, SHARED_DIRECTORY);
+            values.put(MediaStore.Audio.Media.IS_PENDING, 1);
+            uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IOException("Shared recording destination unavailable");
         }
+        // Persist the row before writing. A restarted attempt can reopen the pending row
+        // or recognize a row published just before the process died.
+        long encodedSize = source.length();
+        state.publishing(wav, uri.toString(), encodedSize);
         try {
             try (InputStream input = new FileInputStream(source);
-                 OutputStream output = resolver.openOutputStream(uri, "w")) {
-                if (output == null) {
-                    throw new IOException("Shared output unavailable");
-                }
+                 OutputStream output = resolver.openOutputStream(uri, "wt")) {
+                if (output == null) throw new IOException("Shared output unavailable");
                 copy(input, output);
             }
             ContentValues complete = new ContentValues();
             complete.put(MediaStore.Audio.Media.IS_PENDING, 0);
-            if (resolver.update(uri, complete, null, null) != 1) {
+            if (resolver.update(uri, complete, null, null) != 1
+                    || publicationState(resolver, uri) != 0) {
                 throw new IOException("Shared recording was not published");
             }
-            return uri;
-        } catch (Throwable throwable) {
+            return verifiedSize(resolver, uri, encodedSize);
+        } catch (Exception failure) {
             try {
-                resolver.delete(uri, null, null);
-            } catch (Throwable cleanupFailure) {
-                throwable.addSuppressed(cleanupFailure);
+                if (publicationState(resolver, uri) == 1) resolver.delete(uri, null, null);
+            } catch (Exception cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
             }
-            if (throwable instanceof IOException) {
-                throw (IOException) throwable;
-            }
-            throw new IOException(throwable);
+            if (failure instanceof IOException) throw (IOException) failure;
+            throw new IOException(failure);
+        }
+    }
+
+    // A missing row can be recreated. A failed query must not cause duplicate publication.
+    private static int publicationState(ContentResolver resolver, Uri uri) throws IOException {
+        try (Cursor cursor = resolver.query(uri, new String[]{MediaStore.Audio.Media.IS_PENDING},
+                null, null, null)) {
+            if (cursor == null) throw new IOException("Shared recording status unavailable");
+            return cursor.moveToFirst() ? cursor.getInt(0) : -1;
+        }
+    }
+
+    private static long verifiedSize(ContentResolver resolver, Uri uri, long expected)
+            throws IOException {
+        try (ParcelFileDescriptor file = resolver.openFileDescriptor(uri, "r")) {
+            long size = file == null ? 0L : file.getStatSize();
+            if (size <= 0L || size != expected) throw new IOException("Shared recording size differs");
+            return size;
         }
     }
 
@@ -530,7 +609,8 @@ public final class CallRecordingStore {
         }
     }
 
-    private static void updateSelfCheck(Context context, String status, long size, String error) {
+    private static synchronized boolean updateSelfCheck(
+            Context context, String status, long size, String error) {
         android.content.SharedPreferences preferences = TweakStore.preferences(context);
         String prefix = "selfcheck.calls.auto_record.storage.";
         int hits = preferences.getInt(prefix + "hit_count", 0);
@@ -542,7 +622,7 @@ public final class CallRecordingStore {
         editor.putInt(prefix + "install_count", 1);
         editor.putInt(prefix + "hit_count", "active".equals(status) ? hits + 1 : hits);
         editor.putLong(prefix + "updated_at", System.currentTimeMillis());
-        editor.apply();
+        return editor.commit();
     }
 
     private static void copy(InputStream input, OutputStream output) throws IOException {

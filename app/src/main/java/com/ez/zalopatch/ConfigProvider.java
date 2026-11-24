@@ -241,6 +241,13 @@ public final class ConfigProvider extends ContentProvider {
         if (getContext() == null) {
             return null;
         }
+        if (CallRecordingStore.REPORT_FINALIZATION.equals(method)) {
+            if (Binder.getCallingUid() != Process.myUid() || extras == null
+                    || !CallRecordingStore.isPendingName(arg)) return null;
+            CallRecordingStore.reportFinalization(getContext(), arg, extras.getLong("size"),
+                    extras.getString("error", ""));
+            return Bundle.EMPTY;
+        }
         if ("is_host_allowed".equals(method)) {
             Bundle result = new Bundle();
             result.putBoolean("allowed", arg != null
