@@ -45,13 +45,13 @@
 
 - Download [latest release APK](https://github.com/amarinne/zalo-patch/releases/latest).
 
-### With root
+### Root
 
 - Install [LSPosed/Vector](https://github.com/JingMatrix/Vector/releases/latest).
 - Enable Zalo Patch.
 - Select Zalo in scope.
 
-### Without root
+### No root
 
 - Install [LSPatch](https://github.com/JingMatrix/LSPatch/releases/latest).
 - Patch Zalo in Manager mode.
@@ -67,7 +67,7 @@
 - Change tweaks in Zalo Patch.
 - Tap **Restart Zalo**. Without root, force stop Zalo in App info, then open it.
 - For a Zalo clone, add its package name in **Developer tools → Zalo clone packages**, then enable
-  Zalo Patch for it. Add only trusted apps; they can read module settings.
+  Zalo Patch for it.
 
 ---
 
